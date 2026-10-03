@@ -72,6 +72,7 @@ Adding an agent needs no QML changes: ship a collector that prints the record co
 | `grok` | The credits endpoint behind Grok's `/usage` view (the billing period's included usage) | Each session's `usage.json` (the ledger `grok usage` prints: tokens by model per finished turn), plus `summary.json` for sessions |
 | `cursor` | Cursor's dashboard RPCs: included, auto-model, named-model, and on-demand meters | the same dashboard RPCs, one call per day for the last week |
 | `opencode` | OpenCode Go's usage endpoint (rolling + weekly + monthly), with an API key or the Console session | pi and omp sessions on the Zen and Go providers, plus opencode's own `message` and `session_message` stores |
+| `kimchi` | The plan, prepaid credits, and any spend budgets from the gateway's `/v1/credits` and `/v1/budget`, the endpoints Kimchi's own status line reads | Kimchi's pi session files under `~/.config/kimchi/harness/sessions`: tokens by model per assistant reply |
 | `fireworks` | Estimated prepaid balance: configured funding minus rated account costs | Fireworks billing API, grouped by day and model for the last 30 days |
 | `copilot` | Account-wide AI credit allowance (GitHub quota endpoint, or estimated locally) | the Copilot CLI session store's `assistant_usage_events`, with `~/.copilot/session-state` transcripts as fallback |
 | `muse` | The client's key endpoint (session + weekly percents), else local metering only — never estimated | native `muse` CLI session files plus opencode sessions on the `meta` provider |
@@ -238,6 +239,18 @@ lives in `~/.config/omarchy/agents/deepseek.json`, the same shape the
 fireworks collector uses; without it the panel shows the live remaining
 credit and skips the funded-versus-spent line.
 
+### Kimchi
+
+Kimchi reads `KIMCHI_API_KEY` first, then the key in
+`~/.config/kimchi/config.json`, and asks the gateway its region names (or
+`KIMCHI_BASE_URL`); its sessions follow `KIMCHI_CODING_AGENT_DIR`. The
+credits answer says how much remains but not how much was bought, so the
+balance meter only fills in when a personal spend budget supplies the funded
+figure. Every budget is a limit line that resets when its period ends,
+titled Monthly or Weekly when the period is one, with each capped provider
+inside it a tick on that line. When the gateway can't be reached, the last
+answer stays up, dimmed and dated.
+
 ### Fireworks balance
 
 The collector first asks the account's `:getBalance` endpoint for the real
@@ -372,7 +385,8 @@ edit `shell.json` directly):
 omarchy bar set omarchy.agents providers '{
   "claude": { "enabled": true },
   "codex": { "enabled": false },
-  "fireworks": { "enabled": true }
+  "fireworks": { "enabled": true },
+  "kimchi": { "enabled": true }
 }' --json
 ```
 

@@ -34,7 +34,8 @@
         "ollama": { "enabled": true },
         "minimax": { "enabled": true },
         "openrouter": { "enabled": true },
-        "deepseek": { "enabled": true }
+        "deepseek": { "enabled": true },
+        "kimchi": { "enabled": true }
       },
       "refreshIntervalSec": 900,
       "syncMode": "Off",
