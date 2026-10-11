@@ -96,11 +96,12 @@ reset_entries() {
 # One core dump as systemd-coredump journals it. The UID must be this user's, or
 # the watcher discards it as somebody else's crash before anything under test.
 crash_entry() {
-  local comm="$1" exe="$2"
+  local comm="$1" exe="$2" unit="${3:-}"
 
-  jq -cn --arg uid "$UID" --arg comm "$comm" --arg exe "$exe" \
+  jq -cn --arg uid "$UID" --arg comm "$comm" --arg exe "$exe" --arg unit "$unit" \
     '{_UID: $uid, COREDUMP_COMM: $comm, COREDUMP_PID: "4242",
-      COREDUMP_EXE: $exe, COREDUMP_SIGNAL_NAME: "SIGSEGV"}' >>"$JOURNAL_ENTRIES"
+      COREDUMP_EXE: $exe, COREDUMP_SIGNAL_NAME: "SIGSEGV",
+      COREDUMP_USER_UNIT: $unit}' >>"$JOURNAL_ENTRIES"
 }
 
 # The stubbed journalctl ends after the entries, so the watcher's loop ends too.
@@ -189,6 +190,27 @@ run_watch
 announced nautilus ||
   fail "a muted crash stops the watcher reading the journal, losing every crash after it"
 pass "a muted crash does not stop the watcher reading the next one"
+
+# The watcher's own health check runs the shell's IPC client, which crashes as
+# quickshell. Announcing that runs the health check again, and every crash it
+# causes is the next one to announce, so it is known by the unit it ran in.
+reset_entries
+crash_entry qs /usr/bin/quickshell omarchy-crash-watch.service
+crash_entry nautilus /usr/bin/nautilus
+run_watch
+! announced quickshell ||
+  fail "a crash inside the watcher's own unit is announced, so a crashing health check feeds itself core dumps forever"
+announced nautilus ||
+  fail "skipping the watcher's own crash stops it reading the next one"
+pass "a crash inside the watcher's own unit is not announced"
+
+# The shell crashing where it runs is the crash most worth reporting.
+reset_entries
+crash_entry qs /usr/bin/quickshell app-Hyprland-omarchy-launch-shell-4242.scope
+run_watch
+announced quickshell ||
+  fail "a shell crash outside the watcher is silenced along with the watcher's own"
+pass "a shell crash outside the watcher's own unit still announces itself"
 
 # A process can set its own comm to anything prctl takes, slashes included, and
 # a crash with no recorded executable falls back to it. A name that climbed out
