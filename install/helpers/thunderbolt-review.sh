@@ -181,7 +181,7 @@ tb_watch_settled() {
 
 tb_watch() {
   local watch snapshot warning warned='' failures=0 settled=false snapshot_time=0 scanned=0
-  local published seen_published='' seen_requests='' runtime watched='' generation monitored='' started
+  local published seen_published='' seen_requests='' runtime watched='' generation monitored='' started remaining
   tb_requests
   watch=$(cat /proc/sys/kernel/random/uuid)
   trap 'tb_events_close; trap - TERM; kill -TERM "$BASHPID"' TERM
@@ -250,11 +250,17 @@ tb_watch() {
         settled=false
       fi
     fi
-    # Wait for the next change. Retries, a monitor that is still starting and a
-    # daemon whose runtime directory is gone are re-checked every 2 s instead.
+    # Wait for the next change, but no longer than the accepted snapshot stays
+    # valid. Retries, a monitor that is still starting and a daemon whose
+    # runtime directory is gone are re-checked every 2 s instead.
     if [[ $started == true || $watched != true ]] || { (( failures == 0 )) && [[ $settled != true ]]; } ||
       { (( failures > 0 )) && [[ $warned != "unavailable" ]]; }; then
       tb_events_wait 2 || true
+    elif (( failures == 0 )); then
+      remaining=$(( snapshot_time + TB_SNAPSHOT_TTL - EPOCHSECONDS ))
+      (( remaining < TB_REFRESH )) || remaining=$TB_REFRESH
+      (( remaining > 2 )) || remaining=2
+      tb_events_wait "$remaining" || true
     else
       tb_events_wait "$TB_REFRESH" || true
     fi

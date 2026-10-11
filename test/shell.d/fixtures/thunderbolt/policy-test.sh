@@ -706,6 +706,24 @@ test_daemon_backs_off_failed_reconciles() {
   tb_daemon 2>/dev/null
   check '.available==false' "$TB_RUNTIME/snapshot.json"
 }
+test_daemon_retries_a_failed_restore_soon() {
+  touch "$TB_MARKER"; TB_REFRESH=600
+  local tick=0
+  edit_state '.trusted["device-1"]={Uid:"device-1",Name:"Dock",Vendor:"Vendor"}'
+  touch "$T/authorize-failure"
+  tb_events_wait() {
+    tick=$((tick + 1))
+    case $tick in
+      1) check '.available and .error != ""' "$TB_RUNTIME/snapshot.json"
+         rm "$T/authorize-failure"; sleep 2.1 ;;                    # no Bolt signal follows
+      2) check '.error == ""' "$TB_RUNTIME/snapshot.json"
+         check '.devices[0].status == "authorized"' "$TB_RUNTIME/snapshot.json"; rm "$TB_MARKER" ;;
+    esac
+    return 1
+  }
+  tb_daemon
+  [[ $tick == 2 ]]
+}
 test_daemon_reopens_an_ended_event_source() {
   touch "$TB_MARKER"; TB_REFRESH=600
   local tick=0
@@ -768,6 +786,19 @@ test_watch_rescans_a_snapshot_due_to_expire() {
   tb_events_wait() { tick=$((tick + 1)); (( tick < 3 )) || exit 0; return 1; }
   (tb_watch)
   [[ $(wc -l < "$T/scans") == 3 ]]
+}
+test_watch_wakes_before_the_snapshot_expires() {
+  local tick=0 timeout
+  watch_publish '[]' "$((EPOCHSECONDS - TB_SNAPSHOT_TTL + 60))"
+  tb_scan() { echo >> "$T/scans"; cat "$TB_RUNTIME/snapshot.json"; }
+  tb_events_wait() {
+    timeout=$1 tick=$((tick + 1))
+    case $tick in
+      2) (( timeout > 50 && timeout <= 60 )) || fail "the wait outlives the snapshot" "$timeout"; exit 0 ;;
+    esac
+    return 1
+  }
+  (tb_watch)
 }
 test_watch_retries_an_undelivered_warning() {
   local tick=0 attempts=0 timeout
