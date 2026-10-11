@@ -357,9 +357,10 @@ tb_daemon() {
     if (
       flock -x 9
       if snapshot=$(tb_reconcile 2> "$TB_RUNTIME/error"); then
-        tb_json_write "$TB_RUNTIME/snapshot.json" 644 <<< "$snapshot"
-        # A trusted device that could not be restored is retried like a failure.
-        jq -e '.error == ""' <<< "$snapshot" >/dev/null
+        # A failed write, or a trusted device that could not be restored, is
+        # retried like a failed reconcile.
+        tb_json_write "$TB_RUNTIME/snapshot.json" 644 <<< "$snapshot" &&
+          jq -e '.error == ""' <<< "$snapshot" >/dev/null
       else
         cat "$TB_RUNTIME/error" >&2
         error=$(< "$TB_RUNTIME/error")

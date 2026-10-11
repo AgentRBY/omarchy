@@ -724,6 +724,23 @@ test_daemon_retries_a_failed_restore_soon() {
   tb_daemon
   [[ $tick == 2 ]]
 }
+test_daemon_retries_a_failed_publish_soon() {
+  touch "$TB_MARKER"; TB_REFRESH=600
+  local tick=0
+  daemon_reconcile_fixture
+  touch "$T/write-failure"
+  eval "real_$(declare -f tb_json_write)"
+  tb_json_write() { if [[ $1 == */snapshot.json && -f $T/write-failure ]]; then rm "$T/write-failure"; return 1; fi; real_tb_json_write "$@"; }
+  tb_events_wait() {
+    tick=$((tick + 1))
+    case $tick in
+      1) expect_reconciles 1; sleep 2.1 ;;
+      2) expect_reconciles 2; check '.available' "$TB_RUNTIME/snapshot.json"; rm "$TB_MARKER" ;;
+    esac
+    return 1
+  }
+  tb_daemon
+}
 test_daemon_reopens_an_ended_event_source() {
   touch "$TB_MARKER"; TB_REFRESH=600
   local tick=0
