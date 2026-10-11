@@ -341,7 +341,7 @@ tb_daemon_events() {
 }
 
 tb_daemon() {
-  local snapshot policy seen_policy recovery seen_recovery error published delay retry=2
+  local snapshot policy seen_policy recovery seen_recovery error published delay failed signalled retry=2
   install -d -m 755 "$TB_RUNTIME"
   cat /proc/sys/kernel/random/uuid > "$TB_RUNTIME/generation"
   chmod 644 "$TB_RUNTIME/generation"
@@ -354,6 +354,7 @@ tb_daemon() {
     [[ -r $TB_STATE ]] && IFS= read -r -d '' seen_policy < "$TB_STATE" || true
     seen_recovery=false
     [[ -e ${TB_STATE%/*}/boot-recovery.json ]] && seen_recovery=true
+    failed=true signalled=false
     if (
       flock -x 9
       if snapshot=$(tb_reconcile 2> "$TB_RUNTIME/error"); then
@@ -369,10 +370,10 @@ tb_daemon() {
         exit 1
       fi
     ) 9> "$TB_LOCK"; then
-      delay=$TB_REFRESH retry=2
+      delay=$TB_REFRESH retry=2 failed=false
     else
       # Retry a failure or a failed restore soon, backing off while it persists;
-      # a Bolt signal or a policy change still brings the next attempt at once.
+      # a Bolt signal or a policy change still brings the next attempt sooner.
       delay=$retry retry=$(( retry * 2 < TB_REFRESH ? retry * 2 : TB_REFRESH ))
     fi
     published=$EPOCHSECONDS
@@ -380,9 +381,17 @@ tb_daemon() {
     # or recovery checkpoint change brings the next reconcile within a tick, as
     # does a clock step back or a resume from suspend that makes it due.
     while [[ -f $TB_MARKER ]]; do
-      tb_events_wait 2 && break
-      if [[ -z ${TB_EVENTS:-} ]]; then
+      if tb_events_wait 2; then
+        signalled=true
+      elif [[ -z ${TB_EVENTS:-} ]]; then
         tb_events_open tb_daemon_events
+        break
+      fi
+      # A failed authorization makes Bolt signal its own status changes. After
+      # a failure, a signal brings the next attempt no sooner than 2 s after the
+      # last, the former polling cadence, so it cannot retrigger itself at once.
+      if [[ $signalled == true ]] &&
+        { [[ $failed == false ]] || (( EPOCHSECONDS < published || EPOCHSECONDS - published >= 2 )); }; then
         break
       fi
       policy=''

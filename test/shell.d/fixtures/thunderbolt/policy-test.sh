@@ -697,9 +697,9 @@ test_daemon_backs_off_failed_reconciles() {
     tick=$((tick + 1))
     case $tick in
       1) expect_reconciles 1; sleep 2.1 ;;                          # retried after 2 s
-      2) expect_reconciles 2 ;;
-      3) expect_reconciles 2; return 0 ;;                           # then after 4 s, or a signal
-      4) expect_reconciles 3; rm "$TB_MARKER" ;;
+      2) expect_reconciles 2; return 0 ;;                           # then after 4 s, but a signal
+      3) expect_reconciles 2; sleep 2.1 ;;                          # waits only 2 s from the last
+      4) expect_reconciles 3; rm "$TB_MARKER" ;;                    # attempt, not at once
     esac
     return 1
   }
