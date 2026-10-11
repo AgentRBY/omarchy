@@ -86,6 +86,24 @@ nightlight_cli >/dev/null
 [[ $(<"$STATE") == 6500 ]] || fail "nightlight toggle restores daylight from night light"
 pass "nightlight toggle restores daylight from night light"
 
+cat >"$TMPDIR/bin/sleep" <<'SH'
+#!/bin/bash
+printf 'sleep %s\n' "$*" >>"$OMARCHY_SHELL_LOG"
+SH
+chmod +x "$TMPDIR/bin/sleep"
+: >"$SHELL_LOG"
+nightlight_cli >/dev/null
+[[ $(<"$STATE") == 4000 ]] && ! grep -q '^sleep' "$SHELL_LOG" || fail "a running hyprsunset applies the toggle without waiting"
+pass "a running hyprsunset applies the toggle without waiting"
+
+printf '#!/bin/bash\nexit 1\n' >"$TMPDIR/bin/pgrep"
+printf '#!/bin/bash\nexit 0\n' >"$TMPDIR/bin/setsid"
+chmod +x "$TMPDIR/bin/setsid"
+: >"$SHELL_LOG"
+nightlight_cli >/dev/null
+grep -q '^sleep 0.2' "$SHELL_LOG" || fail "a freshly started hyprsunset is waited on so its boot default can't win"
+pass "a freshly started hyprsunset is waited on so its boot default can't win"
+
 if rg -q 'omarchy.indicators' "$ROOT/bin/omarchy-toggle-nightlight"; then
   fail "nightlight toggle leaves indicator refresh to the nightlight service"
 fi
