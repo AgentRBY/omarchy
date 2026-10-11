@@ -23,7 +23,11 @@ QtObject {
   property bool foregroundAnimationEnabled: true
   property bool centerSectionRevealHeld: false
   property bool _centerHoverRevealSuppressed: false
-  readonly property bool centerHoverRevealSuppressed: _centerHoverRevealSuppressed
+  // Writable because panels cloned before 4.0.3 assign it as they close; a
+  // read-only property threw there and left the panel stuck open.
+  property bool centerHoverRevealSuppressed: false
+  on_CenterHoverRevealSuppressedChanged: centerHoverRevealSuppressed = _centerHoverRevealSuppressed
+  onCenterHoverRevealSuppressedChanged: setCenterHoverRevealSuppressed(centerHoverRevealSuppressed)
   property var activePopout: null
   property var clickTargets: []
   property var layoutConfig: ({})
