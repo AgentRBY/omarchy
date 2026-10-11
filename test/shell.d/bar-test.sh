@@ -303,16 +303,26 @@ assertEqual(bar.moveEntry(left, 'spacer', 1, right, '', 0), true, 'bar moves the
 assertDeepEqual(left, ['omarchy.clock', spacerA, 'omarchy.cpu'], 'bar leaves the other instance behind on a cross-section drag')
 assertDeepEqual(right, ['omarchy.battery', spacerB], 'bar appends the dragged instance to the other section')
 section = spacers()
-assertEqual(bar.moveEntry(section, 'spacer', 1, section, '', 0), false, 'bar leaves a section alone when its last entry is dropped at the end')
+assertEqual(bar.moveEntry(section, 'spacer', 1, section, '', 0), false, 'bar reports no move when a section\'s last entry is dropped at the end')
+assertDeepEqual(section, spacers(), 'bar leaves a section alone when its last entry is dropped at the end')
 assertEqual(bar.entryOrdinal(spacers(), 3), 1, 'bar counts earlier entries sharing an id')
-assertEqual(bar.entryOrdinal(spacers(), -1), 0, 'bar names no instance for a missing index')
+assertEqual(bar.entryOrdinal(spacers(), -1), 0, 'bar falls back to the first instance for a missing index')
 assert(
   /moveModuleInConfig\(config, source\.region, source\.moduleName, source\.layoutOrdinal,/.test(barSource),
   'bar moves the instance the dragged slot holds'
 )
 assert(
+  /dropBarModule\(sourceSlot, targetSlot\.region, beforeName, BarModel\.entryOrdinal\(entries, beforeIndex\)\)/.test(barSource),
+  'bar drops beside the instance the target slot holds'
+)
+assert(
   (barSource.match(/layoutIndex: moduleListRoot\.firstIndex \+ index/g) || []).length === 2,
   'bar tells every listed slot where its entry sits in the layout'
+)
+assert(
+  (barSource.match(/layoutIndex: centerRoot\.anchorIndex\n/g) || []).length === 2 &&
+    (barSource.match(/firstIndex: centerRoot\.anchorIndex \+ 1\n/g) || []).length === 2,
+  'bar counts the anchored center section from the anchor'
 )
 
 // The open-panel mark sits on the module's desktop-facing edge at every
