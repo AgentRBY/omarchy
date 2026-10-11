@@ -13,9 +13,11 @@ TB_DEVICE=org.freedesktop.bolt1.Device
 TB_DOMAIN=org.freedesktop.bolt1.Domain
 TB_PATH=/org/freedesktop/bolt
 TB_SYSFS=/sys/bus/thunderbolt/devices
-# How often the daemon re-checks Bolt while there is no controller and no boot
-# protection: well inside the 20 s a published snapshot stays valid.
-TB_IDLE_RECHECK=10
+# The daemon reconciles whenever Bolt signals a change, and otherwise every
+# TB_REFRESH seconds, which also keeps its snapshot fresh. A published snapshot
+# is trusted for TB_SNAPSHOT_TTL seconds, two refreshes.
+TB_REFRESH=300
+TB_SNAPSHOT_TTL=600
 TB_TRUST_JQ='def trusted($state): $state.trusted[.Uid] == {Uid,Name,Vendor} and
   ((.Secure | not) or (.Stored and (.Key | IN("have","new"))));'
 
@@ -28,12 +30,40 @@ tb_wait() {
   read -r -t "$1" -u "$TB_TICK" _ || true
 }
 
-tb_controller_present() {
-  local domain
-  for domain in "$TB_SYSFS"/domain*; do
-    [[ -e $domain ]] && return 0
-  done
-  return 1
+# Starts a command whose output lines are wake-ups. Their content is never
+# parsed or trusted; every wake-up re-reads the live state.
+tb_events_open() {
+  exec {TB_EVENTS}< <("$@")
+  TB_EVENTS_PID=$!
+}
+
+tb_events_close() {
+  if [[ -n ${TB_EVENTS:-} ]]; then
+    kill "$TB_EVENTS_PID" 2>/dev/null || true
+    exec {TB_EVENTS}<&-
+    TB_EVENTS=''
+  fi
+}
+
+# Waits up to $1 seconds for a wake-up and succeeds if one came. A burst of
+# lines is drained as one wake-up. If the source ended, it is closed and the
+# wait falls back to a plain 2 s sleep, so a failing source cannot spin.
+tb_events_wait() {
+  local count=0
+  if [[ -z ${TB_EVENTS:-} ]]; then
+    tb_wait "$1"
+    return 1
+  fi
+  if read -r -t "$1" -u "$TB_EVENTS" _; then
+    while (( ++count < 64 )) && read -r -t 0.2 -u "$TB_EVENTS" _; do :; done
+    return 0
+  elif (( $? > 128 )); then
+    return 1
+  else
+    tb_events_close
+    tb_wait 2
+    return 1
+  fi
 }
 
 tb_json_write() {
@@ -304,26 +334,27 @@ tb_reconcile() {
   tb_snapshot "$error"
 }
 
+# Bolt signals every device, domain and manager change, and its owner changing
+# on a restart; the root daemon needs no netlink access to follow them.
+tb_daemon_events() {
+  exec gdbus monitor --system --dest "$TB_BOLT"
+}
+
 tb_daemon() {
-  local snapshot error policy idle_policy='' idle_since=0
+  local snapshot policy seen_policy recovery seen_recovery error published delay retry=2
   install -d -m 755 "$TB_RUNTIME"
   cat /proc/sys/kernel/random/uuid > "$TB_RUNTIME/generation"
   chmod 644 "$TB_RUNTIME/generation"
+  trap 'tb_events_close; trap - TERM; kill -TERM "$BASHPID"' TERM
+  # Subscribe before the first reconcile; the monitor's own startup lines wake
+  # a second one that covers any change made while it was connecting.
+  tb_events_open tb_daemon_events
   while [[ -f $TB_MARKER ]]; do
-    policy=''
-    [[ -r $TB_STATE ]] && IFS= read -r -d '' policy < "$TB_STATE" || true
-    # With no controller, no device and no boot protection there is nothing to
-    # restore or reapply, so Bolt is reconciled every TB_IDLE_RECHECK seconds
-    # instead of every tick. A controller appearing, a policy change or a boot
-    # recovery checkpoint brings back the full check at once.
-    if [[ -n $idle_policy && $policy == "$idle_policy" && ! -e ${TB_STATE%/*}/boot-recovery.json ]] &&
-      (( EPOCHSECONDS - idle_since >= 0 && EPOCHSECONDS - idle_since < TB_IDLE_RECHECK )) &&
-      ! tb_controller_present; then
-      tb_wait 2
-      continue
-    fi
-    idle_policy=''
-    (
+    seen_policy=''
+    [[ -r $TB_STATE ]] && IFS= read -r -d '' seen_policy < "$TB_STATE" || true
+    seen_recovery=false
+    [[ -e ${TB_STATE%/*}/boot-recovery.json ]] && seen_recovery=true
+    if (
       flock -x 9
       if snapshot=$(tb_reconcile 2> "$TB_RUNTIME/error"); then
         tb_json_write "$TB_RUNTIME/snapshot.json" 644 <<< "$snapshot"
@@ -332,24 +363,43 @@ tb_daemon() {
         error=$(< "$TB_RUNTIME/error")
         jq -cn --arg error "$error" --argjson time "$(date +%s)" '{available:false,time:$time,error:$error}' |
           tb_json_write "$TB_RUNTIME/snapshot.json" 644
+        exit 1
       fi
-    ) 9> "$TB_LOCK"
-    snapshot=''
-    [[ -r $TB_RUNTIME/snapshot.json ]] && IFS= read -r -d '' snapshot < "$TB_RUNTIME/snapshot.json" || true
-    if [[ -n $policy ]] && jq -e '.available == true and .domains == [] and .devices == [] and
-      .warnings == [] and .error == "" and .boot_protection == false' <<< "$snapshot" >/dev/null 2>&1; then
-      idle_policy=$policy idle_since=$EPOCHSECONDS
+    ) 9> "$TB_LOCK"; then
+      delay=$TB_REFRESH retry=2
+    else
+      # Retry a failure soon, backing off while it persists; a Bolt signal or a
+      # policy change still brings the next attempt at once.
+      delay=$retry retry=$(( retry * 2 < TB_REFRESH ? retry * 2 : TB_REFRESH ))
     fi
-    tb_wait 2
+    published=$EPOCHSECONDS
+    # Each 2 s tick only compares files and the clock, without forking: a policy
+    # or recovery checkpoint change brings the next reconcile within a tick, as
+    # does a clock step back or a resume from suspend that makes it due.
+    while [[ -f $TB_MARKER ]]; do
+      tb_events_wait 2 && break
+      if [[ -z ${TB_EVENTS:-} ]]; then
+        tb_events_open tb_daemon_events
+        break
+      fi
+      policy=''
+      [[ -r $TB_STATE ]] && IFS= read -r -d '' policy < "$TB_STATE" || true
+      recovery=false
+      [[ -e ${TB_STATE%/*}/boot-recovery.json ]] && recovery=true
+      [[ $policy == "$seen_policy" && $recovery == "$seen_recovery" ]] || break
+      (( EPOCHSECONDS >= published && EPOCHSECONDS - published < delay )) || break
+    done
   done
+  tb_events_close
+  trap - TERM
 }
 
 tb_public_snapshot() {
   local snapshot generation
   snapshot=$(cat "$TB_RUNTIME/snapshot.json") || return 1
   generation=$(< "$TB_RUNTIME/generation") || return 1
-  jq -e --argjson now "$(date +%s)" --arg generation "$generation" \
-    '.available and .generation == $generation and .time <= $now and $now - .time < 20' <<< "$snapshot" >/dev/null || {
+  jq -e --argjson now "$(date +%s)" --arg generation "$generation" --argjson ttl "$TB_SNAPSHOT_TTL" \
+    '.available and .generation == $generation and .time <= $now and $now - .time < $ttl' <<< "$snapshot" >/dev/null || {
     tb_fail 'Thunderbolt policy is unavailable or could not be verified.'; return 1;
   }
   printf '%s\n' "$snapshot"

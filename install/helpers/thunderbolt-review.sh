@@ -138,50 +138,126 @@ tb_scan() {
   printf '%s\n' "$snapshot"
 }
 
+# Wakes the watcher when the daemon publishes, a request changes or protection
+# is enabled or deferred. The runtime directory is watched only while it exists;
+# systemd recreates it whenever the daemon restarts.
+tb_watch_events() {
+  local marker=${TB_MARKER##*/} pending=${TB_PENDING##*/}
+  local -a paths=("$TB_REQUESTS" "${TB_MARKER%/*}")
+  [[ ${TB_PENDING%/*} == "${TB_MARKER%/*}" ]] || paths+=("${TB_PENDING%/*}")
+  [[ -d $TB_RUNTIME ]] && paths+=("$TB_RUNTIME")
+  exec inotifywait -m -q -e close_write,moved_to,create,delete \
+    --include "/(snapshot\.json|generation|request-[^/]*\.json|${marker//./\\.}|${pending//./\\.})\$" "${paths[@]}"
+}
+
+# Reads the given files into TB_WATCH_STATE without forking, to tell whether
+# anything a scan acts on has changed.
+tb_watch_state() {
+  local path text
+  TB_WATCH_STATE=''
+  for path in "$@"; do
+    text=''
+    if [[ -f $path && ! -L $path && -r $path ]]; then
+      IFS= read -r -d '' text < "$path" || true
+    fi
+    TB_WATCH_STATE+="$path ${#text}"$'\n'"$text"$'\n'
+  done
+}
+
+# Whether a scan left nothing to retry: every blocked device has a delivered
+# request and no approval is waiting to be submitted.
+tb_watch_settled() {
+  local path
+  local -a requests=()
+  for path in "$TB_REQUESTS"/request-*.json; do
+    [[ -f $path && ! -L $path ]] && requests+=("$path")
+  done
+  jq -en --argjson snapshot "$1" '[inputs] as $requests |
+    all($requests[]; .notified == true and (.pending // false | not)) and
+    all($snapshot.devices[] | select((.trusted | not) and (.status | IN("connected","auth-error")) and
+      (.flags | contains("nopcie") | not)) | .identity; . as $identity | any($requests[]; .identity == $identity))' \
+    "${requests[@]}" < /dev/null >/dev/null 2>&1
+}
+
 tb_watch() {
-  local watch snapshot warning warned='' failures=0 text generation clean='' clean_generation='' clean_time=0
+  local watch snapshot warning warned='' failures=0 settled=false snapshot_time=0 scanned=0
+  local published seen_published='' seen_requests='' runtime watched='' generation monitored='' started
   tb_requests
   watch=$(cat /proc/sys/kernel/random/uuid)
+  trap 'tb_events_close; trap - TERM; kill -TERM "$BASHPID"' TERM
   while true; do
+    runtime=false
+    [[ -d $TB_RUNTIME ]] && runtime=true
+    generation=''
+    [[ -r $TB_RUNTIME/generation ]] && IFS= read -r generation < "$TB_RUNTIME/generation" || true
+    started=false
+    # A new generation means a new runtime directory, which the old watch lost.
+    if [[ -z ${TB_EVENTS:-} || $runtime != "$watched" || $generation != "$monitored" ]]; then
+      tb_events_close
+      tb_events_open tb_watch_events
+      watched=$runtime monitored=$generation started=true
+    fi
     if [[ -f $TB_PENDING && ! -f $TB_MARKER ]]; then
       if [[ $warned != "pending" ]] && tb_setup_notice; then warned=pending; fi
-      clean=''
-      tb_wait 2
-      continue
-    fi
-    # The last scan's snapshot, unchanged, still fresh and from the same daemon,
-    # with no device, warning or request in flight, has nothing to deliver.
-    text='' generation=''
-    [[ -r $TB_RUNTIME/snapshot.json ]] && IFS= read -r -d '' text < "$TB_RUNTIME/snapshot.json" || true
-    [[ -r $TB_RUNTIME/generation ]] && IFS= read -r generation < "$TB_RUNTIME/generation" || true
-    if [[ -n $clean && ${text%$'\n'} == "$clean" && $generation == "$clean_generation" ]] &&
-      (( EPOCHSECONDS - clean_time >= 0 && EPOCHSECONDS - clean_time < 20 )) &&
-      ! compgen -G "$TB_REQUESTS/request-*.json" >/dev/null; then
-      tb_wait 2
-      continue
-    fi
-    clean=''
-    if snapshot=$(tb_scan "$watch"); then
-      failures=0
-      warning=$(jq -c '[.generation,.warnings,.error]' <<< "$snapshot")
-      if jq -e '(.warnings | length > 0) or .error != ""' <<< "$snapshot" >/dev/null; then
-        if [[ $warning != "$warned" ]] && tb_attention; then
-          warned=$warning
-        fi
+      seen_published=''
+      if [[ $warned == "pending" && $started == false ]]; then
+        tb_events_wait "$TB_REFRESH" || true
       else
-        warned=''
-        if jq -e '.devices == []' <<< "$snapshot" >/dev/null; then
-          IFS=' ' read -r clean_generation clean_time <<< "$(jq -r '"\(.generation) \(.time)"' <<< "$snapshot")"
-          [[ $clean_time =~ ^[0-9]+$ ]] && clean=$snapshot
+        tb_events_wait 2 || true
+      fi
+      continue
+    fi
+    # Scan only when something a scan reads has changed, the last scan left
+    # something to retry, or the snapshot it accepted is due to expire. After
+    # the unavailable warning, a failure is retried only once something changes.
+    tb_watch_state "$TB_RUNTIME/generation" "$TB_RUNTIME/snapshot.json"
+    published=$TB_WATCH_STATE
+    tb_watch_state "$TB_REQUESTS"/request-*.json
+    if [[ $published != "$seen_published" || $TB_WATCH_STATE != "$seen_requests" ]] ||
+      (( EPOCHSECONDS < scanned || EPOCHSECONDS - scanned >= TB_REFRESH )) ||
+      { (( failures == 0 )) && { [[ $settled != true ]] ||
+        (( EPOCHSECONDS < snapshot_time || EPOCHSECONDS - snapshot_time >= TB_SNAPSHOT_TTL )); }; } ||
+      { (( failures > 0 )) && [[ $warned != "unavailable" ]]; }; then
+      settled=false
+      if snapshot=$(tb_scan "$watch"); then
+        failures=0 settled=true
+        warning=$(jq -c '[.generation,.warnings,.error]' <<< "$snapshot")
+        if jq -e '(.warnings | length > 0) or .error != ""' <<< "$snapshot" >/dev/null; then
+          if [[ $warning != "$warned" ]] && tb_attention; then
+            warned=$warning
+          fi
+          # An undelivered warning is retried like an undelivered request.
+          [[ $warned == "$warning" ]] || settled=false
+        else
+          warned=''
+        fi
+        snapshot_time=$(jq -r .time <<< "$snapshot")
+        [[ $snapshot_time =~ ^[0-9]+$ ]] || snapshot_time=0
+      else
+        failures=$((failures + 1))
+        if (( failures >= 3 )) && [[ $warned != "unavailable" ]] && tb_attention; then
+          warned=unavailable
         fi
       fi
-    else
-      failures=$((failures + 1))
-      if (( failures >= 3 )) && [[ $warned != "unavailable" ]] && tb_attention; then
-        warned=unavailable
+      scanned=$EPOCHSECONDS
+      # Keep the published files as read before the scan, so a snapshot
+      # published during it is scanned next. The requests are read after the
+      # scan's own writes and before checking them, for the same reason.
+      seen_published=$published
+      tb_watch_state "$TB_REQUESTS"/request-*.json
+      seen_requests=$TB_WATCH_STATE
+      if [[ $settled == true ]] && ! tb_watch_settled "$snapshot"; then
+        settled=false
       fi
     fi
-    tb_wait 2
+    # Wait for the next change. Retries, a monitor that is still starting and a
+    # daemon whose runtime directory is gone are re-checked every 2 s instead.
+    if [[ $started == true || $watched != true ]] || { (( failures == 0 )) && [[ $settled != true ]]; } ||
+      { (( failures > 0 )) && [[ $warned != "unavailable" ]]; }; then
+      tb_events_wait 2 || true
+    else
+      tb_events_wait "$TB_REFRESH" || true
+    fi
   done
 }
 
