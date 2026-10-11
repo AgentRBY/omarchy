@@ -425,6 +425,9 @@ stop_screenrecording() {
   if omarchy-capture-screenrecording-process "${RECORDER[@]}"; then
     omarchy-capture-screenrecording-process "${RECORDER[@]}" --signal KILL
     omarchy-notification-send -u critical -t 5000 "Screen recording error" "Recording process had to be force-killed. Video may be corrupted."
+  elif [[ ! -f $(cat "$RECORDING_FILE" 2>/dev/null) ]]; then
+    # No recording to finalize or show, as when stopping a recorder this script did not start.
+    :
   else
     finalize_recording
     local filename=$(cat "$RECORDING_FILE" 2>/dev/null)
