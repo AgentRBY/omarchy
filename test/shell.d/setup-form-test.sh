@@ -129,11 +129,16 @@ pass "the form publishes the 0/1/130 status contract and leads with English (US)
 
 run_prompt omarchy_prompt_keyboard "0:German"
 assert_status 0 "keyboard prompt succeeds"
-[[ $(field keyboard) == "de" ]] || fail "keyboard prompt resolves the label to a keymap"
+[[ $(field keyboard) == "de-latin1" ]] || fail "keyboard prompt resolves the label to a keymap"
 [[ $(field keyboard_label) == "German" ]] || fail "keyboard prompt keeps the label for the summary"
 [[ $(head -n 1 "$tmp_dir/stdin.1") == "English (US)" ]] || fail "keyboard prompt offers English (US) first"
 grep -qF -- '--selected English (US)' "$GUM_ARGS" || fail "keyboard prompt preselects English (US)"
 pass "keyboard prompt maps the chosen label to its keymap"
+
+run_prompt omarchy_prompt_keyboard "0:French"
+assert_status 0 "French can be selected at install"
+[[ $(field keyboard) == "fr-latin1" ]] || fail "French loads the console map that types é where XKB fr does"
+pass "French and German take the console maps that match their XKB layouts"
 
 for selection in 'Japanese|jp106|mozc|' 'Japanese (US keyboard)|us|mozc|' 'Korean|us|hangul|kr' 'Lao|us|none|la' 'Chinese (Simplified, Pinyin)|us|pinyin|' 'Chinese (Traditional, Zhuyin)|us|chewing|'; do
   IFS='|' read -r label keymap method layout <<< "$selection"

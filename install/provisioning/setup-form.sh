@@ -30,6 +30,8 @@ OMARCHY_FORM_SIGNAL=130
 # so an alphabetical English (US) landed deep enough to sit alone at the edge
 # of a page of layouts nobody scanning for it reads. Up here the default and
 # its variants are the first thing on screen no matter how the list grows.
+# French and German take the -latin1 console maps: the bare fr and de maps type
+# ASCII where the keycaps print é or ü, unlike the XKB layout at the LUKS prompt.
 OMARCHY_KEYBOARD_LAYOUTS=$'English (US)|us
 English (UK)|uk
 English (US, Dvorak)|dvorak
@@ -45,11 +47,11 @@ Danish|dk-latin1
 Dutch|nl
 Estonian|et
 Finnish|fi
-French|fr
+French|fr-latin1
 French (Canada)|cf
 French (Switzerland)|fr_CH
 Georgian|ge
-German|de
+German|de-latin1
 German (Switzerland)|de_CH-latin1
 Greek|gr
 Hebrew|il
