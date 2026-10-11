@@ -77,9 +77,9 @@ assert_resolved_input() {
   local actual
 
   if (( $# > 3 )); then
-    actual=$("$resolver" "$4")
+    actual=$("$resolver" "$4") || fail "$description" "$actual"
   else
-    actual=$("$resolver")
+    actual=$("$resolver") || fail "$description" "$actual"
   fi
 
   [[ $actual == "$expected" ]] ||
