@@ -804,6 +804,22 @@ test_watch_rescans_a_snapshot_due_to_expire() {
   (tb_watch)
   [[ $(wc -l < "$T/scans") == 3 ]]
 }
+test_watch_retries_wait_out_their_own_wake_ups() {
+  local tick=0
+  watch_publish '[{"identity":{"Uid":"b"},"trusted":false,"status":"connected","flags":""}]'
+  tb_scan() { echo >> "$T/scans"; cat "$TB_RUNTIME/snapshot.json"; }
+  tb_events_wait() {
+    tick=$((tick + 1))
+    case $tick in
+      1) expect_scans 1; return 0 ;;                                # a delivery failed; its own
+      2) expect_scans 1; return 0 ;;                                # writes wake the watcher
+      3) expect_scans 1 ;;                                          # but only the 2 s retry scans
+      4) expect_scans 2; exit 0 ;;
+    esac
+    return 1
+  }
+  (tb_watch)
+}
 test_watch_wakes_before_the_snapshot_expires() {
   local tick=0 timeout
   watch_publish '[]' "$((EPOCHSECONDS - TB_SNAPSHOT_TTL + 60))"

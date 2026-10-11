@@ -182,6 +182,7 @@ tb_watch_settled() {
 tb_watch() {
   local watch snapshot warning warned='' failures=0 settled=false snapshot_time=0 scanned=0
   local published seen_published='' seen_requests='' runtime watched='' generation monitored='' started remaining
+  local retry timed_out=true
   tb_requests
   watch=$(cat /proc/sys/kernel/random/uuid)
   trap 'tb_events_close; trap - TERM; kill -TERM "$BASHPID"' TERM
@@ -210,14 +211,19 @@ tb_watch() {
     # Scan only when something a scan reads has changed, the last scan left
     # something to retry, or the snapshot it accepted is due to expire. After
     # the unavailable warning, a failure is retried only once something changes.
+    # A retry waits out its 2 s, so the scan's own writes cannot wake it early.
     tb_watch_state "$TB_RUNTIME/generation" "$TB_RUNTIME/snapshot.json"
     published=$TB_WATCH_STATE
     tb_watch_state "$TB_REQUESTS"/request-*.json
+    retry=false
+    if [[ $timed_out == true ]] || (( EPOCHSECONDS < scanned || EPOCHSECONDS - scanned >= 2 )); then
+      retry=true
+    fi
     if [[ $published != "$seen_published" || $TB_WATCH_STATE != "$seen_requests" ]] ||
       (( EPOCHSECONDS < scanned || EPOCHSECONDS - scanned >= TB_REFRESH )) ||
-      { (( failures == 0 )) && { [[ $settled != true ]] ||
-        (( EPOCHSECONDS < snapshot_time || EPOCHSECONDS - snapshot_time >= TB_SNAPSHOT_TTL )); }; } ||
-      { (( failures > 0 )) && [[ $warned != "unavailable" ]]; }; then
+      { (( failures == 0 )) && (( EPOCHSECONDS < snapshot_time || EPOCHSECONDS - snapshot_time >= TB_SNAPSHOT_TTL )); } ||
+      { [[ $retry == true ]] && { { (( failures == 0 )) && [[ $settled != true ]]; } ||
+        { (( failures > 0 )) && [[ $warned != "unavailable" ]]; }; }; }; then
       settled=false
       if snapshot=$(tb_scan "$watch"); then
         failures=0 settled=true
@@ -255,15 +261,16 @@ tb_watch() {
     # runtime directory is gone are re-checked every 2 s instead.
     if [[ $started == true || $watched != true ]] || { (( failures == 0 )) && [[ $settled != true ]]; } ||
       { (( failures > 0 )) && [[ $warned != "unavailable" ]]; }; then
-      tb_events_wait 2 || true
+      remaining=2
     elif (( failures == 0 )); then
       remaining=$(( snapshot_time + TB_SNAPSHOT_TTL - EPOCHSECONDS ))
       (( remaining < TB_REFRESH )) || remaining=$TB_REFRESH
       (( remaining > 2 )) || remaining=2
-      tb_events_wait "$remaining" || true
     else
-      tb_events_wait "$TB_REFRESH" || true
+      remaining=$TB_REFRESH
     fi
+    timed_out=true
+    tb_events_wait "$remaining" && timed_out=false
   done
 }
 
