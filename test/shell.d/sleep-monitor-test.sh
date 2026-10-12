@@ -129,12 +129,17 @@ cat >"$mock_bin/systemd-notify" <<'SH'
 
 printf 'systemd-notify %s\n' "$*" >>"$SHELL_LOG"
 SH
+cat >"$mock_bin/busctl" <<'SH'
+#!/bin/bash
+
+printf 'b %s\n' "${PREPARING:-true}"
+SH
 cat >"$mock_omarchy/bin/omarchy-shell" <<'SH'
 #!/bin/bash
 
 printf 'omarchy-shell %s\n' "$*" >>"$SHELL_LOG"
 SH
-chmod +x "$mock_bin/dbus-monitor" "$mock_bin/systemd-notify" "$mock_omarchy/bin/omarchy-shell"
+chmod +x "$mock_bin/dbus-monitor" "$mock_bin/systemd-notify" "$mock_bin/busctl" "$mock_omarchy/bin/omarchy-shell"
 run_log="$tmpdir/run-log"
 shell_log="$tmpdir/shell-log"
 : >"$lock_log"
@@ -160,3 +165,21 @@ SLEEP_SIGNAL=false \
 [[ $(<"$shell_log") == $'systemd-notify --ready\nomarchy-shell -q lock refreshDisplays' ]] ||
   fail "the resume watcher reports it is listening, then asks the lock once the machine wakes" "$(cat "$shell_log" 2>/dev/null)"
 pass "the resume watcher reports it is listening, then asks the lock once the machine wakes"
+
+# A watcher that only got listening after the wake finds the sleep over, and
+# asks at once rather than waiting for a signal that has already gone by.
+cat >"$mock_bin/dbus-monitor" <<'SH'
+#!/bin/bash
+
+printf 'signal sender=org.freedesktop.DBus member=NameAcquired\n'
+exec sleep 30
+SH
+: >"$shell_log"
+PREPARING=false \
+  OMARCHY_PATH="$mock_omarchy" \
+  PATH="$mock_bin:$PATH" \
+  SHELL_LOG="$shell_log" \
+  timeout 5 "$sleep_monitor" --resume || fail "a late resume watcher exits at once"
+[[ $(<"$shell_log") == $'systemd-notify --ready\nomarchy-shell -q lock refreshDisplays' ]] ||
+  fail "a late resume watcher asks the lock at once" "$(cat "$shell_log" 2>/dev/null)"
+pass "a resume watcher listening only after the wake asks the lock at once"

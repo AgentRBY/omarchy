@@ -17,13 +17,22 @@ schedule_resume_refresh() {
 
 # dbus-monitor prints nothing until it is a monitor with its match rules in
 # place, so its first line, whatever it is, means the wake can't be missed.
+# A watcher too slow to report that in time may be listening only after the
+# wake, so it asks logind whether the sleep is already over.
 consume_resume_events() {
-  local line ready=0
+  local line ready=0 preparing
 
   while IFS= read -r line; do
     if (( !ready )); then
       ready=1
       systemd-notify --ready 2>/dev/null || true
+
+      preparing=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 \
+        org.freedesktop.login1.Manager PreparingForSleep 2>/dev/null)
+      if [[ $preparing == "b false" ]]; then
+        "$OMARCHY_PATH/bin/omarchy-shell" -q lock refreshDisplays
+        return 0
+      fi
     fi
 
     if [[ $line == *"boolean false"* ]]; then
