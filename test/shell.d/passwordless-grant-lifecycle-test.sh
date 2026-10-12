@@ -111,7 +111,10 @@ fi
 # The scriptlet half of this contract is omacom/omarchy-pkgs#944. Until a
 # checkout carries it, there is no removal hook to hold to the lock; once one
 # does, both settings packages must.
-if ! grep -q '^pre_remove()' "$pkgs_path/omarchy-settings/omarchy-settings.install"; then
+settings_script="$pkgs_path/omarchy-settings/omarchy-settings.install"
+[[ -f $settings_script && -r $settings_script ]] ||
+  fail "the omarchy-pkgs checkout at $pkgs_path ships omarchy-settings.install"
+if ! grep -q '^pre_remove()' "$settings_script"; then
   skip "package scriptlets: the omarchy-pkgs checkout predates the settings packages' sudo cleanup (omacom/omarchy-pkgs#944)"
   exit 0
 fi
