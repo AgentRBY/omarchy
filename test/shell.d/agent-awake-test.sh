@@ -38,7 +38,7 @@ case $1 in
       pkill -P "$(<"$TEST_DIR/holder.pid")" 2>/dev/null
       kill "$(<"$TEST_DIR/holder.pid")" 2>/dev/null
     fi
-    rm -f "$TEST_DIR/unit-active" "$TEST_DIR/holder.pid"
+    rm -f "$TEST_DIR/unit-active" "$TEST_DIR/holder.pid" "$TEST_DIR/deactivating"
     "$TEST_DIR/bin/run-stop-hook"
     ;;
 esac
@@ -54,6 +54,8 @@ if [[ " $* " == *" omarchy-notification-send "* ]]; then
 fi
 printf 'systemd-run %s\n' "$*" >>"$TEST_DIR/log"
 [[ -e $TEST_DIR/run-fails ]] && exit 1
+# A unit still in its stop hook is neither active nor gone.
+[[ -e $TEST_DIR/deactivating ]] && { echo "Unit omarchy-agent-awake.service was already loaded" >&2; exit 1; }
 for arg in "$@"; do
   [[ $arg == --property=ExecStopPost=* ]] && printf '%s\n' "${arg#--property=ExecStopPost=}" >"$TEST_DIR/stop-hook"
 done
@@ -179,7 +181,7 @@ export HOME="$home"
 
 reset() {
   [[ -r $tmpdir/holder.pid ]] && { pkill -P "$(<"$tmpdir/holder.pid")" 2>/dev/null; kill "$(<"$tmpdir/holder.pid")" 2>/dev/null; } || true
-  rm -f "$tmpdir"/{unit-active,holder.pid,no-desktop,no-lid,battery,run-fails,inhibit-fails,slow-inhibit,on-sleep,lid-closed,docked,stop-hook,slow-power,restore-fails}
+  rm -f "$tmpdir"/{unit-active,holder.pid,no-desktop,no-lid,battery,run-fails,inhibit-fails,slow-inhibit,on-sleep,lid-closed,docked,stop-hook,slow-power,restore-fails,deactivating}
   echo performance >"$tmpdir/profile"
   rm -rf "$state" "$home"
   mkdir -p "$home"
@@ -378,6 +380,14 @@ run 2h >/dev/null
 grep -q '^stop' "$log" || fail "start stops a holder that is ending"
 [[ $(grep -c '^systemd-run' "$log") == 1 ]] || fail "start then runs a new holder"
 pass "start after a holder began ending starts a new one"
+
+# A unit that ended on its own may still be in its stop hook, giving the
+# profile back; starting again then waits for it rather than failing.
+reset
+touch "$tmpdir/deactivating"
+run 2h >/dev/null || fail "starting while the last unit is still in its stop hook succeeds" "$(<"$log")"
+PATH="$fake_bin:$PATH" "$awake" active || fail "the new session is running"
+pass "starting again while the last unit is still in its stop hook waits for it"
 
 # Killed holder: the unit is gone but the record stays; status believes systemd.
 reset

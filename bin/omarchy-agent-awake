@@ -276,6 +276,10 @@ start() {
   if (( new_holder )); then
     rm -f "$STATE_DIR/ready"
 
+    # A unit that just ended may still be running its stop hook, and systemd
+    # refuses a new one by that name until it is done: stop waits for it.
+    systemctl --user stop "$UNIT" 2>/dev/null
+
     # systemd-run splits the stop hook itself, so only quotes and backslashes
     # in a path need escaping.
     local hook
