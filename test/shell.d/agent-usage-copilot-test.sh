@@ -79,6 +79,10 @@ pass "Copilot collector is ready with usage"
   fail "Copilot collector counts billed requests" "$result"
 pass "Copilot collector counts billed requests"
 
+[[ $(jq -r '.hasPromptStats' <<<"$result") == "false" ]] ||
+  fail "Copilot collector keeps billed requests out of the prompt totals" "$result"
+pass "Copilot collector keeps billed requests out of the prompt totals"
+
 [[ $(jq -r '.todaySessions' <<<"$result") == "2" ]] ||
   fail "Copilot collector counts distinct sessions" "$result"
 pass "Copilot collector counts distinct sessions"
@@ -280,6 +284,10 @@ result=$(run_collector_in "$TRANSCRIPT_HOME")
 [[ $(jq -r '.ready' <<<"$result") == "true" && $(jq -r '.todayPrompts' <<<"$result") == "3" && $(jq -r '.todaySessions' <<<"$result") == "1" ]] ||
   fail "Copilot transcript fallback counts the user's prompts" "$result"
 pass "Copilot transcript fallback counts the user's prompts"
+
+[[ $(jq -r '.hasPromptStats' <<<"$result") == "true" ]] ||
+  fail "Copilot transcript fallback offers its prompts to the panel" "$result"
+pass "Copilot transcript fallback offers its prompts to the panel"
 
 [[ $(jq -c '.modelUsage["claude-sonnet-4.6"]' <<<"$result") == '{"inputTokens":500,"outputTokens":340,"cacheReadInputTokens":900,"cacheCreationInputTokens":100}' ]] ||
   fail "Copilot transcript fallback reads shutdown usage once" "$result"

@@ -407,7 +407,9 @@ def scan_store(conn: sqlite3.Connection) -> dict[str, Any]:
       )
   except sqlite3.Error:
     return blank_stats()
-  return tally.stats()
+  # A row is a billed model request, and one prompt can make many, so its
+  # count stays out of the panel's prompt totals.
+  return dict(tally.stats(), hasPromptStats=False)
 
 
 # ------------------------------------------------------ transcript fallback
@@ -922,6 +924,7 @@ def main() -> int:
     "updatedAt": now.isoformat(),
     "ready": number(stats.get("totalPrompts")) > 0 or len(allowance["limits"]) > 0,
     "hasLocalStats": True,
+    "hasPromptStats": stats.get("hasPromptStats") is not False,
     "tierLabel": allowance["tierLabel"],
     "usageStatusText": allowance["usageStatusText"],
     "authHelpText": allowance["authHelpText"],
