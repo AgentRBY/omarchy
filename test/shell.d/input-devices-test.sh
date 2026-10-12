@@ -35,11 +35,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$stage/root/dev/input"
+mkdir -p "$stage/root/dev/input" "$stage/root/run/udev/data"
 ln -s "$ROOT/shell/Commons" "$stage/Commons"
 cp "$SHELL_TEST_DIR/fixtures/input-devices/shell.qml" "$stage/shell.qml"
 
-OMARCHY_DEV_ROOT="$stage/root" quickshell -p "$stage" --no-color >"$stage/log" 2>&1 &
+OMARCHY_INPUT_ROOT="$stage/root" quickshell -p "$stage" --no-color >"$stage/log" 2>&1 &
 QS_PID=$!
 
 watching=0
@@ -95,3 +95,16 @@ touch "$stage/root/dev/input/event42"
 sleep 1.5
 (( $(changes) > before )) || fail "a recreated /dev/input is watched again" "$(cat "$stage/log")"
 pass "a recreated /dev/input is watched again"
+
+# udev records an input device (character major 13) once it has finished with
+# it, which is when Hyprland gets it, and that can trail the node. Its records
+# for anything else are no input device.
+sleep 4
+before=$(changes)
+touch "$stage/root/run/udev/data/+power_supply:BAT0" "$stage/root/run/udev/data/c189:3"
+sleep 1.5
+(( $(changes) == before )) || fail "udev records of other devices raise nothing" "$(cat "$stage/log")"
+touch "$stage/root/run/udev/data/c13:70"
+sleep 1.5
+(( $(changes) > before )) || fail "udev finishing with an input device raises a change signal" "$(cat "$stage/log")"
+pass "udev finishing with an input device raises a change signal, and other records nothing"
