@@ -66,3 +66,11 @@ run_migration "$xdg/home" XDG_CONFIG_HOME="$xdg/config"
 cmp -s "$shipped" "$xdg/config/owe/config.toml" || fail "a moved XDG config home gets the config where owe reads it"
 [[ ! -e $xdg/home/.config/owe/config.toml ]] || fail "a moved XDG config home gets no stray copy under ~/.config"
 pass "a moved XDG config home gets the config where owe reads it"
+
+dangling="$work/dangling"
+mkdir -p "$dangling/.config/owe"
+ln -s "$work/dotfiles/owe.toml" "$dangling/.config/owe/config.toml"
+run_migration "$dangling"
+[[ -L $dangling/.config/owe/config.toml && $(readlink "$dangling/.config/owe/config.toml") == "$work/dotfiles/owe.toml" ]] ||
+  fail "a symlinked owe config whose target is missing is left alone"
+pass "a symlinked owe config whose target is missing is left alone"
