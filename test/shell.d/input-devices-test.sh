@@ -108,3 +108,13 @@ touch "$stage/root/run/udev/data/c13:70"
 sleep 1.5
 (( $(changes) > before )) || fail "udev finishing with an input device raises a change signal" "$(cat "$stage/log")"
 pass "udev finishing with an input device raises a change signal, and other records nothing"
+
+# A device that comes while the watch is down goes unseen, so the seat is read
+# again once the watch is back.
+sleep 4
+before=$(changes)
+pkill -P "$QS_PID" -f inotifywait
+touch "$stage/root/dev/input/event43"
+sleep 2
+(( $(changes) > before )) || fail "the seat is read again once a lost watch is back" "$(cat "$stage/log")"
+pass "the seat is read again once a lost watch is back"

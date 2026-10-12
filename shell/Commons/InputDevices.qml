@@ -82,9 +82,14 @@ Singleton {
     onTriggered: root.changed()
   }
 
+  // Whatever arrived or left while no watch was set up went unseen, so read
+  // the seat again once one is.
   Timer {
     id: restart
     interval: 1000
-    onTriggered: watcher.running = true
+    onTriggered: {
+      watcher.running = true
+      root.announce()
+    }
   }
 }
