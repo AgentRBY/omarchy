@@ -212,6 +212,11 @@ with open(os.path.join(opencode_home, "opencode", "auth.json"), "w") as handle:
 os.environ["XDG_DATA_HOME"] = opencode_home
 check("OpenCode collector reads opencode's own credential", [c.token for c in collector.credential_candidates()] == ["from_opencode"])
 
+# A custom provider merely named like opencode holds a key for somewhere else.
+with open(os.path.join(opencode_home, "opencode", "auth.json"), "w") as handle:
+  json.dump({"opencode-local": {"type": "api_key", "key": "gateway_secret"}}, handle)
+check("OpenCode collector never sends a look-alike provider's key", "gateway_secret" not in [c.token for c in collector.credential_candidates()])
+
 clear_key()
 pi_home = os.path.join(home, "pi")
 os.makedirs(os.path.join(pi_home, ".pi", "agent"), exist_ok=True)

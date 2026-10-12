@@ -34,6 +34,20 @@ result=$(HOME="$PI_HOME" XDG_CACHE_HOME="$PI_HOME/.cache" XDG_DATA_HOME="$PI_HOM
   fail "OpenCode collector folds reasoning into output and strips the thinking suffix" "$result"
 pass "OpenCode collector counts pi and omp subscription usage"
 
+# pi lines without an id can't be told apart, so each one counts.
+NOID_HOME=$(mktemp -d)
+trap 'rm -rf "$PI_HOME" "$NOID_HOME"' EXIT
+mkdir -p "$NOID_HOME/.pi/agent/sessions/project"
+cat >"$NOID_HOME/.pi/agent/sessions/project/pi.jsonl" <<EOF
+{"type":"message","timestamp":"$timestamp","message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":10,"output":1}}}
+{"type":"message","timestamp":"$timestamp","message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":20,"output":2}}}
+EOF
+noid=$(HOME="$NOID_HOME" XDG_CACHE_HOME="$NOID_HOME/.cache" XDG_DATA_HOME="$NOID_HOME/.local/share" \
+  PATH="$PI_HOME/bin:$PATH" "$ROOT/bin/omarchy-agent-usage-opencode")
+[[ $(jq -r '.todayTotalTokens' <<<"$noid") == "33" ]] ||
+  fail "OpenCode collector counts every pi message without an id" "$noid"
+pass "OpenCode collector counts every pi message without an id"
+
 [[ $(jq -r '.id + "/" + (.name) + "/" + (.limits|tostring)' <<<"$result") == 'opencode/OpenCode/[]' ]] ||
   fail "OpenCode collector identifies itself with an empty limits list" "$result"
 pass "OpenCode collector identifies itself with an empty limits list"
@@ -41,7 +55,7 @@ pass "OpenCode collector identifies itself with an empty limits list"
 # A subscription burned entirely through opencode has no pi session files;
 # usage must come from opencode's message database, filtered to its providers.
 OPENCODE_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$OPENCODE_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME"' EXIT
 
 python3 - "$OPENCODE_HOME/.local/share/opencode/opencode.db" <<'PY'
 import json
@@ -91,7 +105,7 @@ pass "OpenCode collector counts opencode database usage"
 
 # The cache is an optimization: the record must stay complete either way.
 CACHE_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$OPENCODE_HOME" "$CACHE_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME"' EXIT
 mkdir -p "$CACHE_HOME/bin" "$CACHE_HOME/.pi/agent/sessions/project"
 
 cat >"$CACHE_HOME/.pi/agent/sessions/project/pi.jsonl" <<EOF
@@ -116,7 +130,7 @@ pass "OpenCode collector caches and reuses local stats"
 # Some builds move the same message JSON into session_message with the role in
 # a type column, and it reads on its own.
 SESSION_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME"' EXIT
 
 python3 - "$SESSION_HOME/.local/share/opencode/opencode.db" <<'PY'
 import json
@@ -164,7 +178,7 @@ pass "OpenCode collector falls back to the session_message store"
 # fork's copies of its source's messages don't count again. OPENCODE_DB
 # points at the database the way opencode itself reads it.
 V2_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME"' EXIT
 
 python3 - "$V2_HOME/elsewhere/opencode-dev.db" <<'PY'
 import json
@@ -216,7 +230,7 @@ pass "OpenCode collector reads V2 records once each, without fork copies"
 # tokens or of cache counts, a list for a pi message) costs that field or that
 # row, never the record.
 ODD_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME"' EXIT
 mkdir -p "$ODD_HOME/.pi/agent/sessions/project"
 cat >"$ODD_HOME/.pi/agent/sessions/project/pi.jsonl" <<EOF
 {"type":"message","id":"pi-odd","timestamp":"$timestamp","message":["provider","opencode"]}
@@ -252,7 +266,7 @@ pass "OpenCode collector survives malformed nested fields"
 # A machine nobody uses OpenCode's subscription on gives a record the panel
 # skips: no plan, no limits, no usage.
 EMPTY_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME" "$EMPTY_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME" "$EMPTY_HOME"' EXIT
 result=$(HOME="$EMPTY_HOME" XDG_CACHE_HOME="$EMPTY_HOME/.cache" XDG_DATA_HOME="$EMPTY_HOME/.local/share" \
   OPENCODE_API_KEY= PATH="$EMPTY_HOME/bin:$PATH" "$ROOT/bin/omarchy-agent-usage-opencode")
 [[ $(jq -c '{ready, tierLabel, limits, totalPrompts, limitsStale}' <<<"$result") == '{"ready":false,"tierLabel":"","limits":[],"totalPrompts":0,"limitsStale":false}' ]] ||

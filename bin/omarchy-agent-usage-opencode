@@ -218,10 +218,14 @@ def scan_pi_sessions():
 
       if not isinstance(entry, dict) or entry.get("type") != "message":
         continue
-      message_key = path + ":" + str(entry.get("id") or "")
-      if message_key in seen_pi_messages:
-        continue
-      seen_pi_messages.add(message_key)
+      # Only an id can say two lines are the same message; without one, each
+      # line is its own.
+      message_id = str(entry.get("id") or "")
+      if message_id:
+        message_key = path + ":" + message_id
+        if message_key in seen_pi_messages:
+          continue
+        seen_pi_messages.add(message_key)
       message = obj(entry.get("message"))
       if message.get("role") != "assistant":
         continue
@@ -541,10 +545,9 @@ def read_auth_key(path):
     return ""
   if not isinstance(parsed, dict):
     return ""
-  # Prefer the exact provider ids, then any opencode* entry: the login flow
-  # sometimes files the key under a different id than the runtime uses.
+  # Only the subscription's own provider ids: a custom gateway named like
+  # "opencode-local" holds a key for somewhere else, never to be sent here.
   entries = [parsed[provider] for provider in PROVIDERS if provider in parsed]
-  entries += [entry for name, entry in parsed.items() if "opencode" in str(name).lower()]
   for entry in entries:
     if isinstance(entry, dict) and entry.get("key"):
       return str(entry["key"]).strip()
