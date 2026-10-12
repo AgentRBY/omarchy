@@ -124,7 +124,14 @@ case "${*: -1}" in
   *) exit 1 ;;
 esac
 SH
-chmod +x "$stub_bin/omarchy-update-available" "$stub_bin/curl"
+# The clipboard plugin clears stale watchers at startup with a pkill that
+# matches the session shell's watchers too. Signal nothing from here.
+cat >"$stub_bin/pkill" <<'SH'
+#!/bin/bash
+exit 1
+SH
+cp "$stub_bin/pkill" "$stub_bin/killall"
+chmod +x "$stub_bin/omarchy-update-available" "$stub_bin/curl" "$stub_bin/pkill" "$stub_bin/killall"
 
 fail_with_log() {
   sed -n '1,120p' "$log" >&2
@@ -194,45 +201,55 @@ sleep "$IDLE_WINDOW"
 kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited while idle"
 
 # Whatever an allowed command goes on to run is allowed with it, through any
-# subshells in between, so the walk covers the whole log in order: a process
-# started before the window can still exec during it.
-declare -A allowed_pids=() seen=()
+# subshells in between. Ancestry is read from the whole log before anything is
+# judged, since a process started before the window can still exec during it,
+# and a posix_spawn child is only logged once the spawn returns, which can be
+# after its own children.
+declare -A parent=() matched=() execed=() last_command=()
+while read -r pid ppid command; do
+  [[ -n ${parent[$pid]:-} ]] || parent[$pid]=$ppid
+  [[ -n $command ]] || continue
+  execed[$pid]=1
+  last_command[$pid]=$command
+  for pattern in "${ALLOWED[@]}"; do
+    if [[ $command =~ $pattern ]]; then
+      matched[$pid]=1
+      break
+    fi
+  done
+done <"$exec_log"
+
+allowed() {
+  local pid="$1" depth=0
+
+  while [[ -n $pid ]] && (( depth++ < 64 )); do
+    [[ -n ${matched[$pid]:-} ]] && return 0
+    pid=${parent[$pid]:-}
+  done
+  return 1
+}
+
+declare -A seen=()
 unexpected=()
 line_number=0
 while read -r pid ppid command; do
   line_number=$(( line_number + 1 ))
+  (( line_number > start )) || continue
+  allowed "$pid" && continue
 
-  # A fork starts a process that may never exec, a subshell say, and it is
-  # allowed exactly when its parent is.
-  if [[ -z $command ]]; then
-    if [[ -n ${allowed_pids[$ppid]:-} ]]; then
-      allowed_pids[$pid]=1
-    else
-      unset "allowed_pids[$pid]"
-    fi
-    continue
-  fi
-
-  allowed=0
-  if [[ -n ${allowed_pids[$pid]:-} || -n ${allowed_pids[$ppid]:-} ]]; then
-    allowed=1
+  if [[ -n $command ]]; then
+    # A failed exec attempt is retried down PATH under the same pid and command
+    # line, so count each attempt once.
+    key="$pid $command"
+  elif [[ -z ${execed[$pid]:-} ]]; then
+    # A process forked to run only built-ins never execs, but it is a process.
+    key="$pid"
+    command="(subshell of ${last_command[$ppid]:-process $ppid})"
   else
-    for pattern in "${ALLOWED[@]}"; do
-      if [[ $command =~ $pattern ]]; then
-        allowed=1
-        break
-      fi
-    done
-  fi
-  if (( allowed )); then
-    allowed_pids[$pid]=1
     continue
   fi
-
-  # A failed exec attempt is retried down PATH under the same pid and command
-  # line, so count each attempt once.
-  if (( line_number > start )) && [[ -z ${seen["$pid $command"]:-} ]]; then
-    seen["$pid $command"]=1
+  if [[ -z ${seen[$key]:-} ]]; then
+    seen[$key]=1
     unexpected+=("$command")
   fi
 done <"$exec_log"

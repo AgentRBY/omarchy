@@ -44,15 +44,19 @@ guard_scripts() {
 }
 
 # The menu runs the batch from its own checkout, so the guards call this
-# checkout's commands. Prints the fastest of three runs, in milliseconds.
+# checkout's commands. Prints the fastest of three runs, in milliseconds. A run
+# that never returns is cut off at 10s and counts as taking all of it, so a
+# stuck guard is named among the slowest instead of hanging the test.
 fastest_ms() {
-  local best="" start end elapsed
+  local best="" start end elapsed status
 
   for _ in 1 2 3; do
     start=$EPOCHREALTIME
-    OMARCHY_PATH="$ROOT" PATH="$ROOT/bin:$PATH" bash -c "$1" >"$output" 2>/dev/null || true
+    status=0
+    OMARCHY_PATH="$ROOT" PATH="$ROOT/bin:$PATH" timeout --kill-after=1s 10s bash -c "$1" >"$output" 2>/dev/null || status=$?
     end=$EPOCHREALTIME
     elapsed=$(( (${end/[.,]/} - ${start/[.,]/}) / 1000 ))
+    (( status != 124 && status != 137 )) || elapsed=10000
     if [[ -z $best ]] || (( elapsed < best )); then
       best=$elapsed
     fi
