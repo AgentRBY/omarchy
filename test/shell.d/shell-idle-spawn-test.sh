@@ -206,6 +206,11 @@ start=$(exec_count)
 sleep "$IDLE_WINDOW"
 kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited while idle"
 
+# The shell keeps appending, so judge one copy taken as the window closes:
+# both passes below have to read the same lines.
+window_log="$TMPDIR/window.log"
+cp "$exec_log" "$window_log"
+
 # Whatever an allowed command goes on to run is allowed with it, through any
 # subshells in between. Ancestry is read from the whole log before anything is
 # judged, since a process started before the window can still exec during it,
@@ -226,7 +231,7 @@ while read -r pid ppid command; do
       break
     fi
   done
-done <"$exec_log"
+done <"$window_log"
 
 allowed() {
   local pid="$1" depth=0
@@ -261,7 +266,7 @@ while read -r pid ppid command; do
     seen[$key]=1
     unexpected+=("$command")
   fi
-done <"$exec_log"
+done <"$window_log"
 
 if (( ${#unexpected[@]} > 0 )); then
   fail "an idle shell starts no processes" "$(
