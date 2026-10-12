@@ -105,6 +105,16 @@ first_start = datetime.fromtimestamp(windows[0][1] / 1000).astimezone()
 # --limits-only keeps the token sections of this account's last scan.
 carried = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", True)
 
+# ...but only for so long: an old scan is fetched again.
+stats_file = collector.stats_cache(collector.account_key("cursor_test"))
+fresh_scan = json.loads(stats_file.read_text())
+stats_file.write_text(json.dumps(dict(fresh_scan, scannedAtMs=fresh_scan["scannedAtMs"] - collector.LIMITS_ONLY_REUSE_SECONDS * 1000)))
+calls_before = len(calls)
+collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", True)
+refetched = sum(1 for method, _ in calls[calls_before:] if method == "GetAggregatedUsageEvents")
+del calls[calls_before:]
+stats_file.write_text(json.dumps(fresh_scan))
+
 # Another account's scan never stands in: signed in as someone else with the
 # dashboard down, there are no tokens to show.
 class DownForOther(StubClient):
@@ -165,6 +175,7 @@ print(json.dumps({
   "aggregationCalls": sum(1 for method, _ in calls if method == "GetAggregatedUsageEvents"),
   "windowIsLocalMidnight": (first_start.hour, first_start.minute, first_start.second) == (0, 0, 0),
   "carriedRecentDays": carried["recentDays"] == record["recentDays"],
+  "refetched": refetched,
   "carriedSkipsAggregation": sum(1 for method, _ in calls if method == "GetAggregatedUsageEvents") == collector.RECENT_DAYS,
 }))
 PY
@@ -205,6 +216,10 @@ pass "Cursor collector separates today from the rest of the week"
 [[ $(jq -r '.carriedRecentDays' <<<"$result") == "true" && $(jq -r '.carriedSkipsAggregation' <<<"$result") == "true" ]] ||
   fail "Cursor collector keeps the token sections on --limits-only" "$result"
 pass "Cursor collector keeps the token sections on --limits-only"
+
+[[ $(jq -r '.refetched' <<<"$result") == "7" ]] ||
+  fail "Cursor collector fetches tokens again once the carried scan is old" "$result"
+pass "Cursor collector fetches tokens again once the carried scan is old"
 
 [[ $(jq -c '.record | {limitsStale, fetched: (.limitsFetchedAt > 0)}' <<<"$result") == '{"limitsStale":false,"fetched":true}' ]] ||
   fail "Cursor collector stamps fresh limits" "$result"

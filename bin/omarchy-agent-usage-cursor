@@ -36,6 +36,8 @@ API_BASE_URL = "https://api2.cursor.sh"
 SERVICE = "aiserver.v1.DashboardService"
 REQUEST_TIMEOUT = 20
 RECENT_DAYS = 7
+# How long --limits-only serves the last token scan before asking again.
+LIMITS_ONLY_REUSE_SECONDS = 900
 
 
 class CursorError(Exception):
@@ -299,12 +301,18 @@ def carried_stats(key: str, today: date) -> dict[str, Any]:
   return stats
 
 
+def carried_stats_fresh(key: str, today: date) -> bool:
+  cached = read_json(stats_cache(key))
+  age = now_ms() - number(cached.get("scannedAtMs"))
+  return cached.get("scanDate") == today.isoformat() and 0 <= age < LIMITS_ONLY_REUSE_SECONDS * 1000
+
+
 def collect_stats(client: CursorClient, today: date, key: str) -> dict[str, Any]:
   windows = day_windows(today, RECENT_DAYS)
   with ThreadPoolExecutor(max_workers=4) as pool:
     rows = list(pool.map(lambda window: client.aggregations(window[1], window[2]), windows))
   stats = summarize_usage([(window[0], summarize_day(day_rows)) for window, day_rows in zip(windows, rows)])
-  write_json(stats_cache(key), {"scanDate": today.isoformat(), "stats": stats})
+  write_json(stats_cache(key), {"scanDate": today.isoformat(), "scannedAtMs": now_ms(), "stats": stats})
   return stats
 
 
@@ -446,7 +454,9 @@ def scan(api_base_url: str, auth_path: Path, limits_only: bool, state_db: Path |
     limitsFetchedAt=now_ms(),
   )
   write_json(cache, {"fetchedAtMs": record["limitsFetchedAt"], "tierLabel": record["tierLabel"], "limits": record["limits"]})
-  if limits_only:
+  # --limits-only runs while a meter is near its limit, which can last hours,
+  # so the tokens it carries are only so old before they are fetched again.
+  if limits_only and carried_stats_fresh(key, today):
     record.update(carried_stats(key, today))
   else:
     try:
