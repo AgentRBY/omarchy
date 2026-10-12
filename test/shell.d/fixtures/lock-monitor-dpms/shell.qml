@@ -88,10 +88,16 @@ ShellRoot {
     throw new Error("Missing lock IPC handler")
   }
 
+  // Found by its interval once; a step shortens it to stand in for a suspend.
+  property var resumeWatchTimer: null
   function resumeWatch() {
+    if (resumeWatchTimer) return resumeWatchTimer
     var objects = service.data || []
     for (var i = 0; i < objects.length; i++) {
-      if (objects[i].interval === 30000 && objects[i].repeat === false && "armedAt" in objects[i]) return objects[i]
+      if (objects[i].interval === 20000 && objects[i].repeat === false && "armedAt" in objects[i]) {
+        resumeWatchTimer = objects[i]
+        return resumeWatchTimer
+      }
     }
     throw new Error("Missing resume watch")
   }
@@ -243,6 +249,7 @@ ShellRoot {
         check(since() === 1, "a resume asks the panels once (asked " + since() + " times)")
         check(service.monitorDpmsKnown && !service.screenBlank("TEST-1"), "a panel the resume lit plays the video")
         check(blankTimer().running, "a resume starts a fresh blank countdown")
+        resumeWatch().interval = 20000
         mark()
       }],
       [5500, function() {
@@ -282,6 +289,19 @@ ShellRoot {
         check(service.monitorDpmsKnown && service.screenBlank("TEST-1"), "the fresh answer confirms the blank")
         check(trace.indexOf(false) === -1, "the overtaken answer never restarts the video (" + JSON.stringify(trace) + ")")
         tracing = false
+      }],
+      [2000, function() {
+        // A suspend that starts right away: the blank countdown is the first
+        // frozen timer to fire after the resume.
+        mark()
+        check(lockIpc().lock() === "ok" && resumeWatch().running, "a lock request before suspend arms the resume watch")
+        blankTimer().armedAt -= 60000
+        dpmsState.setText("on\n")
+      }],
+      [5500, function() {
+        check(since() === 1, "the first countdown after a resume asks the panels once (asked " + since() + " times)")
+        check(service.monitorDpmsKnown && !service.screenBlank("TEST-1"), "the countdown finds the panel the resume lit")
+        check(!resumeWatch().running, "the countdown stands the resume watch down")
         service.lockRequested = false
       }],
       [200, function() {

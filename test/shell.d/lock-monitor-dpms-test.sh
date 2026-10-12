@@ -99,7 +99,7 @@ PATH="$stub_bin:$ROOT/bin:$PATH" \
   quickshell -p "$config_dir" --no-color >"$log" 2>&1 &
 QS_PID=$!
 
-for _ in {1..600}; do
+for _ in {1..800}; do
   [[ -s $result ]] && break
   if ! kill -0 "$QS_PID" 2>/dev/null; then
     sed -n '1,220p' "$log" >&2

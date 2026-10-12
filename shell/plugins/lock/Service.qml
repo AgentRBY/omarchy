@@ -247,16 +247,28 @@ Item {
   }
 
   // The sleep lock asks for a lock before every suspend. One already up then
-  // gives up what it knows about the panels, starts a blank countdown, and
-  // arms resumeWatch, which suspend freezes. The panels are not woken here: a
-  // DPMS enable just before suspend flashes a modeset.
+  // gives up what it knows about the panels and starts a blank countdown. The
+  // panels are not woken here: a DPMS enable just before suspend flashes a
+  // modeset.
   function expectResume() {
     if (!lockRequested) return
     displaysBlank = false
     forgetMonitorDpms()
     armBlankTimer()
+  }
+
+  // Suspend freezes Qt's timers, so a countdown armed before it finishes its
+  // remaining time after the resume and finds a wall-clock gap. The blank
+  // countdown is the first to do that; resumeWatch, which outlasts logind's
+  // sleep delay, covers a suspend held past the blank.
+  function armResumeWatch() {
     resumeWatch.armedAt = Date.now()
     resumeWatch.restart()
+  }
+
+  function noteResumed() {
+    resumeWatch.stop()
+    refreshMonitorDpms()
   }
 
   function armBlankTimer() {
@@ -811,8 +823,10 @@ Item {
     onTriggered: {
       // A countdown frozen by suspend fires right after resume, which would
       // blank the freshly woken unlock screen under the user. Wall-clock time
-      // exposes the gap: take a fresh run-up instead of blanking.
+      // exposes the gap: take a fresh run-up instead of blanking, and ask
+      // what the resume did to the panels.
       if (Date.now() - armedAt > interval + 2000) {
+        root.noteResumed()
         root.armBlankTimer()
         return
       }
@@ -823,19 +837,19 @@ Item {
     }
   }
 
-  // Outlasts logind's longest sleep delay (15 s as shipped), so it is still
-  // counting when the machine suspends however long other inhibitors hold it,
-  // and fires right after the resume with a wall-clock gap. It then asks what the resume did
-  // to the panels and blanks them after a fresh run-up. Without a gap the
-  // suspend never happened and there is nothing to do.
+  // Longer than logind's longest sleep delay (15 s as shipped), so it is still
+  // counting when the machine suspends however long other inhibitors hold it.
+  // Firing with a wall-clock gap, it asks what the resume did to the panels
+  // and blanks them after a fresh run-up. Without a gap the suspend never
+  // happened and there is nothing to do.
   Timer {
     id: resumeWatch
-    interval: 30000
+    interval: 20000
     repeat: false
     property double armedAt: 0
     onTriggered: {
       if (Date.now() - armedAt <= interval + 2000) return
-      root.refreshMonitorDpms()
+      root.noteResumed()
       if (root.lockRequested && !root.authenticatingPassword) root.armBlankTimer()
     }
   }
@@ -928,6 +942,7 @@ Item {
       if (!root.passwordPamConfigured) return "missing-pam"
       if (root.currentlyLocked()) root.expectResume()
       else if (!root.beginLock()) return "failed"
+      root.armResumeWatch()
       return "ok"
     }
 
