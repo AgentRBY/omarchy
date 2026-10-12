@@ -91,13 +91,33 @@ pass "migration completion is machine-wide, retryable, and needs no sudo for lat
 )
 pass "migration checks marker ownership and rejects symlinks"
 
+# systemd-tmpfiles operates on an explicit disposable root, never the host.
+reset_grant
+: >"$test_tmp/etc/sudoers.d/99-omarchy-nopasswd-1000"
+: >"$test_tmp/etc/sudoers.d/unrelated"
+rule='r! /etc/sudoers.d/99-omarchy-nopasswd-*'
+/usr/bin/systemd-tmpfiles --root="$test_tmp" --remove --inline "$rule"
+[[ -f $test_tmp/etc/sudoers.d/99-omarchy-nopasswd-1000 ]] || fail "routine tmpfiles shortened a live grant"
+/usr/bin/systemd-tmpfiles --root="$test_tmp" --remove --boot --inline "$rule"
+[[ ! -e $test_tmp/etc/sudoers.d/99-omarchy-nopasswd-1000 && -f $test_tmp/etc/sudoers.d/unrelated ]] || fail "boot cleanup boundary"
+pass "native boot cleanup removes grants while routine tmpfiles preserves them"
+
 # Keep real package scripts in the contract: source and packaging share the
 # same lock and blocker, including the legacy scriptlet fallback.
-pkgs_path=${OMARCHY_PKGS_PATH:-$ROOT/../omarchy-pkgs}
-[[ ! -d $pkgs_path/pkgbuilds ]] || pkgs_path=$pkgs_path/pkgbuilds
+if ! pkgs_path=$(omarchy_pkgs_root); then
+  skip "package scriptlets need the omarchy-pkgs checkout; set OMARCHY_PKGS_PATH to it"
+  exit 0
+fi
+# The scriptlet half of this contract is omacom/omarchy-pkgs#944. Until a
+# checkout carries it, there is no removal hook to hold to the lock; once one
+# does, both settings packages must.
+if ! grep -q '^pre_remove()' "$pkgs_path/omarchy-settings/omarchy-settings.install"; then
+  skip "package scriptlets: the omarchy-pkgs checkout predates the settings packages' sudo cleanup (omacom/omarchy-pkgs#944)"
+  exit 0
+fi
 for name in omarchy-settings omarchy-settings-dev; do
   script="$pkgs_path/$name/$name.install"
-  [[ -f $script ]] || fail "set OMARCHY_PKGS_PATH to the companion package checkout"
+  [[ -f $script ]] || fail "the omarchy-pkgs checkout at $pkgs_path ships $name.install"
   sed -e "s|/etc/|$test_tmp/etc/|g" -e "s|/run|$test_tmp/run|g" \
     -e "s|/usr/bin/stat|$test_tmp/bin/stat|g" -e "s|/usr/bin/rm|$test_tmp/bin/rm|g" \
     "$script" >"$test_tmp/$name.install"
@@ -205,14 +225,3 @@ children=()
 [[ ! -e $test_tmp/etc/sudoers.d/99-omarchy-nopasswd-1000 ]]
 [[ -f $test_tmp/run/omarchy-sudo-passwordless-package-removing ]]
 pass "an announced package removal refuses a waiting publisher and clears the namespace"
-
-# systemd-tmpfiles operates on an explicit disposable root, never the host.
-reset_grant
-: >"$test_tmp/etc/sudoers.d/99-omarchy-nopasswd-1000"
-: >"$test_tmp/etc/sudoers.d/unrelated"
-rule='r! /etc/sudoers.d/99-omarchy-nopasswd-*'
-/usr/bin/systemd-tmpfiles --root="$test_tmp" --remove --inline "$rule"
-[[ -f $test_tmp/etc/sudoers.d/99-omarchy-nopasswd-1000 ]] || fail "routine tmpfiles shortened a live grant"
-/usr/bin/systemd-tmpfiles --root="$test_tmp" --remove --boot --inline "$rule"
-[[ ! -e $test_tmp/etc/sudoers.d/99-omarchy-nopasswd-1000 && -f $test_tmp/etc/sudoers.d/unrelated ]] || fail "boot cleanup boundary"
-pass "native boot cleanup removes grants while routine tmpfiles preserves them"

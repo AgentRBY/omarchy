@@ -84,6 +84,10 @@ Gate only what needs gating — put `require_compositor` in files whose runtime
 half needs a live session, and keep static analysis of the same area in code
 that runs unconditionally before or beside it.
 
+## Companion checkouts
+
+Some checks hold Omarchy's scripts against the packages in the separate omarchy-pkgs repository (or the installer in omarchy-iso). `omarchy_pkgs_root` prints that checkout's `pkgbuilds/` directory: the one `OMARCHY_PKGS_PATH` names (the checkout or its `pkgbuilds/`), else the first of the usual places beside this checkout and `~/Work/omacom`. Without one it fails, and the test skips only the checks that need it, the same way a missing compositor is handled, so the suite stays green on a machine with just this repository. Point `OMARCHY_PKGS_PATH` at the checkout when running from a worktree or an unusual location, or the skip list will name those checks.
+
 ## Unit-testing shell JavaScript from bash
 
 The Quickshell plugins keep their logic in plain `.js` modules

@@ -89,6 +89,31 @@ require_compositor() {
   exit 0
 }
 
+# Prints the pkgbuilds/ directory of the omarchy-pkgs checkout, which some tests
+# hold Omarchy's scripts against. It lives in its own repository, wherever this
+# machine keeps it, so OMARCHY_PKGS_PATH can name it (the checkout or its
+# pkgbuilds/) and the usual places beside this checkout are tried after that.
+# Fails when no checkout is found: a test then skips what needs one.
+omarchy_pkgs_root() {
+  local candidate
+
+  for candidate in \
+    ${OMARCHY_PKGS_PATH:+"$OMARCHY_PKGS_PATH/pkgbuilds" "$OMARCHY_PKGS_PATH"} \
+    "$ROOT/../omarchy-pkgs/pkgbuilds" \
+    "$ROOT/../omarchy/omarchy-pkgs/pkgbuilds" \
+    "$ROOT/../../omarchy-pkgs/pkgbuilds" \
+    "$ROOT/../omacom/omarchy-pkgs/pkgbuilds" \
+    "$ROOT/../../omacom/omarchy-pkgs/pkgbuilds" \
+    "$HOME/Work/omacom/omarchy-pkgs/pkgbuilds"; do
+    if compgen -G "$candidate/*/PKGBUILD" >/dev/null; then
+      (cd "$candidate" && pwd)
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 # Fake the hardware identity omarchy-hw-platform reads: a device tree under
 # $1/proc and a uname in $1/bin reporting the platform's CPU. Run the code under
 # test with OMARCHY_PROC_ROOT="$1/proc" and PATH="$1/bin:$ROOT/bin:...", so the
