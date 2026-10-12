@@ -5,16 +5,25 @@
 // then argv joined by spaces. A fork logs the same line without a command, so
 // a reader can follow ancestry through a subshell that never execs.
 //
+// Known gap: system() and popen() spawn their /bin/sh from inside libc, past
+// these wrappers, so that sh is not logged itself. What it runs is, since the
+// preload is inherited, under a parent the log has never seen.
+//
 // The exec family can run in a vfork child, which shares the parent's memory,
 // so the logging path allocates nothing and takes no locks: raw syscalls from
-// a stack buffer. The real functions are resolved once, at load.
+// a stack buffer, with errno left as the caller had it. The real functions are
+// resolved once, at load.
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#define MAX_LIST_ARGS 256
 
 typedef int (*execve_fn)(const char *, char *const[], char *const[]);
 typedef int (*execv_fn)(const char *, char *const[]);
@@ -22,15 +31,21 @@ typedef int (*fexecve_fn)(int, char *const[], char *const[]);
 typedef pid_t (*fork_fn)(void);
 typedef int (*spawn_fn)(pid_t *, const char *, const posix_spawn_file_actions_t *,
                         const posix_spawnattr_t *, char *const[], char *const[]);
+typedef int (*pidfd_spawn_fn)(int *, const char *, const posix_spawn_file_actions_t *,
+                              const posix_spawnattr_t *, char *const[], char *const[]);
+typedef pid_t (*pidfd_getpid_fn)(int);
 
 static execve_fn real_execve;
 static execv_fn real_execv;
 static execv_fn real_execvp;
 static execve_fn real_execvpe;
 static fexecve_fn real_fexecve;
+static fork_fn real_fork;
 static spawn_fn real_posix_spawn;
 static spawn_fn real_posix_spawnp;
-static fork_fn real_fork;
+static pidfd_spawn_fn real_pidfd_spawn;
+static pidfd_spawn_fn real_pidfd_spawnp;
+static pidfd_getpid_fn real_pidfd_getpid;
 static char log_path[4096];
 
 __attribute__((constructor)) static void init(void) {
@@ -39,9 +54,13 @@ __attribute__((constructor)) static void init(void) {
   real_execvp = (execv_fn)dlsym(RTLD_NEXT, "execvp");
   real_execvpe = (execve_fn)dlsym(RTLD_NEXT, "execvpe");
   real_fexecve = (fexecve_fn)dlsym(RTLD_NEXT, "fexecve");
+  real_fork = (fork_fn)dlsym(RTLD_NEXT, "fork");
   real_posix_spawn = (spawn_fn)dlsym(RTLD_NEXT, "posix_spawn");
   real_posix_spawnp = (spawn_fn)dlsym(RTLD_NEXT, "posix_spawnp");
-  real_fork = (fork_fn)dlsym(RTLD_NEXT, "fork");
+  // glibc 2.39 and later; absent before, and then nothing calls them.
+  real_pidfd_spawn = (pidfd_spawn_fn)dlsym(RTLD_NEXT, "pidfd_spawn");
+  real_pidfd_spawnp = (pidfd_spawn_fn)dlsym(RTLD_NEXT, "pidfd_spawnp");
+  real_pidfd_getpid = (pidfd_getpid_fn)dlsym(RTLD_NEXT, "pidfd_getpid");
 
   const char *path = getenv("OMARCHY_EXEC_LOG");
   if (path && strlen(path) < sizeof(log_path)) strcpy(log_path, path);
@@ -51,6 +70,7 @@ static size_t put_number(char *buf, size_t at, size_t cap, long value) {
   char digits[24];
   int count = 0;
 
+  if (value < 0) value = 0;
   do {
     digits[count++] = (char)('0' + value % 10);
     value /= 10;
@@ -62,6 +82,7 @@ static size_t put_number(char *buf, size_t at, size_t cap, long value) {
 static void record_as(pid_t pid, pid_t parent, char *const argv[]) {
   if (!log_path[0]) return;
 
+  int saved_errno = errno;
   char line[8192];
   size_t cap = sizeof(line) - 1, at = 0;
 
@@ -75,10 +96,12 @@ static void record_as(pid_t pid, pid_t parent, char *const argv[]) {
   line[at++] = '\n';
 
   int fd = open(log_path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0600);
-  if (fd < 0) return;
-  ssize_t written = write(fd, line, at);
-  (void)written;
-  close(fd);
+  if (fd >= 0) {
+    ssize_t written = write(fd, line, at);
+    (void)written;
+    close(fd);
+  }
+  errno = saved_errno;
 }
 
 static void record(char *const argv[]) {
@@ -110,13 +133,67 @@ int fexecve(int fd, char *const argv[], char *const envp[]) {
   return real_fexecve(fd, argv, envp);
 }
 
+// The list forms call the vector ones from inside libc, past the wrappers above,
+// so collect their arguments here and go through the wrappers instead.
+static int collect(const char *first, va_list *args, char *argv[]) {
+  int count = 0;
+
+  argv[count++] = (char *)first;
+  while (argv[count - 1]) {
+    if (count == MAX_LIST_ARGS) {
+      errno = E2BIG;
+      return -1;
+    }
+    argv[count++] = va_arg(*args, char *);
+  }
+  return 0;
+}
+
+int execl(const char *path, const char *arg, ...) {
+  char *argv[MAX_LIST_ARGS];
+  va_list args;
+
+  va_start(args, arg);
+  int status = collect(arg, &args, argv);
+  va_end(args);
+  return status < 0 ? -1 : execv(path, argv);
+}
+
+int execlp(const char *file, const char *arg, ...) {
+  char *argv[MAX_LIST_ARGS];
+  va_list args;
+
+  va_start(args, arg);
+  int status = collect(arg, &args, argv);
+  va_end(args);
+  return status < 0 ? -1 : execvp(file, argv);
+}
+
+int execle(const char *path, const char *arg, ...) {
+  char *argv[MAX_LIST_ARGS];
+  va_list args;
+
+  va_start(args, arg);
+  int status = collect(arg, &args, argv);
+  char *const *envp = va_arg(args, char *const *);
+  va_end(args);
+  return status < 0 ? -1 : execve(path, argv, envp);
+}
+
 pid_t fork(void) {
   pid_t pid = real_fork();
   if (pid == 0) record(NULL);
   return pid;
 }
 
-// The spawned child runs its program from inside libc, past these wrappers, so
+// A vfork cannot be wrapped: the child would return through this frame and
+// tear down the stack its suspended parent still needs. POSIX lets vfork be a
+// fork, so make it one, and log it the same way.
+pid_t vfork(void) {
+  return fork();
+}
+
+// A spawned child runs its program from inside libc, past these wrappers, so
 // it is logged from the parent, under the child's pid, once it exists.
 int posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *actions,
                 const posix_spawnattr_t *attr, char *const argv[], char *const envp[]) {
@@ -133,5 +210,26 @@ int posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_actions_t 
   int status = real_posix_spawnp(&child, file, actions, attr, argv, envp);
   if (status == 0) record_as(child, getpid(), argv);
   if (pid) *pid = child;
+  return status;
+}
+
+static void record_pidfd(int pidfd, char *const argv[]) {
+  pid_t child = real_pidfd_getpid ? real_pidfd_getpid(pidfd) : 0;
+  record_as(child > 0 ? child : 0, getpid(), argv);
+}
+
+int pidfd_spawn(int *pidfd, const char *path, const posix_spawn_file_actions_t *actions,
+                const posix_spawnattr_t *attr, char *const argv[], char *const envp[]) {
+  if (!real_pidfd_spawn) return ENOSYS;
+  int status = real_pidfd_spawn(pidfd, path, actions, attr, argv, envp);
+  if (status == 0) record_pidfd(*pidfd, argv);
+  return status;
+}
+
+int pidfd_spawnp(int *pidfd, const char *file, const posix_spawn_file_actions_t *actions,
+                 const posix_spawnattr_t *attr, char *const argv[], char *const envp[]) {
+  if (!real_pidfd_spawnp) return ENOSYS;
+  int status = real_pidfd_spawnp(pidfd, file, actions, attr, argv, envp);
+  if (status == 0) record_pidfd(*pidfd, argv);
   return status;
 }
