@@ -7,31 +7,13 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 TMPDIR=""
 QS_PID=""
 
-# Sends TERM, gives the processes a few seconds, then KILLs what is left, so a
-# shell that ignores TERM cannot hang the run.
-stop_processes() {
-  local pid
-
-  (( $# > 0 )) || return 0
-  kill "$@" 2>/dev/null || true
-  for _ in {1..30}; do
-    for pid in "$@"; do
-      kill -0 "$pid" 2>/dev/null && break
-      pid=""
-    done
-    [[ -z $pid ]] && return 0
-    sleep 0.1
-  done
-  kill -KILL "$@" 2>/dev/null || true
-}
-
 # Quickshell leaves some of its children running when it is stopped, among them
 # the inotifywait watching the plugin directory, which then holds whatever it
 # inherited open (a flock around the run, say) indefinitely. Once the shell is
 # stopped, stop whatever still runs with this test's scratch OMARCHY_PATH: every
-# child inherits it, it finds the ones a shell that already died left
-# reparented, and, read at the moment of stopping, it never names a pid that
-# has since been reused by something else.
+# child inherits it, and it finds the ones a shell that already died left
+# reparented. The environment is read afresh before every signal, so a pid
+# that has since been reused by something else is never sent one.
 leftover_pids() {
   local environ pid
 
@@ -42,15 +24,34 @@ leftover_pids() {
   done < <(grep -lzxF -- "OMARCHY_PATH=$test_root" /proc/[0-9]*/environ 2>/dev/null || true)
 }
 
-cleanup() {
+signal_leftovers() {
   local leftovers=()
 
+  mapfile -t leftovers < <(leftover_pids)
+  (( ${#leftovers[@]} > 0 )) || return 1
+  kill "$1" "${leftovers[@]}" 2>/dev/null || true
+}
+
+# TERM, a few seconds' grace, then KILL, so nothing that ignores TERM can hang
+# the run. The shell is this script's own child and keeps its pid until it is
+# waited for, so it can be signalled by pid throughout.
+cleanup() {
   if [[ -n $QS_PID ]] && kill -0 "$QS_PID" 2>/dev/null; then
-    stop_processes "$QS_PID"
+    kill "$QS_PID" 2>/dev/null || true
+    for _ in {1..30}; do
+      kill -0 "$QS_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -KILL "$QS_PID" 2>/dev/null || true
     wait "$QS_PID" 2>/dev/null || true
   fi
-  mapfile -t leftovers < <(leftover_pids)
-  stop_processes "${leftovers[@]}"
+  if signal_leftovers -TERM; then
+    for _ in {1..30}; do
+      [[ -n $(leftover_pids) ]] || break
+      sleep 0.1
+    done
+    signal_leftovers -KILL || true
+  fi
   [[ -n ${test_root:-} ]] && rm -f "$(shell_ipc_socket "$test_root")"
   [[ -n $TMPDIR && -d $TMPDIR ]] && rm -rf "$TMPDIR"
   return 0
