@@ -24,7 +24,16 @@ BUDGET_MS=$(( ${OMARCHY_THEME_SET_BUDGET_MS:-500} * SPEED_PERCENT / 100 ))
 STUB_COST=1
 
 sandbox=$(mktemp -d)
-trap 'rm -rf "$sandbox"' EXIT
+# A gated Hunk nudge still waiting gives up once the gate opens or the sandbox
+# is gone; open it on the way out, then give the waiter a moment to see it.
+cleanup() {
+  if [[ -d $sandbox ]]; then
+    touch "$sandbox/hunk-gate"
+    /usr/bin/sleep 0.3
+  fi
+  rm -rf "$sandbox"
+}
+trap cleanup EXIT
 
 test_home="$sandbox/home"
 stub_bin="$sandbox/bin"
@@ -76,7 +85,7 @@ cat >"$stub_bin/sleep" <<'SH'
 #!/bin/bash
 if [[ -n ${HUNK_GATE:-} ]] && tr '\0' ' ' <"/proc/$PPID/cmdline" 2>/dev/null | grep -q omarchy-theme-set-hunk; then
   for _ in {1..100}; do
-    [[ -e $HUNK_GATE ]] && exit 0
+    [[ -e $HUNK_GATE || ! -d ${HUNK_GATE%/*} ]] && exit 0
     /usr/bin/sleep 0.1
   done
   exit 0
@@ -188,4 +197,10 @@ HUNK_GATE="$sandbox/hunk-gate" run_theme_set "Catppuccin" ||
 nudges=$(grep -c '^pkill -WINCH -x hunk' "$calls" || true)
 touch "$sandbox/hunk-gate"
 (( nudges == 1 )) || fail "theme set returns before Hunk's settle nudge" "Hunk was nudged $nudges times before the switch returned."
+# The gate open, the settle nudge follows.
+for _ in {1..30}; do
+  (( $(grep -c '^pkill -WINCH -x hunk' "$calls" || true) == 2 )) && break
+  /usr/bin/sleep 0.1
+done
+(( $(grep -c '^pkill -WINCH -x hunk' "$calls" || true) == 2 )) || fail "Hunk gets its settle nudge once the gate opens"
 pass "theme set returns before Hunk's settle nudge"
