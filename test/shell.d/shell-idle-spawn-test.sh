@@ -186,14 +186,26 @@ start=$(exec_count)
 sleep "$IDLE_WINDOW"
 kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited while idle"
 
-# Whatever an allowed command goes on to run is allowed with it, so the walk
-# covers the whole log in order: a process started before the window can still
-# exec during it.
+# Whatever an allowed command goes on to run is allowed with it, through any
+# subshells in between, so the walk covers the whole log in order: a process
+# started before the window can still exec during it.
 declare -A allowed_pids=() seen=()
 unexpected=()
 line_number=0
 while read -r pid ppid command; do
   line_number=$(( line_number + 1 ))
+
+  # A fork starts a process that may never exec, a subshell say, and it is
+  # allowed exactly when its parent is.
+  if [[ -z $command ]]; then
+    if [[ -n ${allowed_pids[$ppid]:-} ]]; then
+      allowed_pids[$pid]=1
+    else
+      unset "allowed_pids[$pid]"
+    fi
+    continue
+  fi
+
   allowed=0
   if [[ -n ${allowed_pids[$pid]:-} || -n ${allowed_pids[$ppid]:-} ]]; then
     allowed=1

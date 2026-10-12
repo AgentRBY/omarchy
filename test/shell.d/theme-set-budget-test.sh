@@ -42,12 +42,22 @@ SH
   chmod +x "$stub_bin/$name"
 }
 
-# Nothing from the session can reach the user's desktop: the compositor, the
-# shell, signals to running apps and privileged writes all land in stubs.
-for name in hyprctl omarchy-shell pkill killall makoctl gsettings notify-send \
-  omarchy-notification-send omarchy-theme-set-browser-policy omarchy-theme-set-herdr-machines \
-  omarchy-theme-bg-cache omarchy-hook chromium google-chrome google-chrome-stable \
-  microsoft-edge-stable brave brave-origin obsidian systemctl busctl owe; do
+# The switch sees no program of the host's but plain tools, so an app the host
+# happens to have installed (an ASUS keyboard's asusctl, VSCodium, a browser)
+# is absent rather than retinted for real. Everything it may reach on the
+# desktop is a stub: the compositor, the shell, signals to running apps and
+# privileged writes.
+tools_bin="$sandbox/tools"
+mkdir -p "$tools_bin"
+for tool in awk base64 basename cat chmod cksum cmp cp cut date dirname env find flock \
+  gawk grep head id jq ln ls md5sum mkdir mktemp mv ps readlink realpath rm rmdir sed \
+  seq setsid sha256sum sleep sort stat tail tee timeout touch tr tty uname uniq wc xargs; do
+  path=$(command -v "$tool") || fail "required command is available: $tool"
+  ln -s "$path" "$tools_bin/$tool"
+done
+
+for name in hyprctl omarchy-shell pkill killall omarchy-theme-set-browser-policy \
+  omarchy-theme-set-herdr-machines omarchy-theme-bg-cache omarchy-hook; do
   stub "$name"
 done
 # Never escalate: the browser policy hook would rewrite the system's policy.
@@ -74,29 +84,33 @@ jq -n '[{identifier: {id: "enkia.tokyo-night"}, relativeLocation: "enkia.tokyo-n
   >"$test_home/.vscode/extensions/extensions.json"
 echo '{}' >"$test_home/.config/Code/User/settings.json"
 
+# Cursor is the one editor the VS Code hook names by absolute path.
+mkdir -p "$test_home/.local/state/omarchy/toggles"
+touch "$test_home/.local/state/omarchy/toggles/skip-cursor-theme-changes"
+
 run_theme_set() {
   env -i \
     HOME="$test_home" \
     USER="${USER:-omarchy}" \
     LANG=C.UTF-8 \
     OMARCHY_PATH="$ROOT" \
-    PATH="$stub_bin:$ROOT/bin:/usr/local/bin:/usr/bin:/bin" \
+    PATH="$stub_bin:$ROOT/bin:$tools_bin" \
     XDG_RUNTIME_DIR="$sandbox/run" \
     TMUX_TMPDIR="$sandbox/tmux" \
     OMARCHY_THEME_SKIP_BACKGROUND=1 \
     OMARCHY_BROWSER_POLICY_DIRS="$sandbox/policy" \
-    "$ROOT/bin/omarchy-theme-set" "$1" >/dev/null 2>&1
+    "$ROOT/bin/omarchy-theme-set" "$1" >"$sandbox/theme-set.log" 2>&1
 }
 
 # A first switch sets up the scratch home, so the timed ones change between two
 # themes the way a user would.
-run_theme_set "Catppuccin" || fail "theme set runs in a scratch home"
+run_theme_set "Catppuccin" || fail "theme set runs in a scratch home" "$(cat "$sandbox/theme-set.log")"
 
 best=""
 for theme in "Tokyo Night" "Catppuccin" "Tokyo Night"; do
   : >"$calls"
   start=$EPOCHREALTIME
-  run_theme_set "$theme" || fail "theme set switches to $theme in a scratch home"
+  run_theme_set "$theme" || fail "theme set switches to $theme in a scratch home" "$(cat "$sandbox/theme-set.log")"
   end=$EPOCHREALTIME
   elapsed=$(( (${end/[.,]/} - ${start/[.,]/}) / 1000 ))
   if [[ -z $best ]] || (( elapsed < best )); then
