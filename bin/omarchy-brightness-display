@@ -84,8 +84,18 @@ fi
 
 step="$1"
 
+# Hyprland announces DPMS on no event, so tell a lock showing a video that its
+# panels changed, even ones that came back on their own after a resume. The
+# lock's own blank and wake already check when they finish.
+notify_lock() {
+  if [[ $OMARCHY_DISPLAY_FROM_LOCK != "1" ]]; then
+    omarchy-shell -q lock refreshDisplays
+  fi
+}
+
 if [[ $step == "off" ]]; then
   hyprctl dispatch 'hl.dsp.dpms({ action = "disable" })' >/dev/null 2>&1
+  notify_lock
   exit 0
 elif [[ $step == "on" ]]; then
   # Skip the dispatch when every active display is already lit: a redundant
@@ -94,13 +104,7 @@ elif [[ $step == "on" ]]; then
   if ! hyprctl monitors -j 2>/dev/null | jq -e '[.[] | select(.disabled == false)] | length > 0 and all(.dpmsStatus)' >/dev/null 2>&1; then
     hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1
   fi
-
-  # Hyprland announces DPMS on no event, so tell a lock showing a video that
-  # its panels are lit, even ones that came back on their own after a resume.
-  # The lock's own wake already checks when it finishes.
-  if [[ $OMARCHY_DISPLAY_WAKE_FROM_LOCK != "1" ]]; then
-    omarchy-shell -q lock refreshDisplays
-  fi
+  notify_lock
   exit 0
 fi
 

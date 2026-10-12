@@ -33,7 +33,7 @@ blank_works="$TMPDIR/blank-works"
 hyprctl_failures="$TMPDIR/hyprctl-failures"
 hyprctl_hold="$TMPDIR/hyprctl-hold"
 hyprctl_log="$TMPDIR/hyprctl.log"
-wake_log="$TMPDIR/wake.log"
+display_log="$TMPDIR/display.log"
 
 mkdir -p "$config_dir" "$stub_bin" "$home/.local/state/omarchy/current"
 cp "$SHELL_TEST_DIR/fixtures/lock-monitor-dpms/shell.qml" "$config_dir/shell.qml"
@@ -68,6 +68,7 @@ EOF
 
 cat >"$stub_bin/omarchy-brightness-display" <<EOF
 #!/bin/bash
+printf '%s %s\n' "\$1" "\${OMARCHY_DISPLAY_FROM_LOCK:-unset}" >>"$display_log"
 if [[ \$1 == "on" ]]; then
   printf 'on\n' >"$dpms_state"
 elif [[ \$1 == "off" && \$(<"$blank_works") == "yes" ]]; then
@@ -77,7 +78,6 @@ EOF
 
 cat >"$stub_bin/omarchy-system-wake" <<EOF
 #!/bin/bash
-printf '%s\n' "\${OMARCHY_DISPLAY_WAKE_FROM_LOCK:-unset}" >>"$wake_log"
 omarchy-brightness-display on
 EOF
 
@@ -123,5 +123,6 @@ fi
 
 pass "a locked video wallpaper follows the panels without polling Hyprland"
 
-[[ -s $wake_log ]] && ! grep -vqx 1 "$wake_log" || fail "the lock's own wake tells the display command not to call back" "$(cat "$wake_log" 2>/dev/null)"
-pass "the lock's own wake tells the display command not to call back"
+grep -qx 'on 1' "$display_log" && grep -qx 'off 1' "$display_log" && ! grep -vqx '\(on\|off\) 1' "$display_log" ||
+  fail "the lock's own blank and wake tell the display command not to call back" "$(cat "$display_log" 2>/dev/null)"
+pass "the lock's own blank and wake tell the display command not to call back"

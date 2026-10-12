@@ -223,7 +223,18 @@ grep -qx 'omarchy-shell -q lock refreshDisplays' "$call_log" || fail "panels tha
 pass "panels that came back on their own are reported to the lock"
 
 : >"$call_log"
-OMARCHY_DISPLAY_WAKE_FROM_LOCK=1 run_brightness on
+OMARCHY_DISPLAY_FROM_LOCK=1 run_brightness on
 grep -q '^hyprctl dispatch .*action = "enable"' "$call_log" || fail "the lock's own wake still enables DPMS" "$(<"$call_log")"
 ! grep -q '^omarchy-shell' "$call_log" || fail "the lock's own wake is not reported back to it" "$(<"$call_log")"
 pass "the lock's own wake is not reported back to it"
+
+: >"$call_log"
+run_brightness off
+grep -q '^hyprctl dispatch .*action = "disable"' "$call_log" || fail "blanking disables DPMS" "$(<"$call_log")"
+grep -qx 'omarchy-shell -q lock refreshDisplays' "$call_log" || fail "blanking tells the lock" "$(<"$call_log")"
+pass "blanking from outside the lock tells it"
+
+: >"$call_log"
+OMARCHY_DISPLAY_FROM_LOCK=1 run_brightness off
+! grep -q '^omarchy-shell' "$call_log" || fail "the lock's own blank is not reported back to it" "$(<"$call_log")"
+pass "the lock's own blank is not reported back to it"

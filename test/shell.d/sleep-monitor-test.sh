@@ -32,6 +32,13 @@ printf '   boolean true\n'
 exec sleep 30
 SH
 
+# Never arm a real timer on the machine running the suite.
+cat >"$mock_bin/systemd-run" <<'SH'
+#!/bin/bash
+
+printf '%s\n' "$*" >>"${RUN_LOG:-/dev/null}"
+SH
+
 cat >"$mock_omarchy/bin/omarchy-system-sleep-lock" <<'SH'
 #!/bin/bash
 
@@ -40,6 +47,7 @@ SH
 
 chmod +x \
   "$mock_bin/systemd-inhibit" \
+  "$mock_bin/systemd-run" \
   "$mock_bin/dbus-monitor" \
   "$mock_omarchy/bin/omarchy-system-sleep-lock"
 ln -s "$sleep_monitor" "$mock_omarchy/bin/omarchy-system-sleep-monitor"
@@ -104,3 +112,27 @@ if kill -0 "$producer_pid" 2>/dev/null; then
   fail "sleep monitor cleans up its producer when terminated" "producer still running: $producer_pid"
 fi
 pass "sleep monitor cleans up its producer when terminated"
+
+# A resume can light the panels behind the lock with nothing the lock hears,
+# so a sleep arms a monotonic timer that fires just after the wake and asks it.
+cat >"$mock_bin/dbus-monitor" <<'SH'
+#!/bin/bash
+
+printf '   boolean true\n'
+exec sleep 30
+SH
+chmod +x "$mock_bin/dbus-monitor"
+run_log="$tmpdir/run-log"
+: >"$lock_log"
+
+OMARCHY_PATH="$mock_omarchy" \
+  PATH="$mock_bin:$PATH" \
+  PRODUCER_PID_FILE="$producer_pid_file" \
+  LOCK_LOG="$lock_log" \
+  RUN_LOG="$run_log" \
+  "$sleep_monitor"
+
+[[ $(<"$lock_log") == "locked" ]] || fail "the sleep still locks before arming the resume check"
+[[ $(<"$run_log") == "--user --quiet --collect --no-block --on-active=2s --timer-property=AccuracySec=100ms $mock_omarchy/bin/omarchy-shell -q lock refreshDisplays" ]] ||
+  fail "a sleep arms a monotonic timer that asks the lock to check its panels after resume" "$(cat "$run_log" 2>/dev/null)"
+pass "a sleep arms a monotonic timer that asks the lock to check its panels after resume"

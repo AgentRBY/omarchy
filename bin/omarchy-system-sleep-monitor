@@ -4,6 +4,15 @@
 # omarchy:group=system
 # omarchy:hidden=true
 
+# A resume can light the panels with no input, no output change and no event
+# the lock hears. The monotonic clock stands still while suspended, so a short
+# timer armed now fires just after the machine wakes and tells the lock to look.
+schedule_resume_refresh() {
+  timeout --kill-after=0.1s 0.5s systemd-run --user --quiet --collect --no-block \
+    --on-active=2s --timer-property=AccuracySec=100ms \
+    "$OMARCHY_PATH/bin/omarchy-shell" -q lock refreshDisplays >/dev/null 2>&1 || true
+}
+
 consume_sleep_events() {
   local line sleep_lock
   sleep_lock="$OMARCHY_PATH/bin/omarchy-system-sleep-lock"
@@ -11,6 +20,7 @@ consume_sleep_events() {
   while IFS= read -r line; do
     if [[ $line == *"boolean true"* ]]; then
       "$sleep_lock"
+      schedule_resume_refresh
       return 0
     fi
   done
