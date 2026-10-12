@@ -33,16 +33,22 @@ signal_leftovers() {
 }
 
 # TERM, a few seconds' grace, then KILL, so nothing that ignores TERM can hang
-# the run. The shell is this script's own child and keeps its pid until it is
-# waited for, so it can be signalled by pid throughout.
+# the run. Bash can reap the shell, and free its pid, before it is waited for,
+# so the shell gets KILL only while it was still seen running.
 cleanup() {
+  local alive
+
   if [[ -n $QS_PID ]] && kill -0 "$QS_PID" 2>/dev/null; then
     kill "$QS_PID" 2>/dev/null || true
+    alive=1
     for _ in {1..30}; do
-      kill -0 "$QS_PID" 2>/dev/null || break
+      if ! kill -0 "$QS_PID" 2>/dev/null; then
+        alive=0
+        break
+      fi
       sleep 0.1
     done
-    kill -KILL "$QS_PID" 2>/dev/null || true
+    (( alive == 0 )) || kill -KILL "$QS_PID" 2>/dev/null || true
     wait "$QS_PID" 2>/dev/null || true
   fi
   if signal_leftovers -TERM; then
