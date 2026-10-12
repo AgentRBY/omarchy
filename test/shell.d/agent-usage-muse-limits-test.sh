@@ -145,6 +145,16 @@ refused=$(run_collector --force)
   fail "Muse collector keeps the last limits through a rejected sign-in" "$refused"
 pass "Muse collector keeps the last limits through a rejected sign-in"
 
+# A kept window that has since reset comes back at zero, with no reset time
+# until a check succeeds again.
+limits_cache=$(echo "$TEST_HOME"/.cache/omarchy/agent-usage/muse-limits-*.json)
+jq '.limits[0].resetsAt = "2020-01-01T00:00:00+00:00"' "$limits_cache" >"$limits_cache.tmp" && mv "$limits_cache.tmp" "$limits_cache"
+printf '{"status":500}' >"$STUB_PAYLOAD_FILE"
+lapsed=$(run_collector --force)
+[[ $(jq -c '[.limits[] | {zero: (.percent == 0), reset: (.resetsAt != "")}]' <<<"$lapsed") == '[{"zero":true,"reset":false},{"zero":false,"reset":true}]' ]] ||
+  fail "Muse collector resets a kept window once it has ended" "$lapsed"
+pass "Muse collector resets a kept window once it has ended"
+
 # The login file belongs to the Muse CLI: every run so far only read it.
 [[ $(auth_state) == "$auth_before" && $(ls -A "$TEST_HOME/.config/muse") == "auth.json" ]] ||
   fail "Muse collector never writes the login file" "$(ls -lA --time-style=+%s "$TEST_HOME/.config/muse")"

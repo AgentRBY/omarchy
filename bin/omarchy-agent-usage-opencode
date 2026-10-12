@@ -683,7 +683,7 @@ def probe_limits(credential):
 def limit_window_open(entry, now):
   # A cached percentage stops meaning anything once its window resets: a
   # stale 78% would misreport an allowance that is now untouched. An
-  # unreadable timestamp is no reason to drop a real number.
+  # unreadable timestamp is no reason to doubt a real number.
   raw = str(entry.get("resetsAt") or "")
   if raw == "":
     return True
@@ -701,7 +701,10 @@ def open_cached_limits(cached):
   if not isinstance(entries, list):
     return []
   now = datetime.now(timezone.utc)
-  return [entry for entry in entries if isinstance(entry, dict) and limit_window_open(entry, now)]
+  return [
+    entry if limit_window_open(entry, now) else dict(entry, percent=0.0, resetsAt="")
+    for entry in entries if isinstance(entry, dict)
+  ]
 
 
 # One cache per credential, so a machine signed in to another account never
@@ -754,7 +757,7 @@ def collect_limits(force):
         refused = refused[:3] + (expired,)
       continue
 
-    # Last good numbers, dimmed as stale, beat an empty limits section while
+    # Last good numbers, marked stale, beat an empty limits section while
     # the probe is down.
     result["retryAdvised"] = bool(probe.get("transport"))
     answer(fallback, fetched_at, True)

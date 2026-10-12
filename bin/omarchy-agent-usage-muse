@@ -583,7 +583,8 @@ def probe_key(access_token: str) -> dict:
 
 def limit_window_open(entry: dict, now: datetime) -> bool:
   # A cached percentage lives only until its window rolls over; past-reset
-  # figures describe a period that is over. No (or unreadable) reset is kept.
+  # figures describe a period that is over and read as zero. No (or
+  # unreadable) reset keeps its number.
   raw = str(entry.get("resetsAt") or "")
   if raw == "":
     return True
@@ -601,7 +602,10 @@ def usable_cached_limits(cached: dict) -> list:
   if not isinstance(entries, list):
     return []
   now = datetime.now(timezone.utc)
-  return [entry for entry in entries if isinstance(entry, dict) and limit_window_open(entry, now)]
+  return [
+    entry if limit_window_open(entry, now) else dict(entry, percent=0.0, resetsAt="")
+    for entry in entries if isinstance(entry, dict)
+  ]
 
 
 # Keyed by who the token signs in as (the JWT's subject when it is one), so a
@@ -642,7 +646,7 @@ def collect_limits(force: bool) -> dict:
   fetched_at = number(cached.get("fetchedAtMs"))
   result["tierLabel"] = str(cached.get("tierLabel") or "") or "Account"
 
-  # The last good windows, dimmed as stale, with when they were measured.
+  # The last good windows, marked stale, with when they were measured.
   def keep_cached():
     result["limits"] = fallback
     result["stale"] = True

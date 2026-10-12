@@ -778,7 +778,7 @@ def fetch_remote_quota() -> dict[str, Any]:
   """The live quota, or the last good one marked stale.
 
   Every failure is soft: a missing token, an offline machine, or a changed
-  payload keeps the last answer this token got, dimmed, or leaves the record
+  payload keeps the last answer this token got, marked stale, or leaves the record
   on its local stats rather than failing the whole collection. The cache is
   keyed by the token, so a machine signed in to another account never shows
   the last one's allowance.
@@ -798,14 +798,16 @@ def fetch_remote_quota() -> dict[str, Any]:
     return quota
 
   cached = read_fresh_json(cache, float("inf")) or {}
-  if cached.get("available") and quota_window_open(cached):
+  if cached.get("available"):
+    if not quota_window_open(cached):
+      cached.update(used=0.0, resetsAt="")
     cached.update(stale=True, failure=quota.get("reason", ""))
     return cached
   return quota
 
 
 # A kept answer describes its own allowance window and nothing after it: once
-# that window resets, its usage is gone. Without a reset date, the window is
+# that window resets, its usage is back at zero. Without a reset date, the window is
 # the calendar month (UTC) it was fetched in.
 def quota_window_open(cached: dict[str, Any]) -> bool:
   now = dt.datetime.now(dt.timezone.utc)

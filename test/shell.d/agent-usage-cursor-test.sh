@@ -129,7 +129,7 @@ cache.write_text(json.dumps(yesterday_scan))
 overnight = collector.carried_stats(key, today)
 cache.write_text(json.dumps(scan))
 
-# A kept limit whose billing cycle has ended is dropped, not shown stale.
+# A kept limit whose billing cycle has ended comes back at zero.
 limits_cache = collector.limits_cache(key)
 good = json.loads(limits_cache.read_text())
 limits_cache.write_text(json.dumps(dict(good, limits=[dict(good["limits"][0], resetsAt="2020-01-01T00:00:00+00:00")] + good["limits"][1:])))
@@ -158,7 +158,7 @@ refused = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME
 print(json.dumps({
   "other": other,
   "overnight": overnight,
-  "lapsed": [limit["label"] for limit in lapsed["limits"]],
+  "lapsed": [[limit["label"], round(limit["percent"] * 100), limit["resetsAt"]] for limit in lapsed["limits"][:2]],
   "down": down,
   "refused": refused,
   "record": record,
@@ -226,9 +226,9 @@ pass "Cursor collector never carries another account's numbers"
   fail "Cursor collector moves a scan from yesterday onto today's week" "$result"
 pass "Cursor collector moves a scan from yesterday onto today's week"
 
-[[ $(jq -c '.lapsed' <<<"$result") == '["Auto models","Named models","On-demand $9.51 / $10.00"]' ]] ||
-  fail "Cursor collector drops a kept limit whose cycle ended" "$result"
-pass "Cursor collector drops a kept limit whose cycle ended"
+[[ $(jq -c '.lapsed' <<<"$result") == '[["Included total",0,""],["Auto models",12,"2026-10-15T21:32:06+00:00"]]' ]] ||
+  fail "Cursor collector resets a kept limit whose cycle ended" "$result"
+pass "Cursor collector resets a kept limit whose cycle ended"
 
 # Days that spring forward or fall back are 23 or 25 hours long.
 dst=$(TZ=America/New_York python3 - "$ROOT/bin/omarchy-agent-usage-cursor" <<'PY'

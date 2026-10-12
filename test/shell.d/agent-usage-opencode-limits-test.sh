@@ -153,7 +153,7 @@ check(
 )
 
 # A failed probe keeps the last good numbers, marked stale with when they
-# were measured, but only until each window resets.
+# were measured, with each window that has since reset back at zero.
 os.environ["OPENCODE_API_KEY"] = "zen_test"
 collector.cache_root().mkdir(parents=True, exist_ok=True)
 collector.limits_cache_path("zen_test").write_text(json.dumps({
@@ -166,8 +166,9 @@ collector.limits_cache_path("zen_test").write_text(json.dumps({
 collector.urllib.request.urlopen = answer(error=urllib.error.HTTPError("https://x", 500, "Server Error", {}, None))
 result = collector.collect_limits(True)
 check(
-  "OpenCode collector keeps open cached windows, stale, after a failed probe",
-  [w["label"] for w in result["limits"]] == ["Monthly"] and result["stale"] is True
+  "OpenCode collector keeps cached windows, stale, after a failed probe",
+  [(w["label"], w["percent"], w["resetsAt"]) for w in result["limits"]]
+  == [("Rolling (5h)", 0.0, ""), ("Monthly", 0.4, "2999-01-01T00:00:00.000Z")] and result["stale"] is True
   and result["fetchedAtMs"] == 1700000000000 and result["tierLabel"] == "Go" and result["usageStatusText"] == "",
   json.dumps(result),
 )

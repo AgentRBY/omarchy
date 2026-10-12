@@ -118,8 +118,8 @@ editor's own sign-in in `~/.config/Cursor/User/globalStorage/state.vscdb`
 Cursor's session files on disk carry no token counts, so this is the one
 collector with nothing to fall back on: without a credential the record stays
 empty and the panel skips it rather than showing a week of zeros. A failed
-check keeps the account's last good meters, dimmed, until its billing cycle
-ends, and its last week of tokens (today cleared once the day turns over); a
+check keeps the account's last good meters, their age on hover, back at zero
+once its billing cycle ends, and its last week of tokens (today cleared once the day turns over); a
 refused sign-in also says so under the name. Tokens by day and by model cover
 the last seven local days, one aggregation call per day.
 
@@ -145,7 +145,7 @@ its database and `auth.json`, then pi's, and last the OpenCode Console
 session, which asks Console's own endpoint with its workspace id. A refused
 credential hands over to the next one. A recent answer is reused for 15
 seconds, each credential caches its own, a failed check keeps the last good
-windows, dimmed, until they reset, and a rate-limited window reads as full.
+windows, back at zero once they reset, and a rate-limited window reads as full.
 Without a Go plan the panel still shows local token usage.
 
 ### Copilot allowance
@@ -166,7 +166,8 @@ every machine, IDE, and agent on the entitlement and names the plan and the
 reset date. It needs a token from `COPILOT_QUOTA_TOKEN`, `GH_TOKEN`,
 `GITHUB_TOKEN`, or `gh auth token`, and only runs where the Copilot CLI has
 been used, so a machine with `gh` signed in but no Copilot stays out of the
-panel. A failed check keeps the last answer, dimmed. When the endpoint can't
+panel. A failed check keeps the last answer, back at zero once the month
+resets. When the endpoint can't
 be asked at all, a budget in `~/.config/omarchy/agents/copilot.json` gives a
 meter labeled "(est.)" from this machine's CLI spend alone:
 
@@ -225,7 +226,7 @@ session and weekly percents with reset times — the same figures the TUI's
 `/usage` overlay shows. Minting is idempotent (the same Model API key comes
 back every call), so polling is safe; the token travels only in the
 `Authorization` header and neither it nor the returned key is persisted. A
-failed check keeps the last good windows, dimmed, until they reset.
+failed check keeps the last good windows, back at zero once they reset.
 Pay-as-you-go accounts have no subscription windows, so the tab shows
 measured local usage with no meters — never estimated, never zeroed. An
 active plan that returns no `subs_usage` (Muse Code Power Usage answers this
