@@ -7,11 +7,45 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 TMPDIR=""
 QS_PID=""
 
+descendants() {
+  local child
+
+  for child in $(cat /proc/"$1"/task/*/children 2>/dev/null); do
+    echo "$child"
+    descendants "$child"
+  done
+}
+
+# Sends TERM, gives the processes a few seconds, then KILLs what is left, so a
+# shell that ignores TERM cannot hang the run.
+stop_processes() {
+  local pid
+
+  (( $# > 0 )) || return 0
+  kill "$@" 2>/dev/null || true
+  for _ in {1..30}; do
+    for pid in "$@"; do
+      kill -0 "$pid" 2>/dev/null && break
+      pid=""
+    done
+    [[ -z $pid ]] && return 0
+    sleep 0.1
+  done
+  kill -KILL "$@" 2>/dev/null || true
+}
+
+# Quickshell leaves some of its children running when it is stopped, among them
+# the inotifywait watching the plugin directory, which then holds whatever it
+# inherited open (a flock around the run, say) indefinitely. Stop them too.
 cleanup() {
+  local leftovers=()
+
   if [[ -n $QS_PID ]] && kill -0 "$QS_PID" 2>/dev/null; then
-    kill "$QS_PID" 2>/dev/null || true
+    mapfile -t leftovers < <(descendants "$QS_PID")
+    stop_processes "$QS_PID"
     wait "$QS_PID" 2>/dev/null || true
   fi
+  stop_processes "${leftovers[@]}"
   [[ -n ${test_root:-} ]] && rm -f "$(shell_ipc_socket "$test_root")"
   [[ -n $TMPDIR && -d $TMPDIR ]] && rm -rf "$TMPDIR"
   return 0
