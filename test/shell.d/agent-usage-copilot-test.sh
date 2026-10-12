@@ -293,6 +293,18 @@ pass "Copilot transcript fallback sums today's tokens"
   fail "Copilot transcript fallback estimates spend from shutdown cost" "$result"
 pass "Copilot transcript fallback estimates spend from shutdown cost"
 
+# A store that is there but can't be snapshotted leaves only the transcripts,
+# and that short scan isn't cached for the runs after it.
+[[ -n $(find "$TRANSCRIPT_HOME/.cache" -name 'copilot-scan-*.json') ]] ||
+  fail "Copilot collector caches a complete scan" "$(find "$TRANSCRIPT_HOME/.cache")"
+find "$TRANSCRIPT_HOME/.cache" -name 'copilot-scan-*.json' -delete
+printf 'not a database' >"$TRANSCRIPT_HOME/.copilot/session-store.db"
+result=$(run_collector_in "$TRANSCRIPT_HOME")
+[[ $(jq -r '.todayPrompts' <<<"$result") == "3" && -z $(find "$TRANSCRIPT_HOME/.cache" -name 'copilot-scan-*.json') ]] ||
+  fail "Copilot collector doesn't cache a scan its store couldn't join" "$result"
+pass "Copilot collector doesn't cache a scan its store couldn't join"
+rm "$TRANSCRIPT_HOME/.copilot/session-store.db"
+
 # A segment that spans midnight books its shutdown totals on the days its
 # replies landed on: output by each day's reply output (40 / 60), everything
 # else by reply count (2 / 1).

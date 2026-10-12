@@ -677,29 +677,35 @@ def cached_scan(home_dir: Path, max_age_seconds: float) -> dict[str, Any]:
       cached = read_cached_stats(cache_file, max_age_seconds, today)
       if cached is not None:
         return cached
-      stats = direct_scan(home_dir)
-      write_cached_stats(cache_file, stats)
+      stats, complete = direct_scan(home_dir)
+      # A scan cut short isn't served to the next runs; they try again.
+      if complete:
+        write_cached_stats(cache_file, stats)
       return stats
   except Exception as exc:
     print(
       f"omarchy-agent-usage-copilot: cache unavailable ({exc}); scanning directly",
       file=sys.stderr,
     )
-    return direct_scan(home_dir)
+    return direct_scan(home_dir)[0]
 
 
-def direct_scan(home_dir: Path) -> dict[str, Any]:
-  conn, tmpdir = open_store(home_dir / "session-store.db")
+# The stats, and whether they are complete: a store that is there but could
+# not be snapshotted (busy, or too large) leaves only the transcripts, which
+# newer CLIs may not write.
+def direct_scan(home_dir: Path) -> tuple[dict[str, Any], bool]:
+  store = home_dir / "session-store.db"
+  conn, tmpdir = open_store(store)
   if conn is None:
-    return scan_transcripts(home_dir / "session-state")
+    return scan_transcripts(home_dir / "session-state"), not store.exists()
   try:
     if has_table(conn, "assistant_usage_events"):
       stats = scan_store(conn)
       if number(stats.get("totalPrompts")) > 0:
-        return stats
+        return stats, True
     # A store without the usage table, or one that is still empty, falls back
     # to the transcripts exactly like a store-less machine.
-    return scan_transcripts(home_dir / "session-state")
+    return scan_transcripts(home_dir / "session-state"), True
   finally:
     conn.close()
     if tmpdir is not None:
