@@ -85,6 +85,47 @@ cat >"$fake_bin/upower" <<'SH'
 [[ -r $TEST_DIR/battery ]] && cat "$TEST_DIR/battery"
 SH
 
+# The lid, the displays and the power profile are all stand-ins, so a run on a
+# real laptop never touches its own profile. The lid is open unless closed.
+cat >"$fake_bin/omarchy-hw-laptop-closed" <<'SH'
+#!/bin/bash
+[[ -e $TEST_DIR/lid-closed ]]
+SH
+
+cat >"$fake_bin/omarchy-hw-external-monitors" <<'SH'
+#!/bin/bash
+[[ -e $TEST_DIR/docked ]]
+SH
+
+cat >"$fake_bin/busctl" <<'SH'
+#!/bin/bash
+[[ " $* " == *" ActiveProfile "* && -r $TEST_DIR/profile ]] || exit 1
+printf 's "%s"\n' "$(<"$TEST_DIR/profile")"
+SH
+
+cat >"$fake_bin/powerprofilesctl" <<'SH'
+#!/bin/bash
+[[ $1 == "set" ]] || exit 1
+echo "$2" >"$TEST_DIR/profile"
+echo "powerprofilesctl set $2" >>"$TEST_DIR/log"
+SH
+
+cat >"$fake_bin/omarchy-powerprofiles-list" <<'SH'
+#!/bin/bash
+printf '%s\n' power-saver balanced performance
+SH
+
+cat >"$fake_bin/omarchy-powerprofiles-set" <<'SH'
+#!/bin/bash
+echo performance >"$TEST_DIR/profile"
+echo "omarchy-powerprofiles-set $*" >>"$TEST_DIR/log"
+SH
+
+cat >"$fake_bin/omarchy-shell" <<'SH'
+#!/bin/bash
+exit 0
+SH
+
 ln -s "$awake" "$fake_bin/omarchy-agent-awake"
 ln -s "$ROOT/bin/omarchy-agent-busy" "$fake_bin/omarchy-agent-busy"
 
@@ -120,7 +161,8 @@ export HOME="$home"
 
 reset() {
   [[ -r $tmpdir/holder.pid ]] && { pkill -P "$(<"$tmpdir/holder.pid")" 2>/dev/null; kill "$(<"$tmpdir/holder.pid")" 2>/dev/null; } || true
-  rm -f "$tmpdir"/{unit-active,holder.pid,no-desktop,no-lid,battery,run-fails,inhibit-fails,slow-inhibit,on-sleep}
+  rm -f "$tmpdir"/{unit-active,holder.pid,no-desktop,no-lid,battery,run-fails,inhibit-fails,slow-inhibit,on-sleep,lid-closed,docked}
+  echo performance >"$tmpdir/profile"
   rm -rf "$state" "$home"
   mkdir -p "$home"
   : >"$log"
@@ -152,6 +194,7 @@ args=$(grep '^systemd-run' "$log")
 [[ $args != *sleep:* && $args != *:idle* && $args != *"--what=sleep"* && $args != *"--what=idle"* ]] || fail "the holder inhibits nothing but the lid" "$args"
 [[ $args == *"--no-ask-password"* ]] || fail "the holder never prompts for a password" "$args"
 [[ $args == *"--property=RuntimeMaxSec=86460"* ]] || fail "systemd bounds the holder's lifetime" "$args"
+[[ $args == *"--property=ExecStopPost=$(readlink -f "$awake") restore-power"* ]] || fail "the unit gives back the power profile however its holder ends" "$args"
 pass "only the lid switch is inhibited, and systemd bounds the holder"
 
 [[ $(<"$state/ready") == "$(field 0)" ]] || fail "start returns only once the holder has the lid"
@@ -516,6 +559,158 @@ hold
 (( $(<"$tmpdir/now") < 1001100 )) || fail "a holder whose session passed to another stops at once" "now=$(<"$tmpdir/now")"
 grep -q '^bbbbbbbbbbbbbbbb' "$state/session" && ! grep -q '^notify' "$log" || fail "a holder never clears or announces another holder's session"
 pass "a holder that loses its session mid-run stops without touching the new one"
+
+# --- several agents, and the last one out
+
+# Agents mode waits for the last agent: Claude Code finishing while Codex still
+# works keeps it awake, and it ends only once Codex is quiet too.
+hold_session 1028800 agents
+mkdir -p "$home/.claude/projects/p" "$home/.codex/sessions"
+touch "$home/.claude/projects/p/s.jsonl" "$home/.codex/sessions/rollout.jsonl"
+cat >"$tmpdir/on-sleep" <<'SH'
+#!/bin/bash
+now=$(<"$TEST_DIR/now")
+(( now >= 1003600 )) && touch -d "-20 minutes" "$HOME/.claude/projects/p/s.jsonl"
+(( now < 1007200 )) && touch "$HOME/.codex/sessions/rollout.jsonl"
+(( now >= 1007200 )) && touch -d "-20 minutes" "$HOME/.codex/sessions/rollout.jsonl"
+agents=$(cat "$XDG_RUNTIME_DIR/omarchy/agent-awake/agents" 2>/dev/null | paste -sd, -)
+[[ -n $agents && $agents != "$(tail -1 "$TEST_DIR/agents-trail" 2>/dev/null)" ]] && echo "$agents" >>"$TEST_DIR/agents-trail"
+exit 0
+SH
+chmod +x "$tmpdir/on-sleep"
+rm -f "$tmpdir/agents-trail"
+hold
+(( $(<"$tmpdir/now") >= 1007200 && $(<"$tmpdir/now") < 1007240 )) || fail "agents mode waits for the last agent to go quiet" "now=$(<"$tmpdir/now")"
+grep -q '^notify Agent Awake is over No agent activity' "$log" || fail "the last agent going quiet ends it" "$(<"$log")"
+[[ $(paste -sd'|' "$tmpdir/agents-trail") == "Claude Code,Codex|Codex" ]] || fail "the active agents are tracked as each one finishes" "trail: $(paste -sd'|' "$tmpdir/agents-trail")"
+rm -f "$tmpdir/agents-trail"
+pass "agents mode tracks each agent and waits for the last one to finish"
+
+# A timed session follows its end time whatever the agents do.
+hold_session 1003600 time
+mkdir -p "$home/.claude/projects/p"
+touch "$home/.claude/projects/p/s.jsonl"
+cat >"$tmpdir/on-sleep" <<'SH'
+#!/bin/bash
+touch -d "-20 minutes" "$HOME/.claude/projects/p/s.jsonl"
+exit 0
+SH
+chmod +x "$tmpdir/on-sleep"
+hold
+(( $(<"$tmpdir/now") >= 1003600 )) && grep -q '^notify Agent Awake is over Its end time' "$log" || fail "a timed session ignores agents going quiet" "now=$(<"$tmpdir/now") $(<"$log")"
+pass "a timed session follows its end time, not the agents"
+
+# --- power saver
+
+# Shut, undocked and working: power saver, given back once the lid opens.
+hold_session 1003600 time
+mkdir -p "$home/.claude/projects/p"
+cat >"$tmpdir/on-sleep" <<'SH'
+#!/bin/bash
+touch "$HOME/.claude/projects/p/s.jsonl"
+now=$(<"$TEST_DIR/now")
+(( now >= 1000060 )) && touch "$TEST_DIR/lid-closed"
+(( now >= 1000600 )) && { rm -f "$TEST_DIR/lid-closed"; cp "$TEST_DIR/profile" "$TEST_DIR/profile-at-open" 2>/dev/null; }
+[[ -e $XDG_RUNTIME_DIR/omarchy/agent-awake/power-saver ]] && touch "$TEST_DIR/saver-seen"
+(( now >= 1000700 )) && kill -TERM "$HOLDER"
+exit 0
+SH
+chmod +x "$tmpdir/on-sleep"
+rm -f "$tmpdir"/{saver-seen,profile-at-open}
+{ hold || true; } 2>/dev/null
+grep -q '^powerprofilesctl set power-saver' "$log" && [[ -e $tmpdir/saver-seen ]] || fail "a shut, undocked laptop with agents working goes to power saver" "$(<"$log")"
+grep -q '^omarchy-powerprofiles-set autodetect' "$log" && [[ $(<"$tmpdir/profile") == "performance" && ! -e $state/power-saver ]] || fail "opening the lid gives the remembered profile back" "$(<"$log")"
+pass "a shut, undocked laptop with agents working goes to power saver until the lid opens"
+
+hold_session 1003600 agents
+mkdir -p "$home/.claude/projects/p"
+touch "$tmpdir/lid-closed" "$tmpdir/docked"
+cat >"$tmpdir/on-sleep" <<'SH'
+#!/bin/bash
+touch "$HOME/.claude/projects/p/s.jsonl"
+(( $(<"$TEST_DIR/now") >= 1000300 )) && kill -TERM "$HOLDER"
+exit 0
+SH
+chmod +x "$tmpdir/on-sleep"
+{ hold || true; } 2>/dev/null
+! grep -q 'powerprofilesctl' "$log" || fail "a docked laptop with its lid shut is in use and keeps its profile" "$(<"$log")"
+rm -f "$tmpdir/docked"
+hold_session 1003600 agents
+touch "$tmpdir/lid-closed"
+cat >"$tmpdir/on-sleep" <<'SH'
+#!/bin/bash
+(( $(<"$TEST_DIR/now") >= 1000300 )) && kill -TERM "$HOLDER"
+exit 0
+SH
+chmod +x "$tmpdir/on-sleep"
+{ hold || true; } 2>/dev/null
+! grep -q 'powerprofilesctl' "$log" || fail "a shut laptop with no agent working keeps its profile" "$(<"$log")"
+pass "power saver needs both a shut, undocked lid and an agent working"
+
+# Plugging in makes the battery service put the remembered profile back; the
+# holder takes power saver again, and gives it back when the session ends.
+hold_session 1001000 agents
+mkdir -p "$home/.claude/projects/p"
+touch "$tmpdir/lid-closed"
+cat >"$tmpdir/on-sleep" <<'SH'
+#!/bin/bash
+touch "$HOME/.claude/projects/p/s.jsonl"
+if (( $(<"$TEST_DIR/now") >= 1000300 )) && [[ ! -e $TEST_DIR/plugged ]]; then
+  touch "$TEST_DIR/plugged"
+  echo performance >"$TEST_DIR/profile"
+fi
+exit 0
+SH
+chmod +x "$tmpdir/on-sleep"
+rm -f "$tmpdir/plugged"
+hold
+(( $(grep -c '^powerprofilesctl set power-saver' "$log") == 2 )) || fail "power saver is taken again after the battery service resets the profile" "$(<"$log")"
+[[ $(tail -2 "$log" | head -1) == "omarchy-powerprofiles-set autodetect" && ! -e $state/power-saver ]] || fail "the session's end gives the remembered profile back before saying so" "$(<"$log")"
+rm -f "$tmpdir/plugged"
+pass "power saver survives a plug event and is given back at the end"
+
+# The agents finishing gives it back, though the lid stays shut.
+hold_session 1003600 time
+mkdir -p "$home/.claude/projects/p"
+touch "$tmpdir/lid-closed" "$home/.claude/projects/p/s.jsonl"
+cat >"$tmpdir/on-sleep" <<'SH'
+#!/bin/bash
+now=$(<"$TEST_DIR/now")
+(( now < 1000300 )) && touch "$HOME/.claude/projects/p/s.jsonl"
+(( now >= 1000300 )) && touch -d "-20 minutes" "$HOME/.claude/projects/p/s.jsonl"
+(( now >= 1000400 )) && kill -TERM "$HOLDER"
+exit 0
+SH
+chmod +x "$tmpdir/on-sleep"
+{ hold || true; } 2>/dev/null
+grep -q '^powerprofilesctl set power-saver' "$log" && grep -q '^omarchy-powerprofiles-set autodetect' "$log" && [[ ! -e $state/power-saver ]] ||
+  fail "the agents going quiet gives the remembered profile back, lid shut or not" "$(<"$log")"
+pass "the agents going quiet gives power saver back with the lid still shut"
+
+# Someone already on power saver keeps it: the holder never owned it.
+hold_session 1001000 agents
+mkdir -p "$home/.claude/projects/p"
+touch "$tmpdir/lid-closed"
+echo power-saver >"$tmpdir/profile"
+cat >"$tmpdir/on-sleep" <<'SH'
+#!/bin/bash
+touch "$HOME/.claude/projects/p/s.jsonl"
+exit 0
+SH
+chmod +x "$tmpdir/on-sleep"
+hold
+! grep -q 'powerprofiles' "$log" && [[ $(<"$tmpdir/profile") == "power-saver" ]] || fail "a profile the holder did not change is never given back" "$(<"$log")"
+pass "a power saver the user chose is left alone"
+
+# The unit's stop hook gives it back after a kill, and only when it was taken.
+reset
+mkdir -p "$state"
+run restore-power
+! grep -q 'powerprofiles' "$log" || fail "restore-power does nothing when power saver was never taken"
+: >"$state/power-saver"
+run restore-power
+grep -q '^omarchy-powerprofiles-set autodetect' "$log" && [[ ! -e $state/power-saver ]] || fail "restore-power gives back a power saver a killed holder took" "$(<"$log")"
+pass "the unit's stop hook gives power saver back after a kill"
 
 # --- undocking with the lid shut
 

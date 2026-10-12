@@ -4,8 +4,8 @@
 # omarchy:args=[<duration>|<HH:MM>|agents [<duration>]|add <duration>|stop|status|active]
 # omarchy:examples=omarchy agent awake 2h | omarchy agent awake 18:30 | omarchy agent awake agents | omarchy agent awake add 30m | omarchy agent awake stop
 
-# Holds only logind's lid-switch inhibitor, which dies with its holder, so a
-# holder that crashes hands the lid back to logind and nothing needs undoing.
+# Holds only logind's lid-switch inhibitor, which dies with its holder. Power
+# saver is the one change to undo, and the unit's stop hook undoes it.
 
 UNIT="omarchy-agent-awake.service"
 HOMES="CLAUDE_CONFIG_DIR|CODEX_HOME|GROK_HOME|PI_CODING_AGENT_DIR|XDG_DATA_HOME|HERMES_HOME|COPILOT_HOME"
@@ -142,6 +142,7 @@ describe() {
   fi
   agents=$(recent_agents)
   [[ -n $agents ]] && printf ' · recent activity: %s' "$agents"
+  [[ -e $STATE_DIR/power-saver ]] && printf ' · power saver'
   printf '\n'
 }
 
@@ -162,12 +163,13 @@ status_json() {
       --argjson deadline "$s_deadline" \
       --arg until "$(end_label "$s_deadline")" \
       --arg agents "$(recent_agents)" \
+      --argjson powerSaver "$([[ -e $STATE_DIR/power-saver ]] && echo true || echo false)" \
       --arg tooltip "$(describe)" \
       '{active: true, mode: $mode, deadline: $deadline, until: $until,
-        agents: ($agents | split(", ") | map(select(. != ""))), tooltip: $tooltip}'
+        agents: ($agents | split(", ") | map(select(. != ""))), powerSaver: $powerSaver, tooltip: $tooltip}'
   else
     jq -cn --arg tooltip "Agent Awake is off" \
-      '{active: false, mode: null, deadline: null, until: null, agents: [], tooltip: $tooltip}'
+      '{active: false, mode: null, deadline: null, until: null, agents: [], powerSaver: false, tooltip: $tooltip}'
   fi
 }
 
@@ -189,6 +191,39 @@ battery_state() {
   else
     echo ok
   fi
+}
+
+active_profile() {
+  local reply
+  reply=$(timeout -k 1 3 busctl get-property net.hadess.PowerProfiles /net/hadess/PowerProfiles \
+    net.hadess.PowerProfiles ActiveProfile 2>/dev/null) || return 1
+  [[ $reply =~ ^s\ \"([a-z-]+)\"$ ]] && printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+# Nobody is at a laptop shut away from any display, so its agents can run slower.
+# The marker goes first so a holder killed mid-switch is still undone by its unit.
+take_power_saver() {
+  local profile
+
+  profile=$(active_profile) || return 0
+  [[ $profile == "power-saver" ]] && return 0
+  omarchy-powerprofiles-list 2>/dev/null | grep -qx power-saver || return 0
+
+  : >"$STATE_DIR/power-saver"
+  timeout -k 1 3 powerprofilesctl set power-saver >/dev/null 2>&1
+  omarchy-shell -q battery refreshPowerProfile >/dev/null 2>&1 || true
+}
+
+# Back to the profile remembered for this power source. Lock-free, since the
+# unit runs it after its holder stops, while start may hold the lock waiting.
+give_back_power() {
+  [[ -e $STATE_DIR/power-saver ]] || return 0
+  rm -f "$STATE_DIR/power-saver"
+  timeout -k 1 5 omarchy-powerprofiles-set autodetect >/dev/null 2>&1
+}
+
+closed_undocked() {
+  omarchy-hw-laptop-closed && ! omarchy-hw-external-monitors
 }
 
 start() {
@@ -245,6 +280,7 @@ start() {
       --description="Omarchy Agent Awake" \
       --property=RuntimeMaxSec=$((LIMIT + 60)) \
       --property=PartOf=graphical-session.target \
+      --property="ExecStopPost=$(readlink -f "${BASH_SOURCE[0]}") restore-power" \
       systemd-inhibit --what=handle-lid-switch --mode=block --no-ask-password --who=Omarchy \
       --why="Agent Awake keeps the machine working with the lid closed" \
       omarchy-agent-awake hold "$token"; then
@@ -316,7 +352,8 @@ scan_subject() {
 }
 
 # Under the lock. The names go to the bar; seen marks that this session has
-# watched an agent work, which is what lets the agents mode end.
+# watched an agent work, which is what lets the agents mode end. Activity is
+# watched in either mode, since power saver follows it in both.
 record_activity() {
   case $1 in
     busy)
@@ -336,7 +373,7 @@ notify() {
 }
 
 hold() {
-  local token=$1 reason="" now up last_check="" unreadable=0 battery activity scan subject pause
+  local token=$1 reason="" now up last_check="" unreadable=0 battery activity scan subject pause working=0
 
   # Lock-free: start holds the lock while it waits for this answer. The record
   # is renamed into place whole, so reading it bare is safe.
@@ -362,10 +399,8 @@ hold() {
       if read_session && (( s_deadline - now > 20 )); then
         last_check=$up
         battery=$(battery_state)
-        if [[ $s_mode == "agents" ]]; then
-          subject=$(scan_subject)
-          scan=$(scan_activity "$subject")
-        fi
+        subject=$(scan_subject)
+        scan=$(scan_activity "$subject")
       fi
     fi
 
@@ -375,6 +410,8 @@ hold() {
       if [[ $(scan_subject) == "$subject" ]]; then
         activity=${scan%%$'\n'*}
         record_activity "$activity" "${scan#*$'\n'}"
+        [[ $activity == "busy" ]] && working=1
+        [[ $activity == "quiet" ]] && working=0
       else
         last_check=""
       fi
@@ -395,12 +432,21 @@ hold() {
     flock -u 9
 
     if [[ -z $reason ]]; then
+      if (( working )) && closed_undocked; then
+        take_power_saver
+      else
+        give_back_power
+      fi
+
       pause=$((s_deadline - now))
       (( pause > TICK )) && pause=$TICK
       (( pause < 1 )) && pause=1
       sleep "$pause"
     fi
   done
+
+  # A replaced holder leaves the marker to its successor, which owns it now.
+  [[ $reason == "superseded" ]] || give_back_power
 
   case $reason in
     time) notify "Agent Awake is over" "Its end time came. Closing the lid works as usual again." ;;
@@ -438,6 +484,9 @@ case "${1:-}" in
   hold)
     [[ ${2:-} =~ ^[0-9a-f]{16}$ ]] || usage
     hold "$2"
+    ;;
+  restore-power)
+    give_back_power
     ;;
   *:*)
     deadline=$(clock_deadline "$1") || usage
