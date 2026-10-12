@@ -41,7 +41,9 @@ assertEqual(url.username + url.password, '', 'browser entry point contains no cr
 const nmUri = uri => JSON.stringify({ type: 's', data: uri })
 assertEqual(network.captivePortalUrlFrom(nmUri('http://nmcheck.gnome.org/check_network_status.txt')),
   'http://nmcheck.gnome.org/check_network_status.txt', 'browser entry point follows the URI NetworkManager probes')
-assertEqual(network.captivePortalUrlFrom(nmUri('http://192.0.2.1:8080/')), 'http://192.0.2.1:8080/', 'an address and port are kept')
+for (const uri of ['http://192.0.2.1:8080/', 'http://[2001:db8::1]/check', 'http://example.com?probe=1']) {
+  assertEqual(network.captivePortalUrlFrom(nmUri(uri)), uri, `NetworkManager's ${uri} is kept`)
+}
 for (const raw of ['', 'not json', nmUri(''), nmUri('https://nmcheck.gnome.org/'), nmUri('http://user:pw@example.com/'),
   nmUri('http://example.com/a b'), nmUri('javascript:alert(1)'), JSON.stringify({ type: 's' })]) {
   assertEqual(network.captivePortalUrlFrom(raw), network.captivePortalUrl, `falls back to the fixed URL for ${raw || 'no output'}`)
