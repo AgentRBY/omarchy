@@ -5,12 +5,24 @@
 # omarchy:hidden=true
 
 # A resume can light the panels with no input, no output change and no event
-# the lock hears. The monotonic clock stands still while suspended, so a short
-# timer armed now fires just after the machine wakes and tells the lock to look.
+# the lock hears. This monitor has to exit to release the sleep inhibitor, so a
+# watcher of its own, outside this service, waits for the wake and tells the
+# lock to look. It is started and listening before the inhibitor is released.
 schedule_resume_refresh() {
-  timeout --kill-after=0.1s 0.5s systemd-run --user --quiet --collect --no-block \
-    --on-active=2s --timer-property=AccuracySec=100ms \
-    "$OMARCHY_PATH/bin/omarchy-shell" -q lock refreshDisplays >/dev/null 2>&1 || true
+  timeout --kill-after=0.1s 1s systemd-run --user --quiet --collect \
+    --property=RuntimeMaxSec=1d \
+    "$OMARCHY_PATH/bin/omarchy-system-sleep-monitor" --resume >/dev/null 2>&1 || true
+}
+
+consume_resume_events() {
+  local line
+
+  while IFS= read -r line; do
+    if [[ $line == *"boolean false"* ]]; then
+      "$OMARCHY_PATH/bin/omarchy-shell" -q lock refreshDisplays
+      return 0
+    fi
+  done
 }
 
 consume_sleep_events() {
@@ -27,7 +39,7 @@ consume_sleep_events() {
 }
 
 monitor_sleep_events() {
-  local monitor_fd monitor_pid status
+  local consumer=$1 monitor_fd monitor_pid status
 
   coproc SLEEP_EVENTS {
     exec dbus-monitor --system \
@@ -42,7 +54,7 @@ monitor_sleep_events() {
   }
   trap cleanup_monitor EXIT
 
-  consume_sleep_events <&"$monitor_fd"
+  "$consumer" <&"$monitor_fd"
   status=$?
   cleanup_monitor
   trap - EXIT
@@ -56,7 +68,11 @@ case ${1:-} in
     exit 0
     ;;
   --inhibited)
-    monitor_sleep_events
+    monitor_sleep_events consume_sleep_events
+    exit 0
+    ;;
+  --resume)
+    monitor_sleep_events consume_resume_events
     exit 0
     ;;
 esac

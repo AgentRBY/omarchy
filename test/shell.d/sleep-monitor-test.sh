@@ -113,26 +113,42 @@ if kill -0 "$producer_pid" 2>/dev/null; then
 fi
 pass "sleep monitor cleans up its producer when terminated"
 
-# A resume can light the panels behind the lock with nothing the lock hears,
-# so a sleep arms a monotonic timer that fires just after the wake and asks it.
+# A resume can light the panels behind the lock with nothing the lock hears.
+# The monitor exits to release the inhibitor, so a sleep starts a watcher of
+# its own outside the service, which waits for the wake and asks the lock.
 cat >"$mock_bin/dbus-monitor" <<'SH'
 #!/bin/bash
 
-printf '   boolean true\n'
+printf '   boolean %s\n' "${SLEEP_SIGNAL:-true}"
 exec sleep 30
 SH
-chmod +x "$mock_bin/dbus-monitor"
+cat >"$mock_omarchy/bin/omarchy-shell" <<'SH'
+#!/bin/bash
+
+printf '%s\n' "$*" >>"$SHELL_LOG"
+SH
+chmod +x "$mock_bin/dbus-monitor" "$mock_omarchy/bin/omarchy-shell"
 run_log="$tmpdir/run-log"
+shell_log="$tmpdir/shell-log"
 : >"$lock_log"
 
 OMARCHY_PATH="$mock_omarchy" \
   PATH="$mock_bin:$PATH" \
-  PRODUCER_PID_FILE="$producer_pid_file" \
   LOCK_LOG="$lock_log" \
   RUN_LOG="$run_log" \
+  SHELL_LOG="$shell_log" \
   "$sleep_monitor"
 
-[[ $(<"$lock_log") == "locked" ]] || fail "the sleep still locks before arming the resume check"
-[[ $(<"$run_log") == "--user --quiet --collect --no-block --on-active=2s --timer-property=AccuracySec=100ms $mock_omarchy/bin/omarchy-shell -q lock refreshDisplays" ]] ||
-  fail "a sleep arms a monotonic timer that asks the lock to check its panels after resume" "$(cat "$run_log" 2>/dev/null)"
-pass "a sleep arms a monotonic timer that asks the lock to check its panels after resume"
+[[ $(<"$lock_log") == "locked" ]] || fail "the sleep still locks before starting the resume watcher"
+[[ $(<"$run_log") == "--user --quiet --collect --property=RuntimeMaxSec=1d $mock_omarchy/bin/omarchy-system-sleep-monitor --resume" ]] ||
+  fail "a sleep starts a resume watcher outside the service" "$(cat "$run_log" 2>/dev/null)"
+[[ ! -e $shell_log ]] || fail "the sleep itself does not ask the lock" "$(<"$shell_log")"
+pass "a sleep starts a resume watcher outside the service"
+
+SLEEP_SIGNAL=false \
+  OMARCHY_PATH="$mock_omarchy" \
+  PATH="$mock_bin:$PATH" \
+  SHELL_LOG="$shell_log" \
+  timeout 5 "$sleep_monitor" --resume || fail "the resume watcher exits once the machine wakes"
+[[ $(<"$shell_log") == "-q lock refreshDisplays" ]] || fail "the resume watcher asks the lock to check its panels" "$(cat "$shell_log" 2>/dev/null)"
+pass "the resume watcher asks the lock to check its panels once the machine wakes"

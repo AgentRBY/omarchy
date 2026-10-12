@@ -328,9 +328,9 @@ Item {
   // once each time something that can change them happens: a video lock
   // starting, the lock's own blank or wake finishing, outputs coming or going,
   // omarchy-brightness-display waking or blanking them for anyone else, and a
-  // resume (omarchy-system-sleep-monitor arms a timer that fires just after
-  // it). Input that wakes a panel behind the lock reaches the lock too, and
-  // wakes it the same way.
+  // resume (omarchy-system-sleep-monitor leaves a watcher waiting for it).
+  // Input that wakes a panel behind the lock reaches the lock too, and wakes
+  // it the same way.
   function refreshMonitorDpms() {
     monitorDpmsRetry.stop()
     monitorDpmsRetry.remaining = monitorDpmsRetry.budget
@@ -903,8 +903,8 @@ Item {
       return "ok"
     }
 
-    // omarchy-brightness-display calls this after waking or blanking the panels, which
-    // Hyprland announces on no event the lock can hear.
+    // Commands that wake or blank the panels call this, and so does the
+    // resume watcher: Hyprland announces DPMS on no event the lock can hear.
     function refreshDisplays(): string {
       root.refreshMonitorDpms()
       return "ok"

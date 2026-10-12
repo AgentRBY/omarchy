@@ -11,6 +11,8 @@ INTERNAL=$(omarchy-hyprland-monitor-laptop)
 
 wake() {
   hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1 || true
+  # Hyprland announces DPMS on no event; a lock showing a video asks again.
+  omarchy-shell -q lock refreshDisplays
 }
 
 on() {
