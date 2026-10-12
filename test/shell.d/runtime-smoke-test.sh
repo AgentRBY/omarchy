@@ -7,15 +7,6 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 TMPDIR=""
 QS_PID=""
 
-descendants() {
-  local child
-
-  for child in $(cat /proc/"$1"/task/*/children 2>/dev/null); do
-    echo "$child"
-    descendants "$child"
-  done
-}
-
 # Sends TERM, gives the processes a few seconds, then KILLs what is left, so a
 # shell that ignores TERM cannot hang the run.
 stop_processes() {
@@ -36,24 +27,29 @@ stop_processes() {
 
 # Quickshell leaves some of its children running when it is stopped, among them
 # the inotifywait watching the plugin directory, which then holds whatever it
-# inherited open (a flock around the run, say) indefinitely. Stop them too:
-# what is still below the shell, and, for a shell that already died and left
-# them reparented, whatever still runs with this test's scratch OMARCHY_PATH.
+# inherited open (a flock around the run, say) indefinitely. Once the shell is
+# stopped, stop whatever still runs with this test's scratch OMARCHY_PATH: every
+# child inherits it, it finds the ones a shell that already died left
+# reparented, and, read at the moment of stopping, it never names a pid that
+# has since been reused by something else.
+leftover_pids() {
+  local environ pid
+
+  [[ -n ${test_root:-} ]] || return 0
+  while IFS= read -r environ; do
+    pid=${environ#/proc/}
+    echo "${pid%/environ}"
+  done < <(grep -lzxF -- "OMARCHY_PATH=$test_root" /proc/[0-9]*/environ 2>/dev/null || true)
+}
+
 cleanup() {
-  local leftovers=() environ pid
+  local leftovers=()
 
   if [[ -n $QS_PID ]] && kill -0 "$QS_PID" 2>/dev/null; then
-    mapfile -t leftovers < <(descendants "$QS_PID")
     stop_processes "$QS_PID"
     wait "$QS_PID" 2>/dev/null || true
   fi
-  if [[ -n ${test_root:-} ]]; then
-    while IFS= read -r environ; do
-      pid=${environ#/proc/}
-      pid=${pid%/environ}
-      leftovers+=("$pid")
-    done < <(grep -lzxF -- "OMARCHY_PATH=$test_root" /proc/[0-9]*/environ 2>/dev/null || true)
-  fi
+  mapfile -t leftovers < <(leftover_pids)
   stop_processes "${leftovers[@]}"
   [[ -n ${test_root:-} ]] && rm -f "$(shell_ipc_socket "$test_root")"
   [[ -n $TMPDIR && -d $TMPDIR ]] && rm -rf "$TMPDIR"
