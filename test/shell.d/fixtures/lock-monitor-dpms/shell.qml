@@ -11,6 +11,9 @@ ShellRoot {
   readonly property string blankWorksPath: Quickshell.env("LOCK_TEST_BLANK_WORKS")
   readonly property string dpmsStatePath: Quickshell.env("LOCK_TEST_DPMS_STATE")
   readonly property string hyprctlFailuresPath: Quickshell.env("LOCK_TEST_HYPRCTL_FAILURES")
+  readonly property string hyprctlHoldPath: Quickshell.env("LOCK_TEST_HYPRCTL_HOLD")
+  property bool tracing: false
+  property var trace: []
   property var failures: []
   property int checks: 0
   property var service: null
@@ -36,23 +39,45 @@ ShellRoot {
     Quickshell.execDetached(["bash", "-c", "printf '%s' " + quoted + " > \"$1\"", "_", resultPath])
   }
 
-  // Every hyprctl the service starts is counted, whatever starts it.
-  function watchQueries() {
-    var objects = service.data || []
-    for (var i = 0; i < objects.length; i++) {
-      var command = objects[i].command
-      if (command && command[0] === "hyprctl" && command[1] === "monitors") {
-        objects[i].runningChanged.connect(function(process) {
-          return function() { if (process.running) root.dpmsQueries += 1 }
-        }(objects[i]))
-        return
-      }
+  // Every question the hyprctl stub answers is a line in its log. Counting
+  // the process's running changes would not do: one restarted from its own
+  // exit handler never reports stopping in between.
+  FileView {
+    id: queryLog
+    path: Quickshell.env("LOCK_TEST_HYPRCTL_LOG")
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onTextChanged: {
+      var lines = String(text() || "").split("\n").filter(function(line) { return line !== "" })
+      root.dpmsQueries = lines.length
     }
-    throw new Error("Missing monitor DPMS process")
   }
 
   function setBlankWorks(works) {
     blankWorks.setText(works ? "yes" : "no")
+  }
+
+  // The service runs against the real compositor, so an output change while
+  // locked would take a real session lock. Give any such lock straight back.
+  function guardSessionLock() {
+    var objects = service.data || []
+    for (var i = 0; i < objects.length; i++) {
+      var object = objects[i]
+      if ("locked" in object && "secure" in object) {
+        object.lockStateChanged.connect(function() {
+          if (!object.locked) return
+          object.locked = false
+          root.failures.push("the fixture took a real session lock")
+        })
+        return
+      }
+    }
+    throw new Error("Missing session lock")
+  }
+
+  function holdHyprctl(held) {
+    Quickshell.execDetached(held ? ["touch", hyprctlHoldPath] : ["rm", "-f", hyprctlHoldPath])
   }
 
   function lockIpc() {
@@ -126,7 +151,11 @@ ShellRoot {
     if (component.status !== Component.Ready) throw new Error(component.errorString())
     service = component.createObject(host, { omarchyPath: rootPath })
     if (!service) throw new Error(component.errorString())
-    watchQueries()
+    guardSessionLock()
+    // Records what the lock surface would show each time an answer lands.
+    service.monitorDpmsKnownChanged.connect(function() {
+      if (root.tracing && service.monitorDpmsKnown) root.trace.push(service.screenBlank("TEST-1"))
+    })
 
     steps = [
       [1500, function() {
@@ -190,6 +219,31 @@ ShellRoot {
       [2500, function() {
         check(since() === 2, "a failed question is asked again (asked " + since() + " times)")
         check(service.monitorDpmsKnown && service.screenBlank("TEST-1"), "the retried answer pauses the video on the dark panel")
+        service.runWake()
+      }],
+      [1500, function() {
+        check(service.monitorDpmsKnown && !service.screenBlank("TEST-1"), "the panel is lit before the overlapping questions")
+        // Hyprland is slow to answer the next question, which sees a lit panel.
+        holdHyprctl(true)
+      }],
+      [300, function() {
+        mark()
+        tracing = true
+        lockIpc().refreshDisplays()
+      }],
+      [300, function() {
+        // The lock blanks while that answer is still on its way.
+        service.runBlank()
+      }],
+      [700, function() {
+        check(service.screenBlank("TEST-1"), "a blank asked for during a slow question pauses the video")
+        holdHyprctl(false)
+      }],
+      [1000, function() {
+        check(since() === 2, "the question overtaken by the blank is asked again once (asked " + since() + " times)")
+        check(service.monitorDpmsKnown && service.screenBlank("TEST-1"), "the fresh answer confirms the blank")
+        check(trace.indexOf(false) === -1, "the overtaken answer never restarts the video (" + JSON.stringify(trace) + ")")
+        tracing = false
         service.lockRequested = false
       }],
       [200, function() {

@@ -31,6 +31,8 @@ home="$TMPDIR/home"
 dpms_state="$TMPDIR/dpms"
 blank_works="$TMPDIR/blank-works"
 hyprctl_failures="$TMPDIR/hyprctl-failures"
+hyprctl_hold="$TMPDIR/hyprctl-hold"
+hyprctl_log="$TMPDIR/hyprctl.log"
 wake_log="$TMPDIR/wake.log"
 
 mkdir -p "$config_dir" "$stub_bin" "$home/.local/state/omarchy/current"
@@ -44,18 +46,22 @@ ln -s "$TMPDIR/wallpaper.mp4" "$home/.local/state/omarchy/current/background"
 printf 'on\n' >"$dpms_state"
 printf 'yes\n' >"$blank_works"
 printf '0\n' >"$hyprctl_failures"
+: >"$hyprctl_log"
 
 # Hyprland answers from a state file the brightness stub flips, so the lock
 # sees the panel do what it asked, or, with blank-works set to no, refuse.
 cat >"$stub_bin/hyprctl" <<EOF
 #!/bin/bash
 if [[ \$1 == "monitors" ]]; then
+  printf "%s\n" "\$*" >>"$hyprctl_log"
   failures=\$(<"$hyprctl_failures")
   if (( failures > 0 )); then
     printf '%s\n' \$((failures - 1)) >"$hyprctl_failures"
     exit 1
   fi
   if [[ \$(<"$dpms_state") == "on" ]]; then dpms=true; else dpms=false; fi
+  # A held answer reports the panel as it was when the question was asked.
+  while [[ -e "$hyprctl_hold" ]]; do sleep 0.05; done
   printf '[{"name":"TEST-1","disabled":false,"dpmsStatus":%s}]\n' "\$dpms"
 fi
 EOF
@@ -85,6 +91,8 @@ OMARCHY_QML_TEST_RESULT="$result" \
 LOCK_TEST_BLANK_WORKS="$blank_works" \
 LOCK_TEST_DPMS_STATE="$dpms_state" \
 LOCK_TEST_HYPRCTL_FAILURES="$hyprctl_failures" \
+LOCK_TEST_HYPRCTL_HOLD="$hyprctl_hold" \
+LOCK_TEST_HYPRCTL_LOG="$hyprctl_log" \
 HOME="$home" \
 XDG_CONFIG_HOME="$home/.config" \
 XDG_CACHE_HOME="$home/.cache" \
