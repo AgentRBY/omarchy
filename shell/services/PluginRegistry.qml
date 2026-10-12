@@ -525,7 +525,9 @@ QtObject {
         removeDisabled(config, key)
         var entry = { id: key }
         var insertedWithPlacement = false
-        if (!location.found && isBarWidget) {
+        // A plugins[] record keeps a multi-kind plugin loaded, but its widget
+        // is only on when it sits in the bar.
+        if (location.kind !== "bar" && isBarWidget) {
           var sourceLocation = clonedFrom ? findEntryLocation(config, clonedFrom) : { found: false }
           if (sourceLocation.kind === "bar") {
             var sourceEntry = config.bar.layout[sourceLocation.section][sourceLocation.index]
