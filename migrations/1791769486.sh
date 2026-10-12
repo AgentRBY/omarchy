@@ -22,9 +22,18 @@ done
 rm -f "$HOME/.config/systemd/user/omarchy-usb-authorization.service"
 systemctl --user daemon-reload
 
-# Prints nothing for a device or controller Bolt doesn't know.
+bolt_list() {
+  sudo busctl --system --json=short call org.freedesktop.bolt /org/freedesktop/bolt org.freedesktop.bolt1.Manager "$1" | jq -r '.data[0][]'
+}
+
+# A device or controller missing from Bolt's inventory has nothing to restore.
+# Any other failed read stops the migration, so it is retried.
+bolt_has() {
+  grep -qxF "/org/freedesktop/bolt/$1/${2//-/_}" <<<"$bolt_known"
+}
+
 bolt_get() {
-  sudo busctl --system --json=short get-property org.freedesktop.bolt "/org/freedesktop/bolt/$1/${2//-/_}" "org.freedesktop.bolt1.$3" "$4" 2>/dev/null | jq -c .data || true
+  sudo busctl --system --json=short get-property org.freedesktop.bolt "/org/freedesktop/bolt/$1/${2//-/_}" "org.freedesktop.bolt1.$3" "$4" | jq -c .data
 }
 
 if [[ -d $tb_dir || -e /etc/omarchy/thunderbolt-authorization.enabled || -e /etc/omarchy/thunderbolt-authorization.pending ]]; then
@@ -42,10 +51,16 @@ if [[ -d $tb_dir || -e /etc/omarchy/thunderbolt-authorization.enabled || -e /etc
   firmware=$(jq -c --argjson recovery "$recovery" \
     '.boot_original // (if $recovery.policies then $recovery | {policies, acls} else {} end)' <<<"$state")
 
+  bolt_devices=$(bolt_list ListDevices)
+  bolt_domains=$(bolt_list ListDomains)
+  bolt_known=$bolt_devices$'\n'$bolt_domains
+
   while read -r uid policy; do
-    current=$(bolt_get devices "$uid" Device Policy)
-    if [[ -n $current && $current != "\"$policy\"" ]]; then
-      sudo boltctl config device.policy "$uid" "$policy"
+    if bolt_has devices "$uid"; then
+      current=$(bolt_get devices "$uid" Device Policy)
+      if [[ $current != "\"$policy\"" ]]; then
+        sudo boltctl config device.policy "$uid" "$policy"
+      fi
     fi
   done < <(jq -r '.policies // {} | to_entries[] | "\(.key) \(.value)"' <<<"$firmware")
 
@@ -53,11 +68,13 @@ if [[ -d $tb_dir || -e /etc/omarchy/thunderbolt-authorization.enabled || -e /etc
   unrestored=0
   while read -r uid; do
     acl=$(jq -c --arg uid "$uid" '.acls[$uid]' <<<"$firmware")
-    current=$(bolt_get domains "$uid" Domain BootACL)
-    if [[ -z $current ]]; then
+    if ! bolt_has domains "$uid"; then
       echo "Thunderbolt controller $uid is not present; its firmware boot allowlist was not restored."
       unrestored=1
-    elif [[ $current != "$acl" ]]; then
+      continue
+    fi
+    current=$(bolt_get domains "$uid" Domain BootACL)
+    if [[ $current != "$acl" ]]; then
       mapfile -t entries < <(jq -r '.[]' <<<"$acl")
       sudo busctl --system set-property org.freedesktop.bolt "/org/freedesktop/bolt/domains/${uid//-/_}" \
         org.freedesktop.bolt1.Domain BootACL as "${#entries[@]}" "${entries[@]}"
@@ -68,8 +85,12 @@ if [[ -d $tb_dir || -e /etc/omarchy/thunderbolt-authorization.enabled || -e /etc
   # Bolt won't authorize on its own. Hand back the ones Omarchy stored, as the
   # removal command did, never a manual policy somebody else set.
   while read -r uid store_time; do
-    if [[ $(bolt_get devices "$uid" Device Policy) == '"manual"' && $(bolt_get devices "$uid" Device StoreTime) == "$store_time" ]]; then
-      sudo boltctl config device.policy "$uid" auto
+    if bolt_has devices "$uid"; then
+      current=$(bolt_get devices "$uid" Device Policy)
+      stored=$(bolt_get devices "$uid" Device StoreTime)
+      if [[ $current == '"manual"' && $stored == "$store_time" ]]; then
+        sudo boltctl config device.policy "$uid" auto
+      fi
     fi
   done < <(jq -r '(.trusted // {}) as $trusted | .enrolled // {} | to_entries[] | select($trusted[.key]) | "\(.key) \(.value.StoreTime)"' <<<"$state")
 
@@ -91,17 +112,19 @@ fi
 # check every current kernel entry. Limine's command line wins, except under
 # Secure Boot, where the signed image's embedded one does.
 usb_boot_cleared() {
-  local entries key value secure_boot=0 found=0
+  local entries key value esp secure_boot=0 found=0
   local efivar=/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c
 
   if [[ -r $efivar && $(od -An -t u1 -j 4 -N 1 "$efivar") == *1 ]]; then
     secure_boot=1
   fi
+  esp=$(sed -n 's/^ESP_PATH=["'\'']\?\([^"'\'']*\).*/\1/p' /etc/default/limine | tail -1)
+  esp=${esp:-/boot}
   entries=$(sudo awk '
     /^  \/\/[^\/]/ { entry = 1; next }
     /^ *\// { entry = 0 }
     entry && /^  (path|cmdline):/ { key = $1; sub(/^  [a-z]+:[[:space:]]*/, ""); print key "\t" $0 }
-  ' /boot/limine.conf) || return 1
+  ' "$esp/limine.conf") || return 1
 
   while IFS=$'\t' read -r key value; do
     if [[ $key == "cmdline:" ]]; then
@@ -110,7 +133,7 @@ usb_boot_cleared() {
       found=1
       if (( secure_boot )); then
         value=${value#'boot():'}
-        value=/boot${value%%#*}
+        value=$esp${value%%#*}
         sudo test -r "$value" || return 1
         if sudo grep -qaF "$usb_boot_parameter" "$value"; then
           return 1

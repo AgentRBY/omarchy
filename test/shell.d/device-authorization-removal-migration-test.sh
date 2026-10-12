@@ -17,7 +17,7 @@ export CALLS="$test_dir/calls" FAKE_ROOT="$root"
 
 # Run a scratch copy whose machine paths all live under the fake root.
 sed -e "s#/etc/#$root/etc/#g" -e "s#/var/#$root/var/#g" -e "s#/run/#$root/run/#g" \
-  -e "s#/sys/#$root/sys/#g" -e "s#/boot/#$root/boot/#g" -e "s#value=/boot#value=$root/boot#" -e "s#/usr/share/polkit-1/#$root/usr/share/polkit-1/#g" \
+  -e "s#/sys/#$root/sys/#g" -e "s#:-/boot}#:-$root/boot}#" -e "s#/usr/share/polkit-1/#$root/usr/share/polkit-1/#g" \
   "$shipped_migration" >"$migration"
 
 mkdir -p "$test_dir/bin"
@@ -42,8 +42,17 @@ object=${args[2]#/org/freedesktop/bolt/}
 uid=${object#*/}
 file="$FAKE_ROOT/bolt/${object%%/*}/${uid//_/-}/${args[4]}"
 case ${args[0]} in
+  call)
+    kind=devices
+    [[ ${args[4]} == "ListDevices" ]] || kind=domains
+    for dir in "$FAKE_ROOT/bolt/$kind"/*/; do
+      dir=${dir%/}
+      uid=${dir##*/}
+      printf '/org/freedesktop/bolt/%s/%s\n' "$kind" "${uid//-/_}"
+    done | jq -Rnc '{type:"ao",data:[[inputs]]}'
+    ;;
   get-property)
-    [[ -f $file ]] || exit 1
+    [[ -f $file && -z ${BOLT_READ_FAILS:-} ]] || exit 1
     printf '{"type":"x","data":%s}\n' "$(<"$file")"
     ;;
   set-property)
@@ -76,9 +85,11 @@ printf 'limine-mkinitcpio\n' >>"$CALLS"
 [[ ${MKINITCPIO:-} != "stale" ]] || exit 0
 parameter=""
 [[ ! -e $FAKE_ROOT/etc/limine-entry-tool.d/usb-authorization.conf ]] || parameter=" usbcore.authorized_default=0"
-mkdir -p "$FAKE_ROOT/boot/EFI/Linux"
-printf 'MZ...cmdline root=x%s...initrd' "$parameter" >"$FAKE_ROOT/boot/EFI/Linux/omarchy_linux.efi"
-cat >"$FAKE_ROOT/boot/limine.conf" <<EOF
+esp=$(sed -n 's/^ESP_PATH="\(.*\)"$/\1/p' "$FAKE_ROOT/etc/default/limine")
+esp=${esp:-$FAKE_ROOT/boot}
+mkdir -p "$esp/EFI/Linux"
+printf 'MZ...cmdline root=x%s...initrd' "$parameter" >"$esp/EFI/Linux/omarchy_linux.efi"
+cat >"$esp/limine.conf" <<EOF
 /+Omarchy
   comment: machine-id=abc
   //linux
@@ -261,6 +272,16 @@ grep -q "$gone_domain is not present" "$test_dir/output" || fail "migration does
 [[ $(value devices/$dock/Policy) == '"auto"' ]] || fail "migration stops before handing back the dock"
 pass "unrestorable firmware settings are kept aside, and matching lists are not rewritten"
 
+# A Bolt read that fails, unlike a record Bolt no longer has, must leave the
+# saved settings in place and the migration pending.
+reset_machine
+enable_feature
+BOLT_READ_FAILS=1 run_migration && fail "migration succeeds although Bolt could not be read"
+[[ -f $root/var/lib/omarchy/thunderbolt-authorization/policy.json ]] || fail "a failed Bolt read discards the saved settings"
+run_migration || fail "migration does not finish once Bolt can be read" "$(cat "$test_dir/output")"
+[[ $(value devices/$dock/Policy) == '"auto"' ]] || fail "the retry does not hand back the dock"
+pass "a failed Bolt read keeps the saved settings and retries"
+
 # USB at Boot: a failed rebuild, then one that silently leaves the parameter,
 # must both keep USBGuard and retry, even though the settings are already gone.
 reset_machine
@@ -277,6 +298,17 @@ MKINITCPIO=ok run_migration || fail "migration fails once the rebuild succeeds" 
   fail "migration does not finish after a successful rebuild"
 grep -q 'usbcore' "$root/etc/default/limine" && fail "migration leaves the snapshot parameter in /etc/default/limine"
 pass "USB at Boot is removed only once the rebuilt entries are verified"
+
+# A boot partition mounted somewhere other than /boot, named by ESP_PATH.
+reset_machine
+rm -rf "$root/boot"
+echo "ESP_PATH=\"$root/efi\"" >>"$root/etc/default/limine"
+enable_feature
+enable_usb_at_boot
+MKINITCPIO=stale run_migration && fail "migration trusts a stale rebuild on a boot partition outside /boot"
+MKINITCPIO=ok run_migration || fail "migration does not check the boot partition named by ESP_PATH" "$(cat "$test_dir/output")"
+[[ ! -e $root/packages/usbguard ]] || fail "migration keeps USBGuard after a verified rebuild outside /boot"
+pass "boot entries are verified on the boot partition named by ESP_PATH"
 
 # Under Secure Boot the signed image's own command line is what boots.
 reset_machine
