@@ -462,9 +462,12 @@ QtObject {
           restoredEntry.id = sourceId
           config.bar.layout[cloneLocation.section][cloneLocation.index] = restoredEntry
         }
-      } else if (cloneLocation.kind === "plugin") {
-        config.plugins.splice(cloneLocation.index, 1)
       }
+      // A multi-kind clone can sit in the bar and in plugins[] at once, and
+      // either record alone would keep it active.
+      config.plugins = config.plugins.filter(function(entry) {
+        return !entry || Util.canonicalWidgetId(String(entry.id)) !== cloneId
+      })
     }
 
     if (cloneShouldRestoreSource(config, cloneId)) removeDisabled(config, sourceId)

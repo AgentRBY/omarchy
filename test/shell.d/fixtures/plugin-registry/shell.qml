@@ -434,6 +434,18 @@ ShellRoot {
       "put places a widget that only has a plugins record"
     )
 
+    root.config = {
+      version: 1,
+      bar: { layout: { left: [{ id: "omarchy.hybrid", size: 2 }], center: [], right: [] } },
+      plugins: [{ id: "local.hybrid" }]
+    }
+    registry.setEnabled("local.hybrid", true)
+    root.assertDeepEqual(root.config.bar.layout.left, [{ id: "local.hybrid", size: 2 }], "enabling a multi-kind clone with a plugins record replaces its source")
+    registry.setEnabled("local.hybrid", false)
+    root.assertDeepEqual(root.config.bar.layout.left, [{ id: "omarchy.hybrid", size: 2 }], "disabling a multi-kind clone with a plugins record restores its source")
+    root.assertDeepEqual(root.config.plugins, [], "disabling a multi-kind clone drops its plugins record")
+    root.assertEqual(registry.resolveEnabledId("omarchy.hybrid"), "omarchy.hybrid", "a disabled multi-kind clone stops receiving its source's calls")
+
     root.config = { version: 1 }
     registry.setEnabled("third.panel", true)
     root.assertDeepEqual(root.config.plugins, [{ id: "third.panel" }], "setEnabled repairs missing plugin config shape")
