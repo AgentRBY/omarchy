@@ -66,7 +66,13 @@ fastest_ms() {
     OMARCHY_PATH="$ROOT" PATH="$ROOT/bin:$PATH" timeout --kill-after=1s 10s bash -c "$1" >"$output" 2>/dev/null || status=$?
     end=$EPOCHREALTIME
     elapsed=$(( (${end/[.,]/} - ${start/[.,]/}) / 1000 ))
-    (( status != 124 && status != 137 )) || elapsed=10000
+    if (( status == 124 || status == 137 )); then
+      elapsed=10000
+    elif (( status != 0 )); then
+      # The menu throws away a batch that fails, so a fast failure is no answer.
+      echo "error $status"
+      return 0
+    fi
     if [[ -z $best ]] || (( elapsed < best )); then
       best=$elapsed
     fi
@@ -88,15 +94,23 @@ done < <(guard_scripts)
 (( ${#ids[@]} > 0 )) || fail "the shipped menu has guarded rows"
 
 batch_ms=$(fastest_ms "${scripts[menu]}")
+[[ $batch_ms != error* ]] || fail "the shipped menu's guard batch exits cleanly" "It exited with status ${batch_ms#error }."
 (( $(wc -l <"$output") >= ${#ids[@]} )) || fail "the guard batch answers every guarded row" "$(cat "$output")"
 
 timings=()
 slowest=0
+failed=()
 for id in "${ids[@]}"; do
   elapsed=$(fastest_ms "${scripts[$id]}")
+  if [[ $elapsed == error* ]]; then
+    failed+=("$id (status ${elapsed#error })")
+    continue
+  fi
   timings+=("$(printf '%6dms  %s' "$elapsed" "$id")")
   (( elapsed > slowest )) && slowest=$elapsed
 done
+
+(( ${#failed[@]} == 0 )) || fail "every shipped menu guard evaluates without failing its batch" "$(printf '%s\n' "${failed[@]}")"
 
 slowest_guards() {
   printf 'Slowest guards, each run alone (fastest of three runs):\n'

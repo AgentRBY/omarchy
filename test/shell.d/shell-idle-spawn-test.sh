@@ -102,6 +102,7 @@ fi
 
 require_command jq
 require_command socat
+require_command node
 
 TMPDIR=$(mktemp -d)
 test_root="$TMPDIR/omarchy"
@@ -243,6 +244,19 @@ allow() {
   ALLOW_REASONS+=("$3")
 }
 
+# Whether the keyboard layout widget keeps asking: while the seat has more
+# than one keyboard someone can type on, or none of those reports a keymap.
+# Which ones count is the widget's own call, so ask its model.
+keyboard_widget_polls() {
+  hyprctl -j devices 2>/dev/null | ROOT="$ROOT" node -e '
+    const model = require(require("path").join(process.env.ROOT, "shell/plugins/bar/widgets/KeyboardLayoutModel.js"))
+    let devices = {}
+    try { devices = JSON.parse(require("fs").readFileSync(0, "utf8")) } catch (e) {}
+    const typed = (devices.keyboards || []).filter(keyboard => model.isTypedKeyboard(keyboard.name))
+    process.exit(typed.length > 1 || !typed.some(keyboard => keyboard.active_keymap) ? 0 : 1)
+  '
+}
+
 add_allowances() {
   # Per-screen widgets are counted afresh each time, since a monitor can be
   # plugged in while the test watches.
@@ -259,8 +273,7 @@ add_allowances() {
   # arrives or leaves, so which one the label describes can only be learned by
   # asking. It also keeps asking while no keyboard reports a keymap, until a
   # reading it can use lands.
-  if hyprctl -j devices 2>/dev/null |
-    jq -e '(.keyboards | length > 1) or ([.keyboards[] | select((.active_keymap // "") != "")] | length == 0)' >/dev/null 2>&1; then
+  if keyboard_widget_polls; then
     allow '(^|/)hyprctl -j devices$' $(( screens * (IDLE_WINDOW / 10 + 1) )) \
       "the keyboard widget's 10s check of a seat with several keyboards, or none it can read"
   fi
@@ -277,7 +290,7 @@ add_allowances() {
   # strength from the access point list every 5s when NetworkManager reports
   # none for it, which raises no change signal. Whether it reports one can only
   # be seen from inside the shell, so this holds while Wi-Fi is connected at all.
-  if nmcli -t -f TYPE,STATE device 2>/dev/null | grep -qx 'wifi:connected'; then
+  if LC_ALL=C nmcli -t -f TYPE,STATE device 2>/dev/null | grep -qx 'wifi:connected'; then
     allow '(^|/)nmcli -t -f IN-USE,SIGNAL device wifi list ifname ' $(( screens * (IDLE_WINDOW / 5 + 1) )) \
       "the network widget's 5s strength read while Wi-Fi is connected"
   fi
