@@ -31,6 +31,13 @@ ALLOWED=(
   # which one the label describes can only be learned by asking. A udev input
   # monitor shared by every bar would let it stop.
   '(^|/)hyprctl -j devices$'
+  # While a remote session is active its end has to be polled for: Hyprland
+  # reports the screencast stopped whenever frames pause, and nothing at all
+  # when the server exits.
+  '/shell/plugins/services/remote-session/probe\.sh$'
+  # A connected Wi-Fi network NetworkManager reports no strength for is read
+  # from the access point list instead, which raises no change signal.
+  '(^|/)nmcli -t -f IN-USE,SIGNAL device wifi list ifname '
 )
 
 TMPDIR=""
