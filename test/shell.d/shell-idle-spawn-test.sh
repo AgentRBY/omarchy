@@ -20,28 +20,9 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 # widget has been seen polling at; override to look for slower ones.
 IDLE_WINDOW=${OMARCHY_IDLE_SPAWN_WINDOW:-30}
 
-# Commands an idle shell may legitimately run, as extended regexes matched
-# against the logged command line. Each one names why it is not polling.
-ALLOWED=(
-  # wl-paste runs the capture script for each clipboard change, which another
-  # program on the desktop can make while the test shell sits idle.
-  '/shell/plugins/clipboard/capture\.sh '
-  # The keyboard layout widget asks every 10s while the seat has more than one
-  # keyboard: Hyprland raises no event when a keyboard arrives or leaves, so
-  # which one the label describes can only be learned by asking. A udev input
-  # monitor shared by every bar would let it stop.
-  '(^|/)hyprctl -j devices$'
-  # While a remote session is active its end has to be polled for: Hyprland
-  # reports the screencast stopped whenever frames pause, and nothing at all
-  # when the server exits.
-  '/shell/plugins/services/remote-session/probe\.sh$'
-  # A connected Wi-Fi network NetworkManager reports no strength for is read
-  # from the access point list instead, which raises no change signal.
-  '(^|/)nmcli -t -f IN-USE,SIGNAL device wifi list ifname '
-)
-
 TMPDIR=""
 QS_PID=""
+MONITOR_PIDS=()
 
 descendants() {
   local child
@@ -52,6 +33,23 @@ descendants() {
   done
 }
 
+# Sends TERM, gives the processes a few seconds, then KILLs what is left.
+stop_processes() {
+  local pid
+
+  (( $# > 0 )) || return 0
+  kill "$@" 2>/dev/null || true
+  for _ in {1..30}; do
+    for pid in "$@"; do
+      kill -0 "$pid" 2>/dev/null && break
+      pid=""
+    done
+    [[ -z $pid ]] && return 0
+    sleep 0.1
+  done
+  kill -KILL "$@" 2>/dev/null || true
+}
+
 # Quickshell leaves some of its children running when it is stopped, among
 # them the inotifywait watching the plugin directory, and one that outlives the
 # test holds on to whatever it inherited. Stop everything the test shell
@@ -60,9 +58,10 @@ descendants() {
 cleanup() {
   local pid leftovers=()
 
+  stop_processes "${MONITOR_PIDS[@]}"
   if [[ -n $QS_PID ]] && kill -0 "$QS_PID" 2>/dev/null; then
     mapfile -t leftovers < <(descendants "$QS_PID")
-    kill "$QS_PID" 2>/dev/null || true
+    stop_processes "$QS_PID"
     wait "$QS_PID" 2>/dev/null || true
   fi
   if [[ -f ${exec_log:-} ]]; then
@@ -70,7 +69,7 @@ cleanup() {
       { tr '\0' '\n' <"/proc/$pid/environ"; } 2>/dev/null | grep -qxF "OMARCHY_EXEC_LOG=$exec_log" && leftovers+=("$pid")
     done
   fi
-  (( ${#leftovers[@]} == 0 )) || kill "${leftovers[@]}" 2>/dev/null || true
+  stop_processes "${leftovers[@]}"
   [[ -n ${test_root:-} ]] && rm -f "$(shell_ipc_socket "$test_root")"
   [[ -n $TMPDIR && -d $TMPDIR ]] && rm -rf "$TMPDIR"
   return 0
@@ -90,6 +89,7 @@ if ! command -v cc >/dev/null 2>&1; then
 fi
 
 require_command jq
+require_command socat
 
 TMPDIR=$(mktemp -d)
 test_root="$TMPDIR/omarchy"
@@ -115,29 +115,32 @@ ln -s "$ROOT/config" "$test_root/config"
 ln -s "$ROOT/bin" "$test_root/bin"
 ln -s "$ROOT/default" "$test_root/default"
 
+stub() {
+  printf '#!/bin/bash\n%s\n' "$2" >"$stub_bin/$1"
+  chmod +x "$stub_bin/$1"
+}
+
 # Keep startup off the network. These only shape what startup does; a poll
 # still shows up as an exec whether or not its command is stubbed.
-cat >"$stub_bin/omarchy-update-available" <<'SH'
-#!/bin/bash
-exit 1
-SH
+stub omarchy-update-available 'exit 1'
 # A weather fetch that fails is retried, so answer it the way wttr.in does.
-cat >"$stub_bin/curl" <<'SH'
-#!/bin/bash
-case "${*: -1}" in
-  *'?format=j1') printf '{"current_condition":[{"weatherCode":"113","temp_F":"72"}]}\n' ;;
-  *'?format=%l') printf 'Test City, Test Region\n' ;;
+stub curl 'case "${*: -1}" in
+  *"?format=j1") printf "{\"current_condition\":[{\"weatherCode\":\"113\",\"temp_F\":\"72\"}]}\n" ;;
+  *"?format=%l") printf "Test City, Test Region\n" ;;
   *) exit 1 ;;
-esac
-SH
-# The clipboard plugin clears stale watchers at startup with a pkill that
-# matches the session shell's watchers too. Signal nothing from here.
-cat >"$stub_bin/pkill" <<'SH'
-#!/bin/bash
-exit 1
-SH
-cp "$stub_bin/pkill" "$stub_bin/killall"
-chmod +x "$stub_bin/omarchy-update-available" "$stub_bin/curl" "$stub_bin/pkill" "$stub_bin/killall"
+esac'
+# The test shell must not act on the session. The clipboard plugin clears
+# stale watchers at startup with a pkill that matches the session shell's too,
+# and a charger plugged in or out switches the power profile.
+stub pkill 'exit 1'
+stub killall 'exit 1'
+stub omarchy-powerprofiles-set 'exit 0'
+stub powerprofilesctl 'exit 0'
+# The shell runs some commands under `bash -lc`, and a login shell resets PATH
+# and OMARCHY_PATH from /etc/omarchy.conf, which would put the session's
+# checkout and its real commands back ahead of these stubs.
+stub bash '[[ ${1:-} == "-lc" ]] && shift && set -- -c "$@"
+exec /bin/bash "$@"'
 
 fail_with_log() {
   sed -n '1,120p' "$log" >&2
@@ -202,77 +205,201 @@ done
 kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited during startup"
 (( $(exec_count) > 0 )) || fail_with_log "the exec logger records what the shell starts"
 
-start=$(exec_count)
-sleep "$IDLE_WINDOW"
-kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited while idle"
-
-# The shell keeps appending, so judge one copy taken as the window closes:
-# both passes below have to read the same lines.
-window_log="$TMPDIR/window.log"
-cp "$exec_log" "$window_log"
-
-# Whatever an allowed command goes on to run is allowed with it, through any
-# subshells in between. Ancestry is read from the whole log before anything is
-# judged, since a process started before the window can still exec during it,
-# and a posix_spawn child is only logged once the spawn returns, which can be
-# after its own children.
-declare -A parent=() matched=() execed=() running=() forked_from=()
-while read -r pid ppid command; do
-  [[ -n ${parent[$pid]:-} ]] || parent[$pid]=$ppid
-  if [[ -z $command ]]; then
-    forked_from[$pid]=${running[$ppid]:-process $ppid}
-    continue
-  fi
-  execed[$pid]=1
-  running[$pid]=$command
-  for pattern in "${ALLOWED[@]}"; do
-    if [[ $command =~ $pattern ]]; then
-      matched[$pid]=1
-      break
-    fi
-  done
-done <"$window_log"
-
-allowed() {
-  local pid="$1" depth=0
-
-  while [[ -n $pid ]] && (( depth++ < 64 )); do
-    [[ -n ${matched[$pid]:-} ]] && return 0
-    pid=${parent[$pid]:-}
-  done
-  return 1
+# Commands an idle shell may legitimately run, as extended regexes matched
+# against the logged command line. Each holds only while its reason does, and
+# at most as often as that reason implies; a limit of "" leaves it unbounded.
+ALLOW_PATTERNS=()
+ALLOW_LIMITS=()
+ALLOW_REASONS=()
+allow() {
+  ALLOW_PATTERNS+=("$1")
+  ALLOW_LIMITS+=("$2")
+  ALLOW_REASONS+=("$3")
 }
 
-declare -A seen=()
-unexpected=()
-line_number=0
-while read -r pid ppid command; do
-  line_number=$(( line_number + 1 ))
-  (( line_number > start )) || continue
-  allowed "$pid" && continue
+screens=$(hyprctl -j monitors 2>/dev/null | jq 'length' 2>/dev/null || true)
+[[ $screens =~ ^[0-9]+$ ]] && (( screens > 0 )) || screens=1
 
-  if [[ -n $command ]]; then
-    # A failed exec attempt is retried down PATH under the same pid and command
-    # line, so count each attempt once.
-    key="$pid $command"
-  elif [[ -z ${execed[$pid]:-} ]]; then
-    # A process forked to run only built-ins never execs, but it is a process.
-    key="$pid"
-    command="(subshell of ${forked_from[$pid]})"
-  else
-    continue
-  fi
-  if [[ -z ${seen[$key]:-} ]]; then
-    seen[$key]=1
-    unexpected+=("$command")
-  fi
-done <"$window_log"
+# wl-paste runs the capture script for each clipboard change, which another
+# program on the desktop can make at any moment.
+allow '/shell/plugins/clipboard/capture\.sh ' "" "runs on each clipboard change"
 
-if (( ${#unexpected[@]} > 0 )); then
-  fail "an idle shell starts no processes" "$(
-    printf 'The shell started %d process(es) in %ds of idling:\n' "${#unexpected[@]}" "$IDLE_WINDOW"
-    printf '%s\n' "${unexpected[@]}" | sort | uniq -c | sort -rn | sed 's/^/  /' | head -40
-    printf 'Poll on an event instead (agents/skills/shell-dev.md), or allowlist it in %s with the reason.\n' "${BASH_SOURCE[0]}"
-  )"
+# The keyboard layout widget, one per screen, asks every 10s while the seat
+# has more than one keyboard: Hyprland raises no event when a keyboard arrives
+# or leaves, so which one the label describes can only be learned by asking.
+if hyprctl -j devices 2>/dev/null | jq -e '.keyboards | length > 1' >/dev/null 2>&1; then
+  allow '(^|/)hyprctl -j devices$' $(( screens * (IDLE_WINDOW / 10 + 1) )) \
+    "the keyboard widget's 10s check of a seat with several keyboards"
 fi
+
+# While a remote session is active its end has to be polled for, every 2s:
+# Hyprland reports the screencast stopped whenever frames pause, and nothing at
+# all when the server exits.
+if pgrep -x -u "$(id -u)" gliff-server >/dev/null; then
+  allow '/shell/plugins/services/remote-session/probe\.sh$' $(( IDLE_WINDOW / 2 + 1 )) \
+    "the remote session's 2s check while a session is active"
+fi
+
+# The network widget, one per screen, reads a connected Wi-Fi network's
+# strength from the access point list every 5s when NetworkManager reports none
+# for it, which raises no change signal. Whether it reports one can only be seen
+# from inside the shell, so this holds while Wi-Fi is connected at all.
+if nmcli -t -f TYPE,STATE device 2>/dev/null | grep -qx 'wifi:connected'; then
+  allow '(^|/)nmcli -t -f IN-USE,SIGNAL device wifi list ifname ' $(( screens * (IDLE_WINDOW / 5 + 1) )) \
+    "the network widget's 5s strength read while Wi-Fi is connected"
+fi
+
+# Events that legitimately make the shell start something (a config reload, a
+# theme switch, a charger plugged in, a screencast) come from the session
+# around the test, which the test cannot hold still. Record them while
+# watching, so a spawn that lines up with one can be told from a poll.
+start_event_monitors() {
+  local events="$1" socket="${XDG_RUNTIME_DIR:-/run/user/$UID}/hypr/${HYPRLAND_INSTANCE_SIGNATURE:-}/.socket2.sock"
+
+  MONITOR_PIDS=()
+  : >"$events"
+  # Each monitor runs in a subshell of its own, so stopping its descendants
+  # stops the whole pipeline.
+  if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} && -S $socket ]]; then
+    ( socat -u "UNIX-CONNECT:$socket" - 2>/dev/null | sed -u 's/^/hyprland /' >>"$events" ) &
+    MONITOR_PIDS+=("$!")
+  fi
+  if command -v upower >/dev/null; then
+    ( upower --monitor 2>/dev/null |
+      sed -u -n 's/^\[[^]]*\][[:space:]]*\([a-z ]*\):.*/upower \1/p' >>"$events" ) &
+    MONITOR_PIDS+=("$!")
+  fi
+  if command -v nmcli >/dev/null; then
+    # It opens by stating that NetworkManager is running, which is no event.
+    ( nmcli monitor 2>/dev/null | sed -u -e '/^NetworkManager is running$/d' -e 's/^/networkmanager /' >>"$events" ) &
+    MONITOR_PIDS+=("$!")
+  fi
+}
+
+stop_event_monitors() {
+  local pid pids=()
+
+  for pid in "${MONITOR_PIDS[@]}"; do
+    pids+=("$pid")
+    mapfile -t -O "${#pids[@]}" pids < <(descendants "$pid")
+  done
+  stop_processes "${pids[@]}"
+  MONITOR_PIDS=()
+}
+
+# Watches the shell for one window and leaves what it started outside the
+# allowances in `unexpected`, and the events seen meanwhile in $1.
+watch_window() {
+  local events="$1" window_log="$TMPDIR/window.log" start pid ppid command i count limit
+  local -A parent=() matched=() execed=() running=() forked_from=() seen=() allowed_count=()
+
+  start=$(exec_count)
+  start_event_monitors "$events"
+  sleep "$IDLE_WINDOW"
+  stop_event_monitors
+  kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited while idle"
+
+  # The shell keeps appending, so judge one copy taken as the window closes:
+  # both passes below have to read the same lines.
+  cp "$exec_log" "$window_log"
+
+  # Whatever an allowed command goes on to run is allowed with it, through any
+  # subshells in between. Ancestry is read from the whole log before anything
+  # is judged, since a process started before the window can still exec during
+  # it, and a spawned child is only logged once the spawn returns, which can be
+  # after its own children.
+  while read -r pid ppid command; do
+    [[ -n ${parent[$pid]:-} ]] || parent[$pid]=$ppid
+    if [[ -z $command ]]; then
+      forked_from[$pid]=${running[$ppid]:-process $ppid}
+      continue
+    fi
+    execed[$pid]=1
+    running[$pid]=$command
+    [[ -n ${matched[$pid]:-} ]] && continue
+    for i in "${!ALLOW_PATTERNS[@]}"; do
+      if [[ $command =~ ${ALLOW_PATTERNS[$i]} ]]; then
+        matched[$pid]=$i
+        break
+      fi
+    done
+  done <"$window_log"
+
+  allowed_by() {
+    local pid="$1" depth=0
+
+    while [[ -n $pid ]] && (( depth++ < 64 )); do
+      if [[ -n ${matched[$pid]:-} ]]; then
+        echo "${matched[$pid]}"
+        return 0
+      fi
+      pid=${parent[$pid]:-}
+    done
+    return 1
+  }
+
+  unexpected=()
+  local line_number=0 entry key
+  while read -r pid ppid command; do
+    line_number=$(( line_number + 1 ))
+    (( line_number > start )) || continue
+
+    if entry=$(allowed_by "$pid"); then
+      # Count the allowed command itself, once per process, against its limit.
+      if [[ -n $command && ${matched[$pid]:-} == "$entry" && -z ${seen[$pid]:-} ]]; then
+        seen[$pid]=1
+        allowed_count[$entry]=$(( ${allowed_count[$entry]:-0} + 1 ))
+      fi
+      continue
+    fi
+
+    if [[ -n $command ]]; then
+      # A failed exec attempt is retried down PATH under the same pid, and a
+      # process that execs on (bash -c's last command, a stub) keeps it, so
+      # each process is named once, by the command it was started as.
+      key=$pid
+    elif [[ -z ${execed[$pid]:-} ]]; then
+      # A process forked to run only built-ins never execs, but it is a process.
+      key=$pid
+      command="(subshell of ${forked_from[$pid]})"
+    else
+      continue
+    fi
+    if [[ -z ${seen[$key]:-} ]]; then
+      seen[$key]=1
+      unexpected+=("$command")
+    fi
+  done <"$window_log"
+
+  for i in "${!ALLOW_PATTERNS[@]}"; do
+    count=${allowed_count[$i]:-0}
+    limit=${ALLOW_LIMITS[$i]}
+    if [[ -n $limit ]] && (( count > limit )); then
+      unexpected+=("$count runs matching ${ALLOW_PATTERNS[$i]}, more than the $limit allowed for ${ALLOW_REASONS[$i]}")
+    fi
+  done
+}
+
+report() {
+  printf 'The shell started %d process(es) in %ds of idling:\n' "${#unexpected[@]}" "$IDLE_WINDOW"
+  printf '%s\n' "${unexpected[@]}" | sort | uniq -c | sort -rn | sed 's/^/  /' | head -40
+  if [[ -s $1 ]]; then
+    printf 'Session events seen meanwhile:\n'
+    cut -d'>' -f1 "$1" | sort | uniq -c | sort -rn | sed 's/^/  /' | head -20
+  fi
+  printf 'Poll on an event instead (agents/skills/shell-dev.md), or allow it in %s with the reason.\n' "${BASH_SOURCE[0]}"
+}
+
+events="$TMPDIR/events.log"
+watch_window "$events"
+
+# A spawn that lined up with a session event may have been the shell reacting
+# to it. Watch once more: a poll comes back, a reaction needs its event again.
+if (( ${#unexpected[@]} > 0 )) && [[ -s $events ]]; then
+  printf '# %s\n' "Spawns coincided with session events; watching once more:" >&2
+  report "$events" | sed 's/^/# /' >&2
+  watch_window "$events"
+fi
+
+(( ${#unexpected[@]} == 0 )) || fail "an idle shell starts no processes" "$(report "$events")"
 pass "an idle shell starts no processes over ${IDLE_WINDOW}s"
