@@ -48,11 +48,16 @@ Item {
   property bool displaysBlank: false
   // displaysBlank tracks what the lock asked for; Hyprland reports what each
   // panel actually did. While a video is on show the two are reconciled, so a
-  // blank that failed keeps playing and a panel woken behind the lock's back
-  // (a resume that kept the same outputs) resumes instead of freezing.
+  // blank that failed keeps playing and a panel that comes back with its output
+  // resumes instead of freezing.
   property var monitorDpms: ({})
   property bool monitorDpmsKnown: false
+  // Bumped whenever the lock changes the panels itself, so an answer to a
+  // question asked before that change is never taken for the new state.
+  property int monitorDpmsGeneration: 0
+  property bool monitorDpmsPending: false
   readonly property bool videoBackground: Util.isVideoPath(backgroundPath)
+  readonly property bool watchMonitorDpms: locked && videoBackground
   property bool strandedLock: false
   property bool strandedLockResolved: false
 
@@ -248,7 +253,7 @@ Item {
 
   function runWake() {
     root.displaysBlank = false
-    root.monitorDpmsKnown = false
+    root.forgetMonitorDpms()
     if (!wakeProcess.running) wakeProcess.running = true
     if (lockRequested) armBlankTimer()
     nudgeFingerprint()
@@ -304,7 +309,7 @@ Item {
 
   function runBlank() {
     root.displaysBlank = true
-    root.monitorDpmsKnown = false
+    root.forgetMonitorDpms()
     if (!blankProcess.running) blankProcess.running = true
   }
 
@@ -312,6 +317,32 @@ Item {
     var name = String(screenName || "")
     if (!monitorDpmsKnown || !(name in monitorDpms)) return displaysBlank
     return !monitorDpms[name]
+  }
+
+  function forgetMonitorDpms() {
+    monitorDpmsKnown = false
+    monitorDpmsGeneration += 1
+  }
+
+  // Hyprland reports DPMS changes on no event stream, so the panels are asked
+  // once each time something that can change them happens: a video lock
+  // starting, the lock's own blank or wake finishing, and outputs coming or
+  // going. Input that wakes a panel behind the lock reaches the lock too, and
+  // wakes it the same way.
+  function refreshMonitorDpms() {
+    if (!watchMonitorDpms) return
+    if (monitorDpmsProcess.running) {
+      monitorDpmsPending = true
+      return
+    }
+    monitorDpmsPending = false
+    monitorDpmsProcess.generation = monitorDpmsGeneration
+    monitorDpmsProcess.running = true
+  }
+
+  onWatchMonitorDpmsChanged: {
+    forgetMonitorDpms()
+    refreshMonitorDpms()
   }
 
   function applyMonitorDpms(text) {
@@ -707,35 +738,29 @@ Item {
   Process {
     id: wakeProcess
     command: ["bash", "-c", "omarchy-system-wake"]
+    onExited: root.refreshMonitorDpms()
   }
 
   Process {
     id: blankProcess
     command: ["bash", "-c", "omarchy-brightness-keyboard off; omarchy-brightness-display off"]
+    onExited: root.refreshMonitorDpms()
   }
 
-  // Quickshell exposes no DPMS signal, so the panel state is polled while a
-  // video is the locked wallpaper. A wake or blank request drops the last
-  // answer, so its optimistic state applies until the next poll confirms it.
+  // A wake or blank request drops the last answer, so its optimistic state
+  // applies until the panels are asked again once the request has finished.
   Process {
     id: monitorDpmsProcess
+    property int generation: 0
     command: ["hyprctl", "monitors", "-j"]
     stdout: StdioCollector {
-      onStreamFinished: root.applyMonitorDpms(text)
+      waitForEnd: true
+      onStreamFinished: {
+        if (monitorDpmsProcess.generation === root.monitorDpmsGeneration && root.watchMonitorDpms) root.applyMonitorDpms(text)
+      }
     }
-  }
-
-  Timer {
-    id: monitorDpmsTimer
-    interval: 3000
-    repeat: true
-    triggeredOnStart: true
-    running: root.locked && root.videoBackground
-    onTriggered: {
-      if (!monitorDpmsProcess.running) monitorDpmsProcess.running = true
-    }
-    onRunningChanged: {
-      if (!running) root.monitorDpmsKnown = false
+    onExited: {
+      if (root.monitorDpmsPending) root.refreshMonitorDpms()
     }
   }
 
@@ -799,6 +824,7 @@ Item {
       // for, so the blank state has to be given up here or a visible lock
       // wallpaper stays frozen until the next keypress.
       root.displaysBlank = false
+      root.refreshMonitorDpms()
       root.requestSessionLock()
 
       // A monitor still coming up has no workspace, so cannot answer yet.

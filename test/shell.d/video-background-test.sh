@@ -128,14 +128,8 @@ assert(
   'a display coming back gives up the blank state instead of freezing a visible wallpaper'
 )
 assert(
-  lockService.includes('function screenBlank(screenName)') &&
-    lockService.includes('function applyMonitorDpms(text)') &&
-    lockService.includes('command: ["hyprctl", "monitors", "-j"]') &&
-    lockService.includes('running: root.locked && root.videoBackground') &&
-    /displaysBlank: root\.screenBlank\(lockSurface\.screen/.test(lockService) &&
-    /function runWake\(\) \{[\s\S]*?root\.monitorDpmsKnown = false/.test(lockService) &&
-    /function runBlank\(\) \{[\s\S]*?root\.monitorDpmsKnown = false/.test(lockService),
-  'a locked video wallpaper follows what each panel actually did, not only what the lock asked for'
+  /displaysBlank: root\.screenBlank\(lockSurface\.screen/.test(lockService),
+  'each lock surface follows what its own panel actually did (lock-monitor-dpms-test.sh covers the behaviour)'
 )
 assert(
   /feedActive: root\.video && root\.loadBackground && !root\.displaysBlank && !root\.powerSaverActive/.test(lockQml) &&
