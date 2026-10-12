@@ -106,29 +106,41 @@ run_theme_set() {
 # themes the way a user would.
 run_theme_set "Catppuccin" || fail "theme set runs in a scratch home" "$(cat "$sandbox/theme-set.log")"
 
-best=""
-for theme in "Tokyo Night" "Catppuccin" "Tokyo Night"; do
+# Each theme is held to the budget on its own: the two take different paths
+# through the hooks (Tokyo Night's VS Code extension is installed, Catppuccin's
+# is not), and a fast one must not cover for a slow one.
+declare -A best=()
+slowest_theme=""
+for theme in "Tokyo Night" "Catppuccin" "Tokyo Night" "Catppuccin"; do
   : >"$calls"
   start=$EPOCHREALTIME
   run_theme_set "$theme" || fail "theme set switches to $theme in a scratch home" "$(cat "$sandbox/theme-set.log")"
   end=$EPOCHREALTIME
   elapsed=$(( (${end/[.,]/} - ${start/[.,]/}) / 1000 ))
-  if [[ -z $best ]] || (( elapsed < best )); then
-    best=$elapsed
+  if [[ -z ${best[$theme]:-} ]] || (( elapsed < best[$theme] )); then
+    best[$theme]=$elapsed
+    cp "$calls" "$sandbox/calls-$theme.log"
+  fi
+done
+for theme in "${!best[@]}"; do
+  if [[ -z $slowest_theme ]] || (( best[$theme] > best[$slowest_theme] )); then
+    slowest_theme=$theme
   fi
 done
 
-# The stubs only prove anything if the switch reached them.
+# The stubs only prove anything if the switches reached them.
+cat "$sandbox"/calls-*.log >"$sandbox/calls-all.log"
 for reached in "pgrep -x hunk" "qmk_hid via" "tmux list-sessions" "hyprctl reload" "omarchy-theme-set-browser-policy"; do
-  grep -qF -- "$reached" "$calls" || fail "theme set reaches the stubbed apps ($reached)" "$(cut -c1-160 "$calls" | sort)"
+  grep -qF -- "$reached" "$sandbox/calls-all.log" ||
+    fail "theme set reaches the stubbed apps ($reached)" "$(cut -c1-160 "$sandbox/calls-all.log" | sort -u)"
 done
 pass "theme set reaches every stubbed app"
 
-(( best <= BUDGET_MS )) || fail "theme set returns within ${BUDGET_MS}ms with slow apps running" "$(
-  printf 'Fastest of three switches took %dms. Stubbed app calls in the last one:\n' "$best"
-  cut -c1-160 "$calls" | sort | uniq -c | sort -rn | sed 's/^/  /' | head -30
+(( best[$slowest_theme] <= BUDGET_MS )) || fail "theme set returns within ${BUDGET_MS}ms with slow apps running" "$(
+  printf 'The faster of two switches to %s took %dms. Stubbed app calls in it:\n' "$slowest_theme" "${best[$slowest_theme]}"
+  cut -c1-160 "$sandbox/calls-$slowest_theme.log" | sort | uniq -c | sort -rn | sed 's/^/  /' | head -30
 )"
-pass "theme set returns within ${BUDGET_MS}ms with slow apps running (${best}ms)"
+pass "theme set returns within ${BUDGET_MS}ms with slow apps running (${best[$slowest_theme]}ms for $slowest_theme)"
 
 # Every tmux client is a process start, so the count is the cost, and unlike
 # the time it is the same on every machine. Before the theme went over as one

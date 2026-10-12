@@ -99,6 +99,12 @@ log="$TMPDIR/quickshell.log"
 exec_log="$TMPDIR/exec.log"
 mkdir -p "$test_root" "$test_home" "$stub_bin"
 
+# Nobody touches the seat while the test watches, so a long enough window
+# would reach the screensaver and the lock: actions on an event, not polling,
+# and run against the session's desktop. Keep the test shell awake.
+mkdir -p "$test_home/.local/state/omarchy/indicators"
+touch "$test_home/.local/state/omarchy/indicators/stay-awake"
+
 cc -shared -fPIC -O2 -o "$TMPDIR/exec-log.so" "$SHELL_TEST_DIR/fixtures/idle-shell/exec-log.c" -ldl ||
   fail "the exec logger builds"
 
@@ -205,12 +211,15 @@ kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited while idle"
 # judged, since a process started before the window can still exec during it,
 # and a posix_spawn child is only logged once the spawn returns, which can be
 # after its own children.
-declare -A parent=() matched=() execed=() last_command=()
+declare -A parent=() matched=() execed=() running=() forked_from=()
 while read -r pid ppid command; do
   [[ -n ${parent[$pid]:-} ]] || parent[$pid]=$ppid
-  [[ -n $command ]] || continue
+  if [[ -z $command ]]; then
+    forked_from[$pid]=${running[$ppid]:-process $ppid}
+    continue
+  fi
   execed[$pid]=1
-  last_command[$pid]=$command
+  running[$pid]=$command
   for pattern in "${ALLOWED[@]}"; do
     if [[ $command =~ $pattern ]]; then
       matched[$pid]=1
@@ -244,7 +253,7 @@ while read -r pid ppid command; do
   elif [[ -z ${execed[$pid]:-} ]]; then
     # A process forked to run only built-ins never execs, but it is a process.
     key="$pid"
-    command="(subshell of ${last_command[$ppid]:-process $ppid})"
+    command="(subshell of ${forked_from[$pid]})"
   else
     continue
   fi
