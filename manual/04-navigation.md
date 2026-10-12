@@ -54,6 +54,8 @@ hl.config({
 
 A floating workspace works like a traditional desktop: windows overlap, and you move and size them yourself. Each window gets a titlebar in your theme's colors, with buttons to maximize and close. Click a window to bring it forward. Resize it from any edge or corner. Double-click a titlebar to maximize the window while keeping the top bar in view, and again to get its old size back.
 
+A floating workspace also shows a dock, with your pinned apps, everything that's running, and a grid of every app behind the dotted button. Click an app to open it, or to bring its window forward; click again to cycle through its windows. Middle-click opens a new window. Right-click to keep an app in the dock, take it out, or quit it. The dock gets out of the way of a fullscreen window. Move it to any edge under _Trigger > Appearance > Dock > Dock Position_, or with `omarchy dock position left`.
+
 New workspaces, and any you haven't given a layout of their own with `Super + L`, use the default layout. Pick it under _Trigger > Appearance > Workspace Layout_: Tiling, Scrolling, or Floating. `omarchy-hyprland-workspace-layout-default scrolling` sets it from a terminal.
 
 ### Grouping windows

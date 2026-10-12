@@ -56,9 +56,10 @@ else
   omarchy-notification-send -g 󱂬 "Workspace layout set to $NEW_MODE but could not be saved"
 fi
 
-# The bar shows the focused workspace's layout.
+# The bar shows the focused workspace's layout, and the dock shows on floating ones.
 if (( APPLIED )); then
   omarchy-shell -q omarchy.workspaces refresh
+  omarchy-shell -q omarchy.dock refresh
 fi
 
 # Titlebars and shadows are set up while the config loads, and only

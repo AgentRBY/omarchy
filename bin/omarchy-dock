@@ -1,0 +1,81 @@
+#!/bin/bash
+
+# omarchy:summary=Configure the dock shown on floating workspaces
+# omarchy:group=dock
+# omarchy:args=position [top|bottom|left|right] | pinned | pin <desktop-id> | unpin <desktop-id>
+# omarchy:examples=omarchy dock position left | omarchy dock pin org.gnome.Nautilus
+
+set -euo pipefail
+
+source omarchy-shell-config
+
+usage() {
+  cat <<USAGE
+Usage: omarchy dock <command> [args...]
+
+  position [top|bottom|left|right]     Dock position; prints the current one
+                                       when given none
+  pinned                               Print the pinned desktop ids, one per line
+  pin <desktop-id>                     Keep an app in the dock
+  unpin <desktop-id>                   Remove an app from the dock
+USAGE
+}
+
+# A shell.json without pins of its own uses the default pins, so pinning or
+# unpinning starts from those rather than from an empty dock.
+PINNED='(.dock.pinned // $defaults[0].dock.pinned // [])'
+
+cmd_position() {
+  if (( $# == 0 )); then
+    jq -r '.dock.position // "bottom"' "$(source_file)"
+    return
+  fi
+
+  local position="$1"
+  (( $# == 1 )) || fail "position takes a single value"
+  [[ $position =~ ^(top|bottom|left|right)$ ]] || fail "position must be top, bottom, left, or right"
+  commit "$NORMALIZE | .dock.position = \$position" --arg position "$position"
+  echo "Dock position set to $position"
+}
+
+cmd_pinned() {
+  jq -r --slurpfile defaults "$DEFAULTS_FILE" "$PINNED | .[]" "$(source_file)"
+}
+
+desktop_id() {
+  (( $# == 1 )) || fail "takes a single desktop id"
+  local id="${1%.desktop}"
+  [[ -n $id ]] || fail "desktop id must not be empty"
+  printf '%s\n' "$id"
+}
+
+cmd_pin() {
+  local id
+  id=$(desktop_id "$@")
+  commit "$NORMALIZE | .dock.pinned = ($PINNED | if index([\$id]) then . else . + [\$id] end)" \
+    --arg id "$id" --slurpfile defaults "$DEFAULTS_FILE"
+  echo "Pinned $id to the dock"
+}
+
+cmd_unpin() {
+  local id
+  id=$(desktop_id "$@")
+  commit "$NORMALIZE | .dock.pinned = ($PINNED | map(select(. != \$id)))" \
+    --arg id "$id" --slurpfile defaults "$DEFAULTS_FILE"
+  echo "Unpinned $id from the dock"
+}
+
+command="${1:-}"
+(( $# > 0 )) && shift
+
+case "$command" in
+  position) cmd_position "$@" ;;
+  pinned) cmd_pinned "$@" ;;
+  pin) cmd_pin "$@" ;;
+  unpin) cmd_unpin "$@" ;;
+  -h | --help | help) usage ;;
+  *)
+    usage >&2
+    exit 1
+    ;;
+esac

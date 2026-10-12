@@ -411,6 +411,38 @@ assertDeepEqual(
   fs.rmSync(home, { recursive: true, force: true })
 }
 assertDeepEqual(
+  defaultItems.filter(item => item.parent === 'trigger.appearance.dock.position').map(item => [item.label, item.action]),
+  [
+    ['Top Dock', 'omarchy-dock position top'],
+    ['Bottom Dock', 'omarchy-dock position bottom'],
+    ['Left Dock', 'omarchy-dock position left'],
+    ['Right Dock', 'omarchy-dock position right']
+  ],
+  'menu picks the dock position from Appearance > Dock > Dock Position'
+)
+// Exactly the dock's current position is checked, and a shell.json without
+// one has the dock at the bottom.
+{
+  const os = require('os')
+  const { execFileSync } = require('child_process')
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'menu-dock-position-'))
+  fs.mkdirSync(path.join(home, '.config/omarchy'), { recursive: true })
+  const checked = dock => {
+    fs.writeFileSync(path.join(home, '.config/omarchy/shell.json'), JSON.stringify({ version: 1, dock }))
+    return ['top', 'bottom', 'left', 'right'].filter(position => {
+      try {
+        execFileSync('bash', ['-c', defaultById[`trigger.appearance.dock.position.${position}`].checked], { env: { ...process.env, HOME: home, OMARCHY_PATH: root, PATH: `${root}/bin:${process.env.PATH}` } })
+        return true
+      } catch (e) {
+        return false
+      }
+    })
+  }
+  assertDeepEqual(checked(undefined), ['bottom'], 'menu checks Bottom Dock while no position is set')
+  assertDeepEqual(checked({ position: 'left' }), ['left'], 'menu checks Left Dock while the dock is on the left')
+  fs.rmSync(home, { recursive: true, force: true })
+}
+assertDeepEqual(
   defaultItems.filter(item => item.parent === 'trigger.appearance.top-bar.indicators').map(item => item.label),
   ['Battery Percentage', 'Clock'],
   'menu gathers bar indicator options under Menu Bar > Bar Indicators'
@@ -447,7 +479,7 @@ assertDeepEqual(
   'menu picks window transparency from Appearance > Window Transparency'
 )
 const triggerIds = triggerItems.map(item => item.id)
-const appearanceLabels = ['Animations', 'Menu Bar', 'Window Gaps', 'Window Corners', 'Window Transparency', '1-Window Ratio', 'Workspace Layout', 'Herdr Theme Sync']
+const appearanceLabels = ['Animations', 'Menu Bar', 'Dock', 'Window Gaps', 'Window Corners', 'Window Transparency', '1-Window Ratio', 'Workspace Layout', 'Herdr Theme Sync']
 assertEqual(triggerIds.indexOf('trigger.toggle'), triggerIds.indexOf('trigger.appearance') + 1, 'menu places Toggle right after Appearance')
 assertDeepEqual(
   defaultItems.filter(item => item.parent === 'trigger.appearance').map(item => item.label),

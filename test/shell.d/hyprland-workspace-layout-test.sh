@@ -81,6 +81,8 @@ grep -q "set to scrolling" "$notification_log" ||
   fail "the new mode is announced" "$(cat "$notification_log")"
 grep -qx -- "-q omarchy.workspaces refresh" "$notification_log" ||
   fail "the bar is asked to show the new layout" "$(cat "$notification_log")"
+grep -qx -- "-q omarchy.dock refresh" "$notification_log" ||
+  fail "the dock is asked to follow the new layout" "$(cat "$notification_log")"
 if grep -q "could not be saved" "$notification_log"; then
   fail "a saved mode is announced as saved" "$(cat "$notification_log")"
 fi

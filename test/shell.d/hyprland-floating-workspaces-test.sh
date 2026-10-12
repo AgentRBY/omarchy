@@ -84,6 +84,7 @@ grep -qxF 'o.workspace_mode({ default = "scrolling" })' "$modes_dir/default.lua"
 [[ $(run omarchy-hyprland-workspace-layout-default) == "scrolling" ]] || fail "the saved default is reported"
 grep -qx 'reload' "$fake/hyprctl.log" || fail "a new default reloads Hyprland"
 grep -qF 'omarchy-shell -q omarchy.workspaces refresh' "$fake/commands.log" || fail "a new default refreshes the bar"
+grep -qF 'omarchy-shell -q omarchy.dock refresh' "$fake/commands.log" || fail "a new default refreshes the dock"
 pass "the default layout is saved, applied, and shown"
 
 run omarchy-hyprland-workspace-layout-default floating

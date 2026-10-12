@@ -65,5 +65,16 @@
       ]
     }
   },
+  "dock": {
+    "position": "bottom",
+    "pinned": [
+      "chromium",
+      "Alacritty",
+      "org.gnome.Nautilus",
+      "obsidian",
+      "signal",
+      "spotify"
+    ]
+  },
   "plugins": []
 }
