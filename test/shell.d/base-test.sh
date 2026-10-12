@@ -89,31 +89,43 @@ require_compositor() {
   exit 0
 }
 
-# Prints the pkgbuilds/ directory of the omarchy-pkgs checkout, which some tests
-# hold Omarchy's scripts against. It lives in its own repository, wherever this
-# machine keeps it, so OMARCHY_PKGS_PATH can name it (the checkout or its
-# pkgbuilds/) and the usual places beside this checkout are tried after that.
-# Fails when no checkout is found: a test then skips what needs one.
-omarchy_pkgs_root() {
+# Finds the pkgbuilds/ directory of the omarchy-pkgs checkout, which some tests
+# hold Omarchy's scripts against, and sets OMARCHY_PKGS_ROOT to it. The checkout
+# lives in its own repository, wherever this machine keeps it.
+#
+# OMARCHY_PKGS_PATH names it outright (the checkout or its pkgbuilds/), and then
+# nothing else is tried: an override that doesn't resolve fails the test, so a
+# typo can't quietly turn the package checks into skips. Without the override,
+# the usual places beside this checkout are tried, and finding none returns 1 so
+# the test can skip what needs one.
+find_omarchy_pkgs() {
   local candidate
-  local -a pkgbuilds
+  local -a candidates pkgbuilds
 
-  for candidate in \
-    ${OMARCHY_PKGS_PATH:+"$OMARCHY_PKGS_PATH/pkgbuilds" "$OMARCHY_PKGS_PATH"} \
-    "$ROOT/../omarchy-pkgs/pkgbuilds" \
-    "$ROOT/../omarchy/omarchy-pkgs/pkgbuilds" \
-    "$ROOT/../../omarchy-pkgs/pkgbuilds" \
-    "$ROOT/../omacom/omarchy-pkgs/pkgbuilds" \
-    "$ROOT/../../omacom/omarchy-pkgs/pkgbuilds" \
-    "$HOME/Work/omacom/omarchy-pkgs/pkgbuilds"; do
+  if [[ -n ${OMARCHY_PKGS_PATH:-} ]]; then
+    candidates=("$OMARCHY_PKGS_PATH/pkgbuilds" "$OMARCHY_PKGS_PATH")
+  else
+    candidates=(
+      "$ROOT/../omarchy-pkgs/pkgbuilds"
+      "$ROOT/../omarchy/omarchy-pkgs/pkgbuilds"
+      "$ROOT/../../omarchy-pkgs/pkgbuilds"
+      "$ROOT/../omacom/omarchy-pkgs/pkgbuilds"
+      "$ROOT/../../omacom/omarchy-pkgs/pkgbuilds"
+      "$HOME/Work/omacom/omarchy-pkgs/pkgbuilds"
+    )
+  fi
+
+  for candidate in "${candidates[@]}"; do
     # Only */PKGBUILD is a pattern; the checkout's own path stays literal.
     pkgbuilds=("$candidate"/*/PKGBUILD)
     if [[ -f ${pkgbuilds[0]:-} ]]; then
-      (cd "$candidate" && pwd)
+      OMARCHY_PKGS_ROOT=$(cd "$candidate" && pwd)
       return 0
     fi
   done
 
+  [[ -z ${OMARCHY_PKGS_PATH:-} ]] ||
+    fail "OMARCHY_PKGS_PATH names an omarchy-pkgs checkout" "no */PKGBUILD under $OMARCHY_PKGS_PATH or its pkgbuilds/"
   return 1
 }
 

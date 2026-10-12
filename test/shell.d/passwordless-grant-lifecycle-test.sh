@@ -104,17 +104,26 @@ pass "native boot cleanup removes grants while routine tmpfiles preserves them"
 
 # Keep real package scripts in the contract: source and packaging share the
 # same lock and blocker, including the legacy scriptlet fallback.
-if ! pkgs_path=$(omarchy_pkgs_root); then
+if ! find_omarchy_pkgs; then
   skip "package scriptlets need the omarchy-pkgs checkout; set OMARCHY_PKGS_PATH to it"
   exit 0
 fi
-# The scriptlet half of this contract is omacom/omarchy-pkgs#944. Until a
-# checkout carries it, there is no removal hook to hold to the lock; once one
-# does, both settings packages must.
-settings_script="$pkgs_path/omarchy-settings/omarchy-settings.install"
-[[ -f $settings_script && -r $settings_script ]] ||
-  fail "the omarchy-pkgs checkout at $pkgs_path ships omarchy-settings.install"
-if ! grep -q '^pre_remove()' "$settings_script"; then
+pkgs_path=$OMARCHY_PKGS_ROOT
+# The scriptlet half of this contract is omacom/omarchy-pkgs#944, still open.
+# Skip only while the checkout is in the state before it: neither settings
+# package defines pre_remove nor mentions the passwordless-sudo helper. Once
+# either does, both are held to the full contract below, so a scriptlet that
+# loses its pre_remove fails rather than skips.
+# Remove this gate once omacom/omarchy-pkgs#944 lands.
+pre_944=true
+for name in omarchy-settings omarchy-settings-dev; do
+  script="$pkgs_path/$name/$name.install"
+  [[ -f $script && -r $script ]] || fail "the omarchy-pkgs checkout at $pkgs_path ships a readable $name.install"
+  if grep -Eq '^[[:space:]]*(function[[:space:]]+pre_remove\b|pre_remove[[:space:]]*\(\))|omarchy-sudo-passwordless' "$script"; then
+    pre_944=false
+  fi
+done
+if [[ $pre_944 == "true" ]]; then
   skip "package scriptlets: the omarchy-pkgs checkout predates the settings packages' sudo cleanup (omacom/omarchy-pkgs#944)"
   exit 0
 fi

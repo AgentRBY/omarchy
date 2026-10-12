@@ -88,7 +88,8 @@ grep -F 'as_root env OMARCHY_PATH="$OMARCHY_PATH" bash -euo pipefail "$snapper_c
 pass "Snapper service migration only repairs broken services idempotently"
 
 # The PKGBUILDs live in the omarchy-pkgs checkout, wherever this machine keeps it.
-if pkgs_root=$(omarchy_pkgs_root); then
+if find_omarchy_pkgs; then
+  pkgs_root=$OMARCHY_PKGS_ROOT
   settings_pkgbuild="$pkgs_root/omarchy-settings-dev/PKGBUILD"
   omarchy_pkgbuild="$pkgs_root/omarchy-dev/PKGBUILD"
 

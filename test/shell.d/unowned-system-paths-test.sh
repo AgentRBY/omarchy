@@ -17,8 +17,8 @@ set -euo pipefail
 source "$(dirname "$0")/base-test.sh"
 
 # The PKGBUILDs live in the omarchy-pkgs checkout, wherever this machine keeps it.
-if pkgs_root=$(omarchy_pkgs_root); then
-  python3 - "$ROOT" "$pkgs_root" <<'PYTHON'
+if find_omarchy_pkgs; then
+  python3 - "$ROOT" "$OMARCHY_PKGS_ROOT" <<'PYTHON'
 import os, re, sys
 from pathlib import Path
 

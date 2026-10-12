@@ -108,8 +108,8 @@ PY
 pass "default bar widget ids resolve to manifests and entry points"
 
 # The PKGBUILDs live in the omarchy-pkgs checkout, wherever this machine keeps it.
-if pkgs_root=$(omarchy_pkgs_root); then
-  ROOT="$ROOT" OMARCHY_PKGS_ROOT="$pkgs_root" python3 <<'PY'
+if find_omarchy_pkgs; then
+  ROOT="$ROOT" OMARCHY_PKGS_ROOT="$OMARCHY_PKGS_ROOT" python3 <<'PY'
 import os
 import re
 import sys
