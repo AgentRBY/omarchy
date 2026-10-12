@@ -213,23 +213,37 @@ int posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_actions_t 
   return status;
 }
 
-static void record_pidfd(int pidfd, char *const argv[]) {
+// The caller may pass no pidfd slot, which glibc allows though its header
+// says otherwise, so spawn through a local one (read through a volatile copy,
+// past the nonnull the declaration promises) and hand it over or close it.
+static void finish_pidfd(int pidfd, int *volatile out, char *const argv[]) {
   pid_t child = real_pidfd_getpid ? real_pidfd_getpid(pidfd) : 0;
   record_as(child > 0 ? child : 0, getpid(), argv);
+  if (out) {
+    *out = pidfd;
+  } else {
+    int saved_errno = errno;
+    close(pidfd);
+    errno = saved_errno;
+  }
 }
 
 int pidfd_spawn(int *pidfd, const char *path, const posix_spawn_file_actions_t *actions,
                 const posix_spawnattr_t *attr, char *const argv[], char *const envp[]) {
   if (!real_pidfd_spawn) return ENOSYS;
-  int status = real_pidfd_spawn(pidfd, path, actions, attr, argv, envp);
-  if (status == 0) record_pidfd(*pidfd, argv);
+  int *volatile out = pidfd;
+  int child = -1;
+  int status = real_pidfd_spawn(&child, path, actions, attr, argv, envp);
+  if (status == 0) finish_pidfd(child, out, argv);
   return status;
 }
 
 int pidfd_spawnp(int *pidfd, const char *file, const posix_spawn_file_actions_t *actions,
                  const posix_spawnattr_t *attr, char *const argv[], char *const envp[]) {
   if (!real_pidfd_spawnp) return ENOSYS;
-  int status = real_pidfd_spawnp(pidfd, file, actions, attr, argv, envp);
-  if (status == 0) record_pidfd(*pidfd, argv);
+  int *volatile out = pidfd;
+  int child = -1;
+  int status = real_pidfd_spawnp(&child, file, actions, attr, argv, envp);
+  if (status == 0) finish_pidfd(child, out, argv);
   return status;
 }
