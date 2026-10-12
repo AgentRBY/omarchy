@@ -145,10 +145,14 @@ BarWidget {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        // A reading that failed leaves the seat in doubt, so the timer below
+        // asks again: a device change is announced once, and nothing else
+        // would bring the label back to it.
         let listed
         try {
           listed = JSON.parse(text || "{}").keyboards
         } catch (e) {
+          root.keyboardUnresolved = true
           return
         }
 
@@ -156,7 +160,10 @@ BarWidget {
         // string parses into the same shape a seat with no keyboards would.
         // Tell them apart by the list itself, so only a reading that reached
         // hyprctl gets to speak for the seat.
-        if (!Array.isArray(listed)) return
+        if (!Array.isArray(listed)) {
+          root.keyboardUnresolved = true
+          return
+        }
 
         const typed = root.typedKeyboards(listed)
         const kb = root.selectKeyboard(typed)

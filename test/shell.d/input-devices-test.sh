@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # Hyprland raises no event when a keyboard arrives or leaves, so the shell
-# learns of it from /dev/input instead: one change signal per device, however
-# many nodes it brings, and none while nothing changes. The keyboard layout
+# learns of it from /dev/input instead: a change signal once a device's burst of
+# nodes settles and one more a few seconds on, for a device udev is slow to
+# finish with, and none while nothing changes. The keyboard layout
 # widget reads the seat again on that signal rather than asking on a timer.
 
 set -euo pipefail
@@ -56,10 +57,25 @@ pass "a seat that does not change raises no signal"
 touch "$stage/root/dev/input/event40" "$stage/root/dev/input/event41"
 mkdir "$stage/root/dev/input/js9"
 sleep 1.5
-(( $(changes) == 1 )) || fail "a device arriving raises one change signal" "$(cat "$stage/log")"
-pass "a device arriving raises one change signal"
+(( $(changes) == 1 )) || fail "a device arriving raises one change signal once it settles" "$(cat "$stage/log")"
+sleep 2.5
+(( $(changes) == 2 )) || fail "a device arriving raises one more change signal a few seconds on" "$(cat "$stage/log")"
+pass "a device arriving raises a change signal as it settles and once more after"
 
 rm -rf "$stage/root/dev/input/event40" "$stage/root/dev/input/event41" "$stage/root/dev/input/js9"
+sleep 4
+(( $(changes) == 4 )) || fail "a device leaving raises the same two change signals" "$(cat "$stage/log")"
+pass "a device leaving raises the same two change signals"
+
+# The last device going can take /dev/input with it. A device coming back
+# brings a new directory, which has to be watched again.
+rm -rf "$stage/root/dev/input"
+sleep 4
+mkdir "$stage/root/dev/input"
+# Past both signals for the directory itself, so only the node can count.
+sleep 4.5
+before=$(changes)
+touch "$stage/root/dev/input/event42"
 sleep 1.5
-(( $(changes) == 2 )) || fail "a device leaving raises one change signal" "$(cat "$stage/log")"
-pass "a device leaving raises one change signal"
+(( $(changes) > before )) || fail "a recreated /dev/input is watched again" "$(cat "$stage/log")"
+pass "a recreated /dev/input is watched again"
