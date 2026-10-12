@@ -119,15 +119,22 @@ pass "sleep monitor cleans up its producer when terminated"
 cat >"$mock_bin/dbus-monitor" <<'SH'
 #!/bin/bash
 
+# The bus's greeting comes first, once the match rules are in place.
+printf 'signal sender=org.freedesktop.DBus member=NameAcquired\n'
 printf '   boolean %s\n' "${SLEEP_SIGNAL:-true}"
 exec sleep 30
+SH
+cat >"$mock_bin/systemd-notify" <<'SH'
+#!/bin/bash
+
+printf 'systemd-notify %s\n' "$*" >>"$SHELL_LOG"
 SH
 cat >"$mock_omarchy/bin/omarchy-shell" <<'SH'
 #!/bin/bash
 
-printf '%s\n' "$*" >>"$SHELL_LOG"
+printf 'omarchy-shell %s\n' "$*" >>"$SHELL_LOG"
 SH
-chmod +x "$mock_bin/dbus-monitor" "$mock_omarchy/bin/omarchy-shell"
+chmod +x "$mock_bin/dbus-monitor" "$mock_bin/systemd-notify" "$mock_omarchy/bin/omarchy-shell"
 run_log="$tmpdir/run-log"
 shell_log="$tmpdir/shell-log"
 : >"$lock_log"
@@ -140,15 +147,16 @@ OMARCHY_PATH="$mock_omarchy" \
   "$sleep_monitor"
 
 [[ $(<"$lock_log") == "locked" ]] || fail "the sleep still locks before starting the resume watcher"
-[[ $(<"$run_log") == "--user --quiet --collect --property=RuntimeMaxSec=1d $mock_omarchy/bin/omarchy-system-sleep-monitor --resume" ]] ||
-  fail "a sleep starts a resume watcher outside the service" "$(cat "$run_log" 2>/dev/null)"
+[[ $(<"$run_log") == "--user --quiet --collect --property=Type=notify --property=NotifyAccess=all --property=RuntimeMaxSec=1d $mock_omarchy/bin/omarchy-system-sleep-monitor --resume" ]] ||
+  fail "a sleep starts a resume watcher outside the service and waits for it to listen" "$(cat "$run_log" 2>/dev/null)"
 [[ ! -e $shell_log ]] || fail "the sleep itself does not ask the lock" "$(<"$shell_log")"
-pass "a sleep starts a resume watcher outside the service"
+pass "a sleep starts a resume watcher outside the service and waits for it to listen"
 
 SLEEP_SIGNAL=false \
   OMARCHY_PATH="$mock_omarchy" \
   PATH="$mock_bin:$PATH" \
   SHELL_LOG="$shell_log" \
   timeout 5 "$sleep_monitor" --resume || fail "the resume watcher exits once the machine wakes"
-[[ $(<"$shell_log") == "-q lock refreshDisplays" ]] || fail "the resume watcher asks the lock to check its panels" "$(cat "$shell_log" 2>/dev/null)"
-pass "the resume watcher asks the lock to check its panels once the machine wakes"
+[[ $(<"$shell_log") == $'systemd-notify --ready\nomarchy-shell -q lock refreshDisplays' ]] ||
+  fail "the resume watcher reports it is listening, then asks the lock once the machine wakes" "$(cat "$shell_log" 2>/dev/null)"
+pass "the resume watcher reports it is listening, then asks the lock once the machine wakes"
