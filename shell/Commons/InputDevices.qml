@@ -26,6 +26,9 @@ Singleton {
   // a minute, rather than given up on: nothing else would notice a device.
   property real startedAt: 0
   property int quickExits: 0
+  // Whether the watch has stayed up, which the keyboard widget falls back to
+  // asking on a timer without.
+  readonly property bool healthy: quickExits === 0
 
   // /dev is watched beside /dev/input for one thing: /dev/input being created
   // again after it went away with the last device, when the watch on the old
@@ -38,12 +41,15 @@ Singleton {
         + "exec inotifywait -m -q -e create,delete,delete_self,moved_to --format '%w|%e|%f' \"${dirs[@]}\"",
       "input-devices", root.inputDir, root.devDir, root.udevDir]
     running: true
-    // Whatever arrived or left while no watch was set up went unseen, at start
-    // as after a restart, so read the seat again once a watch is.
+    // Whatever arrived or left while no watch was set up went unseen, so read
+    // the seat again once a watch is: at start, after a watch that had been
+    // up, and once a failing one has stayed up a second. A watch failing at
+    // once announces nothing, or each retry would ask Hyprland from every bar.
     onRunningChanged: {
       if (!running) return
       root.startedAt = Date.now()
-      root.announce()
+      if (root.quickExits === 0) root.announce()
+      else recovered.restart()
     }
     stdout: SplitParser {
       onRead: function(line) {
@@ -86,6 +92,16 @@ Singleton {
     id: followUp
     interval: 3000
     onTriggered: root.changed()
+  }
+
+  Timer {
+    id: recovered
+    interval: 1000
+    onTriggered: {
+      if (!watcher.running) return
+      root.quickExits = 0
+      root.announce()
+    }
   }
 
   Timer {

@@ -246,7 +246,7 @@ BarWidget {
   // forever for an answer only a device change can alter.
   Timer {
     interval: 10000
-    running: !root.keyboardName || root.keyboardUnresolved
+    running: !root.keyboardName || root.keyboardUnresolved || !InputDevices.healthy
     repeat: true
     onTriggered: root.refresh()
   }

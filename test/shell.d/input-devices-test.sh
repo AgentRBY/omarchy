@@ -17,7 +17,7 @@ stage=$(mktemp -d)
 QS_PID=""
 # Quickshell restarts a watcher killed under it, and leaves one running when it
 # is stopped itself, so stop the shell first and then what it had started.
-cleanup() {
+stop_shell() {
   local children=()
 
   if [[ -n $QS_PID ]]; then
@@ -31,6 +31,11 @@ cleanup() {
     wait "$QS_PID" 2>/dev/null || true
     (( ${#children[@]} == 0 )) || kill "${children[@]}" 2>/dev/null || true
   fi
+  QS_PID=""
+}
+
+cleanup() {
+  stop_shell
   rm -rf "$stage"
 }
 trap cleanup EXIT
@@ -73,22 +78,25 @@ sleep 1
 pass "a seat that does not change raises no signal"
 
 # A keyboard arrives as an event node and its handler links, closer together
-# than the settle delay, so a signal only lands once the last of them has.
+# than the settle delay, so a signal only lands once the last of them has: the
+# first signal is logged after the last node, however slow the machine.
 touch "$stage/root/dev/input/event40"
-sleep 0.3
+sleep 0.4
 touch "$stage/root/dev/input/event41"
-sleep 0.3
+sleep 0.4
+last_node_ms=$(date +%s%3N)
 mkdir "$stage/root/dev/input/js9"
-sleep 0.3
-(( $(changes) == 0 )) || fail "a device's burst of nodes raises nothing until it settles" "$(cat "$stage/log")"
-sleep 1.2
+sleep 1.5
 (( $(changes) == 1 )) || fail "a device arriving raises one change signal once it settles" "$(cat "$stage/log")"
-sleep 2.2
+first_signal_ms=$(grep -o 'CHANGED [0-9]*' "$stage/log" | sed -n "$(( base + 1 ))p" | cut -d' ' -f2)
+(( first_signal_ms >= last_node_ms )) ||
+  fail "a device's burst of nodes raises nothing until the last has settled" "signal at $first_signal_ms, last node at $last_node_ms"
+sleep 3
 (( $(changes) == 2 )) || fail "a device arriving raises one more change signal a few seconds on" "$(cat "$stage/log")"
-pass "a device arriving raises a change signal as it settles and once more after"
+pass "a device arriving raises a change signal as its burst settles and once more after"
 
 rm -rf "$stage/root/dev/input/event40" "$stage/root/dev/input/event41" "$stage/root/dev/input/js9"
-sleep 4
+sleep 4.5
 (( $(changes) == 4 )) || fail "a device leaving raises the same two change signals" "$(cat "$stage/log")"
 pass "a device leaving raises the same two change signals"
 
@@ -127,3 +135,18 @@ touch "$stage/root/dev/input/event43"
 sleep 2
 (( $(changes) > before )) || fail "the seat is read again once a lost watch is back" "$(cat "$stage/log")"
 pass "the seat is read again once a lost watch is back"
+
+# A watch that cannot be set up at all (no /dev here, an exhausted inotify
+# limit on a real machine) keeps failing at once. Its retries must not each
+# make every bar ask Hyprland: past the first reading, the keyboard widget's
+# own fallback timer covers it.
+stop_shell
+mkdir -p "$stage/broken"
+OMARCHY_INPUT_ROOT="$stage/broken" quickshell -p "$stage" --no-color >"$stage/broken.log" 2>&1 &
+QS_PID=$!
+sleep 7
+kill -0 "$QS_PID" 2>/dev/null || fail "the fixture shell runs without a watchable /dev" "$(cat "$stage/broken.log")"
+broken_changes=$(grep -c 'CHANGED' "$stage/broken.log" || true)
+(( broken_changes <= 2 )) ||
+  fail "a watch that keeps failing does not read the seat on every retry" "$broken_changes change signals in 7s"
+pass "a watch that keeps failing does not read the seat on every retry"
