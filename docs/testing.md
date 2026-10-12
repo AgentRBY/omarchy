@@ -84,6 +84,17 @@ Gate only what needs gating — put `require_compositor` in files whose runtime
 half needs a live session, and keep static analysis of the same area in code
 that runs unconditionally before or beside it.
 
+## Performance guards
+
+A handful of tests fail when a fast path gets slow again. Each prefers a count that is the same on every machine over a wall-clock time, and where it has to time something it takes the fastest of several runs against a budget several times today's cost, or compares two paths timed in the same run.
+
+- `test/shell.d/shell-idle-spawn-test.sh` starts a second shell on the default config, waits for its startup work to go quiet, then fails if it starts any process over 30 idle seconds, naming each command line. A preloaded shim (`fixtures/idle-shell/exec-log.c`, built with `cc` at test time) logs every exec the shell and its descendants make, so a probe that lives for a millisecond is caught, and nothing outside the shell's process tree can be. A command that legitimately runs while idle goes in the file's `ALLOWED` list with the reason it is not polling. Compositor-gated, and skipped without a C compiler.
+- `test/cli` times `omarchy screenshot` against help for it on a copy of the real command table, and fails unless the alias dispatch costs under a quarter of the full load (13ms against 190ms today).
+- `test/shell.d/menu-guard-budget-test.sh` runs the shipped menu's guard batch on this machine's real hardware: the batch within 200ms (about 50ms today) and each guard alone within 100ms (the slowest is about 30ms), listing the slowest guards when either fails.
+- `test/shell.d/theme-set-budget-test.sh` runs the whole `omarchy-theme-set` in a scratch home where every app is a stub given its real cost (a running Hunk, VS Code's Electron boot, three tmux sessions), and fails when the switch takes over 500ms (about 80ms today) or starts more than a handful of tmux clients.
+
+Override a budget through the environment variable named at the top of each file when measuring something slower on purpose.
+
 ## Unit-testing shell JavaScript from bash
 
 The Quickshell plugins keep their logic in plain `.js` modules
@@ -119,6 +130,7 @@ only a live session can prove.
   executables (`sudo`, `tmux`, `gsettings`, helper commands) that log their
   arguments to a file, prepend it to `PATH`, and then run the real script
   under test. Assertions grep the call log and the files the script wrote.
+- **Login shells drop the stubs.** A `bash -l` rereads `/etc/profile`, which resets `OMARCHY_PATH` from `/etc/omarchy.conf` and puts that checkout's `bin/` ahead of the stub directory, so a command run through one reaches the real commands again. Commands that start `bash -lc` (`omarchy-theme-set` runs its app retints that way) need a `bash` stub that drops the `-l`.
 - **Fake `$HOME`, real `$OMARCHY_PATH`.** Anything touching user state runs
   with `HOME` pointed at a `mktemp -d` directory (cleaned up via
   `trap ... EXIT`) and `OMARCHY_PATH="$ROOT"`, so tests exercise the checkout
