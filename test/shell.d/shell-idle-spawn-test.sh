@@ -50,6 +50,18 @@ stop_processes() {
   kill -KILL "$@" 2>/dev/null || true
 }
 
+# The event monitors run as pipelines in subshells; stop each whole one.
+stop_event_monitors() {
+  local pid pids=()
+
+  for pid in "${MONITOR_PIDS[@]}"; do
+    pids+=("$pid")
+    mapfile -t -O "${#pids[@]}" pids < <(descendants "$pid")
+  done
+  stop_processes "${pids[@]}"
+  MONITOR_PIDS=()
+}
+
 # Quickshell leaves some of its children running when it is stopped, among
 # them the inotifywait watching the plugin directory, and one that outlives the
 # test holds on to whatever it inherited. Stop everything the test shell
@@ -58,7 +70,7 @@ stop_processes() {
 cleanup() {
   local pid leftovers=()
 
-  stop_processes "${MONITOR_PIDS[@]}"
+  stop_event_monitors
   if [[ -n $QS_PID ]] && kill -0 "$QS_PID" 2>/dev/null; then
     mapfile -t leftovers < <(descendants "$QS_PID")
     stop_processes "$QS_PID"
@@ -208,10 +220,18 @@ kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited during startup
 # Commands an idle shell may legitimately run, as extended regexes matched
 # against the logged command line. Each holds only while its reason does, and
 # at most as often as that reason implies; a limit of "" leaves it unbounded.
+# The reasons are looked at as each window opens and again as it closes, and
+# one that held at either end holds for the window: a remote session can start
+# or a Wi-Fi network connect while the test watches.
 ALLOW_PATTERNS=()
 ALLOW_LIMITS=()
 ALLOW_REASONS=()
 allow() {
+  local pattern
+
+  for pattern in "${ALLOW_PATTERNS[@]}"; do
+    [[ $pattern == "$1" ]] && return 0
+  done
   ALLOW_PATTERNS+=("$1")
   ALLOW_LIMITS+=("$2")
   ALLOW_REASONS+=("$3")
@@ -220,34 +240,37 @@ allow() {
 screens=$(hyprctl -j monitors 2>/dev/null | jq 'length' 2>/dev/null || true)
 [[ $screens =~ ^[0-9]+$ ]] && (( screens > 0 )) || screens=1
 
-# wl-paste runs the capture script for each clipboard change, which another
-# program on the desktop can make at any moment.
-allow '/shell/plugins/clipboard/capture\.sh ' "" "runs on each clipboard change"
+add_allowances() {
+  # wl-paste runs the capture script for each clipboard change, which another
+  # program on the desktop can make at any moment.
+  allow '/shell/plugins/clipboard/capture\.sh ' "" "runs on each clipboard change"
 
-# The keyboard layout widget, one per screen, asks every 10s while the seat
-# has more than one keyboard: Hyprland raises no event when a keyboard arrives
-# or leaves, so which one the label describes can only be learned by asking.
-if hyprctl -j devices 2>/dev/null | jq -e '.keyboards | length > 1' >/dev/null 2>&1; then
-  allow '(^|/)hyprctl -j devices$' $(( screens * (IDLE_WINDOW / 10 + 1) )) \
-    "the keyboard widget's 10s check of a seat with several keyboards"
-fi
+  # The keyboard layout widget, one per screen, asks every 10s while the seat
+  # has more than one keyboard: Hyprland raises no event when a keyboard
+  # arrives or leaves, so which one the label describes can only be learned by
+  # asking.
+  if hyprctl -j devices 2>/dev/null | jq -e '.keyboards | length > 1' >/dev/null 2>&1; then
+    allow '(^|/)hyprctl -j devices$' $(( screens * (IDLE_WINDOW / 10 + 1) )) \
+      "the keyboard widget's 10s check of a seat with several keyboards"
+  fi
 
-# While a remote session is active its end has to be polled for, every 2s:
-# Hyprland reports the screencast stopped whenever frames pause, and nothing at
-# all when the server exits.
-if pgrep -x -u "$(id -u)" gliff-server >/dev/null; then
-  allow '/shell/plugins/services/remote-session/probe\.sh$' $(( IDLE_WINDOW / 2 + 1 )) \
-    "the remote session's 2s check while a session is active"
-fi
+  # While a remote session is active its end has to be polled for, every 2s:
+  # Hyprland reports the screencast stopped whenever frames pause, and nothing
+  # at all when the server exits.
+  if pgrep -x -u "$(id -u)" gliff-server >/dev/null; then
+    allow '/shell/plugins/services/remote-session/probe\.sh$' $(( IDLE_WINDOW / 2 + 1 )) \
+      "the remote session's 2s check while a session is active"
+  fi
 
-# The network widget, one per screen, reads a connected Wi-Fi network's
-# strength from the access point list every 5s when NetworkManager reports none
-# for it, which raises no change signal. Whether it reports one can only be seen
-# from inside the shell, so this holds while Wi-Fi is connected at all.
-if nmcli -t -f TYPE,STATE device 2>/dev/null | grep -qx 'wifi:connected'; then
-  allow '(^|/)nmcli -t -f IN-USE,SIGNAL device wifi list ifname ' $(( screens * (IDLE_WINDOW / 5 + 1) )) \
-    "the network widget's 5s strength read while Wi-Fi is connected"
-fi
+  # The network widget, one per screen, reads a connected Wi-Fi network's
+  # strength from the access point list every 5s when NetworkManager reports
+  # none for it, which raises no change signal. Whether it reports one can only
+  # be seen from inside the shell, so this holds while Wi-Fi is connected at all.
+  if nmcli -t -f TYPE,STATE device 2>/dev/null | grep -qx 'wifi:connected'; then
+    allow '(^|/)nmcli -t -f IN-USE,SIGNAL device wifi list ifname ' $(( screens * (IDLE_WINDOW / 5 + 1) )) \
+      "the network widget's 5s strength read while Wi-Fi is connected"
+  fi
+}
 
 # Events that legitimately make the shell start something (a config reload, a
 # theme switch, a charger plugged in, a screencast) come from the session
@@ -276,27 +299,21 @@ start_event_monitors() {
   fi
 }
 
-stop_event_monitors() {
-  local pid pids=()
-
-  for pid in "${MONITOR_PIDS[@]}"; do
-    pids+=("$pid")
-    mapfile -t -O "${#pids[@]}" pids < <(descendants "$pid")
-  done
-  stop_processes "${pids[@]}"
-  MONITOR_PIDS=()
-}
-
 # Watches the shell for one window and leaves what it started outside the
 # allowances in `unexpected`, and the events seen meanwhile in $1.
 watch_window() {
   local events="$1" window_log="$TMPDIR/window.log" start pid ppid command i count limit
   local -A parent=() matched=() execed=() running=() forked_from=() seen=() allowed_count=()
 
+  ALLOW_PATTERNS=()
+  ALLOW_LIMITS=()
+  ALLOW_REASONS=()
+  add_allowances
   start=$(exec_count)
   start_event_monitors "$events"
   sleep "$IDLE_WINDOW"
   stop_event_monitors
+  add_allowances
   kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited while idle"
 
   # The shell keeps appending, so judge one copy taken as the window closes:

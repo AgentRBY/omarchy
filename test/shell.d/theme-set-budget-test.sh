@@ -70,6 +70,20 @@ stub pgrep '[[ " $* " == *" hunk "* ]] || exit 1'
 stub tmux '[[ $1 == "list-sessions" ]] && printf "%s\n" one two three'
 stub code "[[ \$* == *--list-extensions* ]] && { sleep $STUB_COST; echo enkia.tokyo-night; }"
 stub qmk_hid
+# Hunk's settle nudge sleeps from inside omarchy-theme-set-hunk; with a gate set
+# it waits for the gate instead. Every other sleep is a real one.
+cat >"$stub_bin/sleep" <<'SH'
+#!/bin/bash
+if [[ -n ${HUNK_GATE:-} ]] && tr '\0' ' ' <"/proc/$PPID/cmdline" 2>/dev/null | grep -q omarchy-theme-set-hunk; then
+  for _ in {1..100}; do
+    [[ -e $HUNK_GATE ]] && exit 0
+    /usr/bin/sleep 0.1
+  done
+  exit 0
+fi
+exec /usr/bin/sleep "$@"
+SH
+chmod +x "$stub_bin/sleep"
 
 # The app retints run under `bash -lc`, and a login shell resets PATH and
 # OMARCHY_PATH from /etc/omarchy.conf, which would put the real commands back
@@ -102,6 +116,7 @@ run_theme_set() {
     TMUX_TMPDIR="$sandbox/tmux" \
     OMARCHY_THEME_SKIP_BACKGROUND=1 \
     OMARCHY_BROWSER_POLICY_DIRS="$sandbox/policy" \
+    HUNK_GATE="${HUNK_GATE:-}" \
     "$ROOT/bin/omarchy-theme-set" "$1" >"$sandbox/theme-set.log" 2>&1
 }
 
@@ -163,9 +178,14 @@ list_calls=$(cat "$sandbox"/calls-*.log | grep -c '^code .*--list-extensions' ||
   "$(grep '^code ' "$sandbox"/calls-*.log)"
 pass "theme set reads VS Code's extension registry instead of starting the editor"
 
+# Hunk's settle nudge waits on a gate here, not on the clock, so a slow
+# machine's long switch cannot pass it by. A switch that waits for the nudge
+# stays held until the gate opens (10s at most), and returns having sent both.
 sleep 1.5
 : >"$calls"
-run_theme_set "Catppuccin" || fail "theme set switches to Catppuccin in a scratch home" "$(cat "$sandbox/theme-set.log")"
+HUNK_GATE="$sandbox/hunk-gate" run_theme_set "Catppuccin" ||
+  fail "theme set switches to Catppuccin in a scratch home" "$(cat "$sandbox/theme-set.log")"
 nudges=$(grep -c '^pkill -WINCH -x hunk' "$calls" || true)
+touch "$sandbox/hunk-gate"
 (( nudges == 1 )) || fail "theme set returns before Hunk's settle nudge" "Hunk was nudged $nudges times before the switch returned."
 pass "theme set returns before Hunk's settle nudge"
