@@ -6,7 +6,7 @@
 # costs the real apps have: a running Hunk, VS Code with the theme's extension
 # installed (answering --list-extensions after an Electron boot), a Framework 16
 # keyboard and three tmux sessions. A switch that waits on any of them again,
-# or that starts a client per value, blows the budget.
+# or that starts a client per value, fails.
 
 set -euo pipefail
 
@@ -14,10 +14,13 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 require_command jq
 
-# The switch costs about 0.1s on a current laptop. Waiting on Hunk's settle
-# nudge or on one VS Code boot costs a second more, so the budget leaves room
-# for a machine five times slower and still catches either.
-BUDGET_MS=${OMARCHY_THEME_SET_BUDGET_MS:-500}
+require_comparable_speed "theme switch budget"
+
+# The switch costs about 0.1s on the reference laptop. Waiting on Hunk's settle
+# nudge or on one VS Code boot costs a second more. The budget grows with how
+# much slower this machine starts processes, which a slow enough one can stretch
+# past that second, so the waits are also checked directly below.
+BUDGET_MS=$(( ${OMARCHY_THEME_SET_BUDGET_MS:-500} * SPEED_PERCENT / 100 ))
 STUB_COST=1
 
 sandbox=$(mktemp -d)
@@ -151,3 +154,18 @@ tmux_clients=$(grep -c '^tmux ' "$calls" || true)
   grep '^tmux ' "$calls" | cut -c1-120 | sort | uniq -c | sort -rn | head -10
 )"
 pass "theme set syncs tmux with a handful of clients ($tmux_clients)"
+
+# The waits themselves, which a slow machine's budget can hide. VS Code's own
+# registry already lists the theme's extension, so no editor is started to ask,
+# and Hunk's settle nudge comes after the switch has returned.
+list_calls=$(cat "$sandbox"/calls-*.log | grep -c '^code .*--list-extensions' || true)
+(( list_calls == 0 )) || fail "theme set reads VS Code's extension registry instead of starting the editor" \
+  "$(grep '^code ' "$sandbox"/calls-*.log)"
+pass "theme set reads VS Code's extension registry instead of starting the editor"
+
+sleep 1.5
+: >"$calls"
+run_theme_set "Catppuccin" || fail "theme set switches to Catppuccin in a scratch home" "$(cat "$sandbox/theme-set.log")"
+nudges=$(grep -c '^pkill -WINCH -x hunk' "$calls" || true)
+(( nudges == 1 )) || fail "theme set returns before Hunk's settle nudge" "Hunk was nudged $nudges times before the switch returned."
+pass "theme set returns before Hunk's settle nudge"

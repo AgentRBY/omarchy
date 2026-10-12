@@ -17,13 +17,23 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 require_command node
 
-# On a current laptop the batch takes about 50ms and its slowest guard, run
+# The batch keeps its package snapshot in $XDG_RUNTIME_DIR, as the menu does in
+# a session. Without one every run lists the package database again, which no
+# menu pays, so there is nothing representative to time.
+if [[ -z ${XDG_RUNTIME_DIR:-} || ! -d $XDG_RUNTIME_DIR ]]; then
+  skip "no XDG_RUNTIME_DIR for the guard batch's package snapshot; skipping menu guard budgets"
+  exit 0
+fi
+
+require_comparable_speed "menu guard budgets"
+
+# On the reference laptop the batch takes about 50ms and its slowest guard, run
 # alone, 30ms. Before the guards ran side by side and the hardware and network
 # guards were made cheap, the batch took 380ms, and five guards alone took
-# 130-150ms each. The budgets leave several times today's cost and still
-# catch either.
-BATCH_BUDGET_MS=${OMARCHY_MENU_GUARD_BUDGET_MS:-200}
-GUARD_BUDGET_MS=${OMARCHY_MENU_SINGLE_GUARD_BUDGET_MS:-100}
+# 130-150ms each. The budgets leave several times today's cost and still catch
+# either, and grow with how much slower this machine starts processes.
+BATCH_BUDGET_MS=$(( ${OMARCHY_MENU_GUARD_BUDGET_MS:-200} * SPEED_PERCENT / 100 ))
+GUARD_BUDGET_MS=$(( ${OMARCHY_MENU_SINGLE_GUARD_BUDGET_MS:-100} * SPEED_PERCENT / 100 ))
 
 # Prints the batch for the whole shipped menu, then one batch per guarded row,
 # each as a NUL-terminated id and script.
