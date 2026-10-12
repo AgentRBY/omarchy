@@ -88,6 +88,14 @@ ShellRoot {
     throw new Error("Missing lock IPC handler")
   }
 
+  function resumeWatch() {
+    var objects = service.data || []
+    for (var i = 0; i < objects.length; i++) {
+      if (objects[i].interval === 30000 && objects[i].repeat === false && "armedAt" in objects[i]) return objects[i]
+    }
+    throw new Error("Missing resume watch")
+  }
+
   function blankTimer() {
     var objects = service.data || []
     for (var i = 0; i < objects.length; i++) {
@@ -213,18 +221,28 @@ ShellRoot {
         check(lockIpc().lock() === "ok", "a lock request on a locked session succeeds")
         check(service.lockRequested, "a lock request on a locked session keeps it locked")
         check(!service.monitorDpmsKnown && blankTimer().running, "a lock request before suspend forgets the panels and starts a blank countdown")
-        // The suspend freezes that countdown, so it fires after the resume with
-        // a wall-clock gap; the resume lit the panel with no input.
-        blankTimer().armedAt -= 60000
-        dpmsState.setText("on\n")
+        check(resumeWatch().running, "a lock request before suspend arms the resume watch")
       }],
       [300, function() {
         check(since() === 0, "getting ready for a resume neither wakes nor asks the panels (asked " + since() + " times)")
       }],
       [5000, function() {
-        check(since() === 1, "the first countdown after a resume asks the panels once (asked " + since() + " times)")
+        // Other inhibitors held the machine past the blank countdown.
+        check(since() === 1 && service.monitorDpmsKnown && service.screenBlank("TEST-1"), "a suspend held past the countdown blanks first")
+        check(resumeWatch().running, "the resume watch outlasts the countdown")
+        // The suspend froze the resume watch, so it fires right after the
+        // resume with a wall-clock gap; the resume lit the panel with no input.
+        dpmsState.setText("on\n")
+        var watch = resumeWatch()
+        watch.interval = 1000
+        watch.restart()
+        watch.armedAt = Date.now() - 60000
+        mark()
+      }],
+      [1500, function() {
+        check(since() === 1, "a resume asks the panels once (asked " + since() + " times)")
         check(service.monitorDpmsKnown && !service.screenBlank("TEST-1"), "a panel the resume lit plays the video")
-        check(blankTimer().running, "the first countdown after a resume takes a fresh run-up instead of blanking")
+        check(blankTimer().running, "a resume starts a fresh blank countdown")
         mark()
       }],
       [5500, function() {

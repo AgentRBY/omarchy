@@ -247,15 +247,16 @@ Item {
   }
 
   // The sleep lock asks for a lock before every suspend. One already up then
-  // gives up what it knows about the panels and starts a blank countdown, which
-  // suspend freezes. Right after the resume the countdown fires with a
-  // wall-clock gap, asks the panels, and blanks them 5 s later. The panels are
-  // not woken here: a DPMS enable just before suspend flashes a modeset.
+  // gives up what it knows about the panels, starts a blank countdown, and
+  // arms resumeWatch, which suspend freezes. The panels are not woken here: a
+  // DPMS enable just before suspend flashes a modeset.
   function expectResume() {
     if (!lockRequested) return
     displaysBlank = false
     forgetMonitorDpms()
     armBlankTimer()
+    resumeWatch.armedAt = Date.now()
+    resumeWatch.restart()
   }
 
   function armBlankTimer() {
@@ -339,10 +340,10 @@ Item {
   // Hyprland reports DPMS changes on no event stream, so the panels are asked
   // once each time something that can change them happens: a video lock
   // starting, the lock's own blank or wake finishing, outputs coming or going,
-  // and the first blank countdown after a resume. Input that wakes a panel
-  // behind the lock reaches the lock too, and wakes it the same way. A DPMS
-  // change made from outside (a raw hyprctl dpms bind, another tool) is only
-  // seen at the next of these.
+  // and a resume (resumeWatch). Input that wakes a panel behind the lock
+  // reaches the lock too, and wakes it the same way. A DPMS change made from
+  // outside (a raw hyprctl dpms bind, another tool) is only seen at the next
+  // of these.
   function refreshMonitorDpms() {
     monitorDpmsRetry.stop()
     monitorDpmsRetry.remaining = monitorDpmsRetry.budget
@@ -810,10 +811,8 @@ Item {
     onTriggered: {
       // A countdown frozen by suspend fires right after resume, which would
       // blank the freshly woken unlock screen under the user. Wall-clock time
-      // exposes the gap: take a fresh run-up instead of blanking, and ask
-      // what the resume did to the panels.
+      // exposes the gap: take a fresh run-up instead of blanking.
       if (Date.now() - armedAt > interval + 2000) {
-        root.refreshMonitorDpms()
         root.armBlankTimer()
         return
       }
@@ -821,6 +820,23 @@ Item {
       // fingerprint PAM stays armed for the whole lock, so gating on
       // `authenticating` here would keep the panel lit until unlock.
       if (root.lockRequested && !root.authenticatingPassword) root.runBlank()
+    }
+  }
+
+  // Outlasts logind's longest sleep delay (15 s as shipped), so it is still
+  // counting when the machine suspends however long other inhibitors hold it,
+  // and fires right after the resume with a wall-clock gap. It then asks what the resume did
+  // to the panels and blanks them after a fresh run-up. Without a gap the
+  // suspend never happened and there is nothing to do.
+  Timer {
+    id: resumeWatch
+    interval: 30000
+    repeat: false
+    property double armedAt: 0
+    onTriggered: {
+      if (Date.now() - armedAt <= interval + 2000) return
+      root.refreshMonitorDpms()
+      if (root.lockRequested && !root.authenticatingPassword) root.armBlankTimer()
     }
   }
 
