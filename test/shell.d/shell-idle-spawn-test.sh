@@ -226,21 +226,30 @@ kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited during startup
 ALLOW_PATTERNS=()
 ALLOW_LIMITS=()
 ALLOW_REASONS=()
+# An allowance seen at both ends of a window keeps the larger of its limits.
 allow() {
-  local pattern
+  local i
 
-  for pattern in "${ALLOW_PATTERNS[@]}"; do
-    [[ $pattern == "$1" ]] && return 0
+  for i in "${!ALLOW_PATTERNS[@]}"; do
+    if [[ ${ALLOW_PATTERNS[$i]} == "$1" ]]; then
+      if [[ -n ${ALLOW_LIMITS[$i]} && -n $2 ]] && (( $2 > ALLOW_LIMITS[$i] )); then
+        ALLOW_LIMITS[$i]=$2
+      fi
+      return 0
+    fi
   done
   ALLOW_PATTERNS+=("$1")
   ALLOW_LIMITS+=("$2")
   ALLOW_REASONS+=("$3")
 }
 
-screens=$(hyprctl -j monitors 2>/dev/null | jq 'length' 2>/dev/null || true)
-[[ $screens =~ ^[0-9]+$ ]] && (( screens > 0 )) || screens=1
-
 add_allowances() {
+  # Per-screen widgets are counted afresh each time, since a monitor can be
+  # plugged in while the test watches.
+  local screens
+  screens=$(hyprctl -j monitors 2>/dev/null | jq 'length' 2>/dev/null || true)
+  [[ $screens =~ ^[0-9]+$ ]] && (( screens > 0 )) || screens=1
+
   # wl-paste runs the capture script for each clipboard change, which another
   # program on the desktop can make at any moment.
   allow '/shell/plugins/clipboard/capture\.sh ' "" "runs on each clipboard change"
@@ -248,10 +257,12 @@ add_allowances() {
   # The keyboard layout widget, one per screen, asks every 10s while the seat
   # has more than one keyboard: Hyprland raises no event when a keyboard
   # arrives or leaves, so which one the label describes can only be learned by
-  # asking.
-  if hyprctl -j devices 2>/dev/null | jq -e '.keyboards | length > 1' >/dev/null 2>&1; then
+  # asking. It also keeps asking while no keyboard reports a keymap, until a
+  # reading it can use lands.
+  if hyprctl -j devices 2>/dev/null |
+    jq -e '(.keyboards | length > 1) or ([.keyboards[] | select((.active_keymap // "") != "")] | length == 0)' >/dev/null 2>&1; then
     allow '(^|/)hyprctl -j devices$' $(( screens * (IDLE_WINDOW / 10 + 1) )) \
-      "the keyboard widget's 10s check of a seat with several keyboards"
+      "the keyboard widget's 10s check of a seat with several keyboards, or none it can read"
   fi
 
   # While a remote session is active its end has to be polled for, every 2s:
