@@ -249,6 +249,7 @@ mkdir -p "$TMPDIR/bin" "$TMPDIR/home/.local/state/omarchy"
 
 cat >"$TMPDIR/bin/wl-copy" <<'SH'
 #!/bin/bash
+printf '%s\n' "$*" >"$WL_COPY_OUT.args"
 cat >"$WL_COPY_OUT"
 SH
 
@@ -535,6 +536,16 @@ pass "clipboard paste helper copy-only copies history entry text"
 
 [[ ! -e "$TMPDIR/wtype" ]] || fail "clipboard paste helper copy-only skips typing"
 pass "clipboard paste helper copy-only skips typing"
+
+# Untyped, wl-copy sniffs the bytes and can offer text like $'  Тест\n' as application/x-dtsz
+[[ $(<"$TMPDIR/copied.args") == "--type text/plain;charset=utf-8" ]] || fail "clipboard paste helper copies history text as text/plain"
+pass "clipboard paste helper copies history text as text/plain"
+
+WL_COPY_OUT="$TMPDIR/copied" WTYPE_OUT="$TMPDIR/wtype" PATH="$TMPDIR/bin:$PATH" \
+  "$ROOT/bin/omarchy-clipboard-paste-text" --copy-only "$(printf '  \u0422\u0435\u0441\u0442')"
+
+[[ $(<"$TMPDIR/copied.args") == "--type text/plain;charset=utf-8" ]] || fail "clipboard paste helper copies given text as text/plain"
+pass "clipboard paste helper copies given text as text/plain"
 
 printf 'image-data' >"$TMPDIR/image.png"
 rm -f "$TMPDIR/wtype"
