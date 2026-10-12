@@ -96,6 +96,7 @@ require_compositor() {
 # Fails when no checkout is found: a test then skips what needs one.
 omarchy_pkgs_root() {
   local candidate
+  local -a pkgbuilds
 
   for candidate in \
     ${OMARCHY_PKGS_PATH:+"$OMARCHY_PKGS_PATH/pkgbuilds" "$OMARCHY_PKGS_PATH"} \
@@ -105,7 +106,9 @@ omarchy_pkgs_root() {
     "$ROOT/../omacom/omarchy-pkgs/pkgbuilds" \
     "$ROOT/../../omacom/omarchy-pkgs/pkgbuilds" \
     "$HOME/Work/omacom/omarchy-pkgs/pkgbuilds"; do
-    if compgen -G "$candidate/*/PKGBUILD" >/dev/null; then
+    # Only */PKGBUILD is a pattern; the checkout's own path stays literal.
+    pkgbuilds=("$candidate"/*/PKGBUILD)
+    if [[ -f ${pkgbuilds[0]:-} ]]; then
       (cd "$candidate" && pwd)
       return 0
     fi
