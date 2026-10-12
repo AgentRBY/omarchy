@@ -11,10 +11,14 @@ fi
 test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT
 
-# Print the hwdec option mpv settles on after reading its config files.
+# Print the hwdec option mpv settles on after reading its config files. mpv's
+# own output is kept, so a failure shows why mpv could not load the config.
 configured_hwdec() {
-  mpv --no-config "$@" --vo=null --ao=null --frames=1 --term-status-msg= \
-    --term-playing-msg='hwdec=${hwdec}' av://lavfi:testsrc 2>/dev/null | sed -n 's/^hwdec=//p'
+  local output
+  output=$(mpv --no-config "$@" --vo=null --ao=null --frames=1 --term-status-msg= \
+    --term-playing-msg='hwdec=${hwdec}' av://lavfi:testsrc 2>&1) ||
+    fail "mpv loads the config and plays a test source" "$output"
+  sed -n 's/^hwdec=//p' <<<"$output"
 }
 
 stock=$(configured_hwdec)
