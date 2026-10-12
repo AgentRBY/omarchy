@@ -36,14 +36,23 @@ stop_processes() {
 
 # Quickshell leaves some of its children running when it is stopped, among them
 # the inotifywait watching the plugin directory, which then holds whatever it
-# inherited open (a flock around the run, say) indefinitely. Stop them too.
+# inherited open (a flock around the run, say) indefinitely. Stop them too:
+# what is still below the shell, and, for a shell that already died and left
+# them reparented, whatever still runs with this test's scratch OMARCHY_PATH.
 cleanup() {
-  local leftovers=()
+  local leftovers=() environ pid
 
   if [[ -n $QS_PID ]] && kill -0 "$QS_PID" 2>/dev/null; then
     mapfile -t leftovers < <(descendants "$QS_PID")
     stop_processes "$QS_PID"
     wait "$QS_PID" 2>/dev/null || true
+  fi
+  if [[ -n ${test_root:-} ]]; then
+    while IFS= read -r environ; do
+      pid=${environ#/proc/}
+      pid=${pid%/environ}
+      leftovers+=("$pid")
+    done < <(grep -lzxF -- "OMARCHY_PATH=$test_root" /proc/[0-9]*/environ 2>/dev/null || true)
   fi
   stop_processes "${leftovers[@]}"
   [[ -n ${test_root:-} ]] && rm -f "$(shell_ipc_socket "$test_root")"
