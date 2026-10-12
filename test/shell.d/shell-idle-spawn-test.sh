@@ -323,13 +323,13 @@ watch_window() {
   start=$(exec_count)
   start_event_monitors "$events"
   sleep "$IDLE_WINDOW"
+  # The shell keeps appending, so judge one copy taken as the window closes,
+  # before anything else takes time out of it: both passes below have to read
+  # the same lines, and the limits are for the window's length.
+  cp "$exec_log" "$window_log"
   stop_event_monitors
   add_allowances
   kill -0 "$QS_PID" 2>/dev/null || fail_with_log "test shell exited while idle"
-
-  # The shell keeps appending, so judge one copy taken as the window closes:
-  # both passes below have to read the same lines.
-  cp "$exec_log" "$window_log"
 
   # Whatever an allowed command goes on to run is allowed with it, through any
   # subshells in between. Ancestry is read from the whole log before anything
