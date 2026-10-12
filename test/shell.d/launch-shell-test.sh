@@ -147,7 +147,7 @@ launch_with_malloc_conf() {
 }
 
 jemalloc_options() {
-  MALLOC_CONF=$(<"$qs_malloc_log") LD_PRELOAD=$jemalloc python3 -I -c '
+  MALLOC_CONF=$1 LD_PRELOAD=$jemalloc python3 -I -c '
 import ctypes
 je = ctypes.CDLL(None)
 thp = ctypes.c_char_p()
@@ -162,14 +162,21 @@ print(thp.value.decode(), narenas.value, "background" if background.value else "
 }
 
 if [[ -f $jemalloc ]]; then
-  launch_with_malloc_conf "" || fail "a launch with jemalloc options succeeds"
-  options=$(jemalloc_options) || fail "jemalloc reports the options it parsed" "$options"
-  [[ $options == "never 1 background" ]] || fail "the shell runs jemalloc on one arena without huge pages, purging in the background" "$options"
-  pass "the shell runs jemalloc on one arena without huge pages, purging in the background"
+  # The arena count is jemalloc's own default, which depends on the CPU.
+  defaults=$(jemalloc_options "") || fail "jemalloc reports its defaults" "$defaults"
+  default_narenas=$(cut -d' ' -f2 <<<"$defaults")
 
-  launch_with_malloc_conf "narenas:4" || fail "a launch with the user's own jemalloc options succeeds"
-  options=$(jemalloc_options) || fail "jemalloc reports the options it parsed" "$options"
-  [[ $options == "never 4 background" ]] || fail "a MALLOC_CONF the user set overrides the shell's" "$options"
+  launch_with_malloc_conf "" || fail "a launch with jemalloc options succeeds"
+  options=$(jemalloc_options "$(<"$qs_malloc_log")") || fail "jemalloc reports the options it parsed" "$options"
+  # Programs the shell starts inherit MALLOC_CONF, and fewer arenas would slow
+  # every multithreaded jemalloc program among them, so it keeps the default.
+  [[ $options == "never $default_narenas background" ]] ||
+    fail "the shell runs jemalloc without huge pages, purging in the background, on default arenas" "$options"
+  pass "the shell runs jemalloc without huge pages, purging in the background, on default arenas"
+
+  launch_with_malloc_conf "thp:always,narenas:4" || fail "a launch with the user's own jemalloc options succeeds"
+  options=$(jemalloc_options "$(<"$qs_malloc_log")") || fail "jemalloc reports the options it parsed" "$options"
+  [[ $options == "always 4 background" ]] || fail "a MALLOC_CONF the user set overrides the shell's" "$options"
   pass "a MALLOC_CONF the user set overrides the shell's"
 else
   skip "jemalloc not installed; skipping the shell's allocator options"
