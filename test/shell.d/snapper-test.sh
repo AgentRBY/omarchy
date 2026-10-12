@@ -127,7 +127,7 @@ find_omarchy_iso_root() {
 
   for candidate in "${candidates[@]}"; do
     if [[ -d $candidate/configs ]]; then
-      OMARCHY_ISO_ROOT=$(cd "$candidate" && pwd)
+      OMARCHY_ISO_ROOT=$(CDPATH= cd -- "$candidate" && pwd)
       return 0
     fi
   done

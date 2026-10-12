@@ -119,7 +119,7 @@ find_omarchy_pkgs() {
     # Only */PKGBUILD is a pattern; the checkout's own path stays literal.
     pkgbuilds=("$candidate"/*/PKGBUILD)
     if [[ -f ${pkgbuilds[0]:-} ]]; then
-      OMARCHY_PKGS_ROOT=$(cd "$candidate" && pwd)
+      OMARCHY_PKGS_ROOT=$(CDPATH= cd -- "$candidate" && pwd)
       return 0
     fi
   done
