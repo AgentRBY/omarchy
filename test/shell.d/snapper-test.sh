@@ -105,26 +105,40 @@ else
   skip "omarchy-pkgs packages Snapper: needs the omarchy-pkgs checkout; set OMARCHY_PKGS_PATH to it"
 fi
 
-# Same per-machine checkout problem as omarchy-pkgs; OMARCHY_ISO_PATH points at it.
+# Same per-machine checkout problem as omarchy-pkgs, with the same rule: an
+# OMARCHY_ISO_PATH override is the only place tried, and one that doesn't
+# resolve fails rather than skips.
 find_omarchy_iso_root() {
   local candidate
-  for candidate in \
-    ${OMARCHY_ISO_PATH:+"$OMARCHY_ISO_PATH"} \
-    "$ROOT/../omarchy-iso" \
-    "$ROOT/../omarchy/omarchy-iso" \
-    "$ROOT/../../omarchy-iso" \
-    "$ROOT/../omacom/omarchy-iso" \
-    "$ROOT/../../omacom/omarchy-iso" \
-    "$HOME/Work/omacom/omarchy-iso"; do
-    if [[ -d $candidate ]]; then
-      cd "$candidate" && pwd
+  local -a candidates
+
+  if [[ -n ${OMARCHY_ISO_PATH:-} ]]; then
+    candidates=("$OMARCHY_ISO_PATH")
+  else
+    candidates=(
+      "$ROOT/../omarchy-iso"
+      "$ROOT/../omarchy/omarchy-iso"
+      "$ROOT/../../omarchy-iso"
+      "$ROOT/../omacom/omarchy-iso"
+      "$ROOT/../../omacom/omarchy-iso"
+      "$HOME/Work/omacom/omarchy-iso"
+    )
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -d $candidate/configs ]]; then
+      OMARCHY_ISO_ROOT=$(cd "$candidate" && pwd)
       return 0
     fi
   done
+
+  [[ -z ${OMARCHY_ISO_PATH:-} ]] ||
+    fail "OMARCHY_ISO_PATH names an omarchy-iso checkout" "no configs/ under $OMARCHY_ISO_PATH"
   return 1
 }
 
-if iso_root=$(find_omarchy_iso_root); then
+if find_omarchy_iso_root; then
+  iso_root=$OMARCHY_ISO_ROOT
   configurator="$iso_root/configs/airootfs/root/configurator"
   phases="$iso_root/configs/airootfs/usr/share/omarchy-iso/orchestrator/phases_impl.py"
   manifest="$iso_root/manifests/fresh-4-semantic.json"
