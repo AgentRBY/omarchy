@@ -207,19 +207,19 @@ take_power_saver() {
 
   profile=$(active_profile) || return 0
   [[ $profile == "power-saver" ]] && return 0
-  omarchy-powerprofiles-list 2>/dev/null | grep -qx power-saver || return 0
+  timeout -k 1 3 omarchy-powerprofiles-list 2>/dev/null | grep -qx power-saver || return 0
 
   : >"$STATE_DIR/power-saver"
   timeout -k 1 3 powerprofilesctl set power-saver >/dev/null 2>&1
-  omarchy-shell -q battery refreshPowerProfile >/dev/null 2>&1 || true
+  timeout -k 1 2 omarchy-shell -q battery refreshPowerProfile >/dev/null 2>&1 || true
 }
 
-# Back to the profile remembered for this power source. Lock-free, since the
-# unit runs it after its holder stops, while start may hold the lock waiting.
+# Back to the profile remembered for this power source; the marker stays until
+# that works, so a failure is retried. Lock-free: start may hold the lock while
+# its systemctl stop waits for the unit's stop hook to run this.
 give_back_power() {
   [[ -e $STATE_DIR/power-saver ]] || return 0
-  rm -f "$STATE_DIR/power-saver"
-  timeout -k 1 5 omarchy-powerprofiles-set autodetect >/dev/null 2>&1
+  timeout -k 1 5 omarchy-powerprofiles-set autodetect >/dev/null 2>&1 && rm -f "$STATE_DIR/power-saver"
 }
 
 closed_undocked() {
@@ -276,11 +276,18 @@ start() {
   if (( new_holder )); then
     rm -f "$STATE_DIR/ready"
 
+    # systemd-run splits the stop hook itself, so only quotes and backslashes
+    # in a path need escaping.
+    local hook
+    hook=$(readlink -f "${BASH_SOURCE[0]}")
+    hook=${hook//\\/\\\\}
+    hook=${hook//\"/\\\"}
+
     if ! systemd-run --user --quiet --collect --unit="$UNIT" \
       --description="Omarchy Agent Awake" \
       --property=RuntimeMaxSec=$((LIMIT + 60)) \
       --property=PartOf=graphical-session.target \
-      --property="ExecStopPost=$(readlink -f "${BASH_SOURCE[0]}") restore-power" \
+      --property="ExecStopPost=\"$hook\" restore-power" \
       systemd-inhibit --what=handle-lid-switch --mode=block --no-ask-password --who=Omarchy \
       --why="Agent Awake keeps the machine working with the lid closed" \
       omarchy-agent-awake hold "$token"; then
@@ -432,10 +439,14 @@ hold() {
     flock -u 9
 
     if [[ -z $reason ]]; then
-      if (( working )) && closed_undocked; then
-        take_power_saver
-      else
-        give_back_power
+      # Like the slow checks, never close to the end time, which they could pass.
+      if (( s_deadline - now > 20 )); then
+        if (( working )) && closed_undocked; then
+          take_power_saver
+        else
+          give_back_power
+        fi
+        now=$(date +%s)
       fi
 
       pause=$((s_deadline - now))
@@ -445,8 +456,8 @@ hold() {
     fi
   done
 
-  # A replaced holder leaves the marker to its successor, which owns it now.
-  [[ $reason == "superseded" ]] || give_back_power
+  # The unit's stop hook gives power saver back once the lid has been let go,
+  # so a slow profile switch never holds the lid past the end.
 
   case $reason in
     time) notify "Agent Awake is over" "Its end time came. Closing the lid works as usual again." ;;

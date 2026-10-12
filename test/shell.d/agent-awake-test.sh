@@ -39,6 +39,7 @@ case $1 in
       kill "$(<"$TEST_DIR/holder.pid")" 2>/dev/null
     fi
     rm -f "$TEST_DIR/unit-active" "$TEST_DIR/holder.pid"
+    "$TEST_DIR/bin/run-stop-hook"
     ;;
 esac
 SH
@@ -53,16 +54,30 @@ if [[ " $* " == *" omarchy-notification-send "* ]]; then
 fi
 printf 'systemd-run %s\n' "$*" >>"$TEST_DIR/log"
 [[ -e $TEST_DIR/run-fails ]] && exit 1
+for arg in "$@"; do
+  [[ $arg == --property=ExecStopPost=* ]] && printf '%s\n' "${arg#--property=ExecStopPost=}" >"$TEST_DIR/stop-hook"
+done
 token=${@: -1}
 touch "$TEST_DIR/unit-active"
 if [[ ! -e $TEST_DIR/inhibit-fails ]]; then
   # A unit inherits none of its caller's descriptors. Until logind grants the
   # inhibitor, systemd-inhibit has not started the holder.
-  ( [[ -e $TEST_DIR/slow-inhibit ]] && /usr/bin/sleep 1; omarchy-agent-awake hold "$token"; rm -f "$TEST_DIR/unit-active" ) </dev/null >/dev/null 2>&1 9>&- &
+  ( [[ -e $TEST_DIR/slow-inhibit ]] && /usr/bin/sleep 1; omarchy-agent-awake hold "$token"; rm -f "$TEST_DIR/unit-active"; "$TEST_DIR/bin/run-stop-hook" ) </dev/null >/dev/null 2>&1 9>&- &
   echo $! >"$TEST_DIR/holder.pid"
 else
   rm -f "$TEST_DIR/unit-active"
 fi
+SH
+
+# systemd runs the stop hook once the holder is gone, however it went. It splits
+# the line on quotes and backslashes and expands nothing, as shlex does.
+cat >"$fake_bin/run-stop-hook" <<'SH'
+#!/bin/bash
+[[ -r $TEST_DIR/stop-hook ]] || exit 0
+mapfile -t words < <(python3 -I -c 'import shlex, sys; print("\n".join(shlex.split(open(sys.argv[1]).read())))' "$TEST_DIR/stop-hook")
+set -- "${words[@]}"
+echo "stop-hook $*" >>"$TEST_DIR/log"
+"$@"
 SH
 
 cat >"$fake_bin/omarchy-notification-send" <<'SH'
@@ -117,8 +132,11 @@ SH
 
 cat >"$fake_bin/omarchy-powerprofiles-set" <<'SH'
 #!/bin/bash
-echo performance >"$TEST_DIR/profile"
 echo "omarchy-powerprofiles-set $*" >>"$TEST_DIR/log"
+# A stalled call, as the holder's clock sees it.
+[[ -e $TEST_DIR/slow-power && -r $TEST_DIR/now ]] && echo $(( $(<"$TEST_DIR/now") + 30 )) >"$TEST_DIR/now"
+[[ -e $TEST_DIR/restore-fails ]] && exit 1
+echo performance >"$TEST_DIR/profile"
 SH
 
 cat >"$fake_bin/omarchy-shell" <<'SH'
@@ -161,7 +179,7 @@ export HOME="$home"
 
 reset() {
   [[ -r $tmpdir/holder.pid ]] && { pkill -P "$(<"$tmpdir/holder.pid")" 2>/dev/null; kill "$(<"$tmpdir/holder.pid")" 2>/dev/null; } || true
-  rm -f "$tmpdir"/{unit-active,holder.pid,no-desktop,no-lid,battery,run-fails,inhibit-fails,slow-inhibit,on-sleep,lid-closed,docked}
+  rm -f "$tmpdir"/{unit-active,holder.pid,no-desktop,no-lid,battery,run-fails,inhibit-fails,slow-inhibit,on-sleep,lid-closed,docked,stop-hook,slow-power,restore-fails}
   echo performance >"$tmpdir/profile"
   rm -rf "$state" "$home"
   mkdir -p "$home"
@@ -194,7 +212,7 @@ args=$(grep '^systemd-run' "$log")
 [[ $args != *sleep:* && $args != *:idle* && $args != *"--what=sleep"* && $args != *"--what=idle"* ]] || fail "the holder inhibits nothing but the lid" "$args"
 [[ $args == *"--no-ask-password"* ]] || fail "the holder never prompts for a password" "$args"
 [[ $args == *"--property=RuntimeMaxSec=86460"* ]] || fail "systemd bounds the holder's lifetime" "$args"
-[[ $args == *"--property=ExecStopPost=$(readlink -f "$awake") restore-power"* ]] || fail "the unit gives back the power profile however its holder ends" "$args"
+[[ $args == *"--property=ExecStopPost=\"$(readlink -f "$awake")\" restore-power"* ]] || fail "the unit gives back the power profile however its holder ends" "$args"
 pass "only the lid switch is inhibited, and systemd bounds the holder"
 
 [[ $(<"$state/ready") == "$(field 0)" ]] || fail "start returns only once the holder has the lid"
@@ -665,9 +683,12 @@ chmod +x "$tmpdir/on-sleep"
 rm -f "$tmpdir/plugged"
 hold
 (( $(grep -c '^powerprofilesctl set power-saver' "$log") == 2 )) || fail "power saver is taken again after the battery service resets the profile" "$(<"$log")"
-[[ $(tail -2 "$log" | head -1) == "omarchy-powerprofiles-set autodetect" && ! -e $state/power-saver ]] || fail "the session's end gives the remembered profile back before saying so" "$(<"$log")"
+grep -q '^notify Agent Awake is over' "$log" && ! grep -q 'autodetect' "$log" && [[ -e $state/power-saver ]] ||
+  fail "the holder leaves power saver to the stop hook, so a slow switch never holds the lid" "$(<"$log")"
+run restore-power
+[[ $(<"$tmpdir/profile") == "performance" && ! -e $state/power-saver ]] || fail "the stop hook gives the remembered profile back" "$(<"$log")"
 rm -f "$tmpdir/plugged"
-pass "power saver survives a plug event and is given back at the end"
+pass "power saver survives a plug event and is given back by the stop hook at the end"
 
 # The agents finishing gives it back, though the lid stays shut.
 hold_session 1003600 time
@@ -702,15 +723,59 @@ hold
 ! grep -q 'powerprofiles' "$log" && [[ $(<"$tmpdir/profile") == "power-saver" ]] || fail "a profile the holder did not change is never given back" "$(<"$log")"
 pass "a power saver the user chose is left alone"
 
-# The unit's stop hook gives it back after a kill, and only when it was taken.
+# The unit's stop hook, as systemd runs it, gives it back after a stop, and only
+# when it was taken.
+reset
+run 2h >/dev/null
+run stop
+grep -q '^stop-hook ' "$log" && ! grep -q 'powerprofiles-set' "$log" || fail "the stop hook does nothing when power saver was never taken" "$(<"$log")"
+run 2h >/dev/null
+: >"$state/power-saver"
+echo power-saver >"$tmpdir/profile"
+run stop
+grep -q '^omarchy-powerprofiles-set autodetect' "$log" && [[ ! -e $state/power-saver && $(<"$tmpdir/profile") == "performance" ]] ||
+  fail "stopping gives back a power saver the holder took" "$(<"$log")"
+pass "the unit's stop hook gives power saver back, and only when it was taken"
+
+# A switch back that fails keeps the marker, so the next try still happens.
 reset
 mkdir -p "$state"
-run restore-power
-! grep -q 'powerprofiles' "$log" || fail "restore-power does nothing when power saver was never taken"
 : >"$state/power-saver"
+touch "$tmpdir/restore-fails"
+if run restore-power; then fail "a failed give-back says so"; fi
+[[ -e $state/power-saver ]] || fail "a failed give-back keeps its marker for the next try"
+rm -f "$tmpdir/restore-fails"
 run restore-power
-grep -q '^omarchy-powerprofiles-set autodetect' "$log" && [[ ! -e $state/power-saver ]] || fail "restore-power gives back a power saver a killed holder took" "$(<"$log")"
-pass "the unit's stop hook gives power saver back after a kill"
+[[ ! -e $state/power-saver ]] || fail "the next try gives it back"
+pass "a give-back that fails is tried again"
+
+# A checkout under a path with spaces, quotes and dollars still reaches its hook.
+reset
+odd="$tmpdir/Omarchy Work \$HOME \"q\"/bin"
+mkdir -p "$odd"
+cp "$awake" "$odd/omarchy-agent-awake"
+PATH="$fake_bin:$PATH" "$odd/omarchy-agent-awake" 2h >/dev/null
+: >"$state/power-saver"
+PATH="$fake_bin:$PATH" "$odd/omarchy-agent-awake" stop
+grep -qF "stop-hook $odd/omarchy-agent-awake restore-power" "$log" && [[ ! -e $state/power-saver ]] ||
+  fail "the stop hook survives a path with spaces, quotes and dollars" "$(<"$log")"
+pass "the stop hook survives a path with spaces, quotes and dollars"
+
+# A profile switch that stalls never carries the session past its end.
+hold_session 1000040 time
+mkdir -p "$home/.claude/projects/p"
+touch "$tmpdir/lid-closed" "$home/.claude/projects/p/s.jsonl" "$tmpdir/slow-power"
+: >"$state/power-saver"
+echo power-saver >"$tmpdir/profile"
+cat >"$tmpdir/on-sleep" <<'SH'
+#!/bin/bash
+(( $(<"$TEST_DIR/now") >= 1000025 )) && rm -f "$TEST_DIR/lid-closed"
+exit 0
+SH
+chmod +x "$tmpdir/on-sleep"
+hold
+(( $(<"$tmpdir/now") <= 1000045 )) || fail "a stalled profile switch never carries the session past its end" "now=$(<"$tmpdir/now")"
+pass "a stalled profile switch never carries the session past its end"
 
 # --- undocking with the lid shut
 
