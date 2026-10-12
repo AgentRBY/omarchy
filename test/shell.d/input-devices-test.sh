@@ -52,12 +52,21 @@ for _ in {1..100}; do
   sleep 0.1
 done
 (( watching )) || fail "the shell watches /dev/input" "$(cat "$stage/log")"
-# inotifywait reports its watch set up only on stderr, which -q silences.
-sleep 0.5
 
+# Counted from a baseline, so each check sees only what came after it.
+base=0
 changes() {
-  grep -c 'CHANGED' "$stage/log" || true
+  local total
+  total=$(grep -c 'CHANGED' "$stage/log" || true)
+  echo $(( total - base ))
 }
+
+# Anything that changed before the watch was up went unseen, so the seat is
+# read once the watch is set up, and again a few seconds on.
+sleep 4
+(( $(changes) == 2 )) || fail "the seat is read once the watch is up, and again after" "$(cat "$stage/log")"
+pass "the seat is read once the watch is up, and again after"
+base=$(( base + 2 ))
 
 sleep 1
 (( $(changes) == 0 )) || fail "a seat that does not change raises no signal" "$(cat "$stage/log")"

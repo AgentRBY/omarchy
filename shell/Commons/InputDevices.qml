@@ -38,7 +38,13 @@ Singleton {
         + "exec inotifywait -m -q -e create,delete,delete_self,moved_to --format '%w|%e|%f' \"${dirs[@]}\"",
       "input-devices", root.inputDir, root.devDir, root.udevDir]
     running: true
-    onRunningChanged: if (running) root.startedAt = Date.now()
+    // Whatever arrived or left while no watch was set up went unseen, at start
+    // as after a restart, so read the seat again once a watch is.
+    onRunningChanged: {
+      if (!running) return
+      root.startedAt = Date.now()
+      root.announce()
+    }
     stdout: SplitParser {
       onRead: function(line) {
         var fields = String(line).split("|")
@@ -82,14 +88,9 @@ Singleton {
     onTriggered: root.changed()
   }
 
-  // Whatever arrived or left while no watch was set up went unseen, so read
-  // the seat again once one is.
   Timer {
     id: restart
     interval: 1000
-    onTriggered: {
-      watcher.running = true
-      root.announce()
-    }
+    onTriggered: watcher.running = true
   }
 }
