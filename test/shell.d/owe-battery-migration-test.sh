@@ -29,7 +29,7 @@ battery_mode() {
 }
 
 run_migration() {
-  HOME="$1" OMARCHY_PATH="$ROOT" PATH="$work/bin:$PATH" bash -euo pipefail "$migration" >/dev/null
+  env -u XDG_CONFIG_HOME HOME="$1" OMARCHY_PATH="$ROOT" PATH="$work/bin:$PATH" "${@:2}" bash -euo pipefail "$migration" >/dev/null
 }
 
 [[ $(battery_mode "$shipped") == "pause" ]] || fail "the shipped owe config pauses video wallpapers on battery"
@@ -59,3 +59,10 @@ mkdir -p "$nodaemon"
 run_migration "$nodaemon" || fail "the migration succeeds when owe cannot be reached"
 [[ -f $nodaemon/.config/owe/config.toml ]] || fail "the config is installed even when owe cannot be reached"
 pass "the migration succeeds when owe cannot be reached"
+
+xdg="$work/xdg"
+mkdir -p "$xdg/home"
+run_migration "$xdg/home" XDG_CONFIG_HOME="$xdg/config"
+cmp -s "$shipped" "$xdg/config/owe/config.toml" || fail "a moved XDG config home gets the config where owe reads it"
+[[ ! -e $xdg/home/.config/owe/config.toml ]] || fail "a moved XDG config home gets no stray copy under ~/.config"
+pass "a moved XDG config home gets the config where owe reads it"
