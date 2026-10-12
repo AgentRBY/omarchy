@@ -15,11 +15,21 @@ require_command inotifywait
 
 stage=$(mktemp -d)
 QS_PID=""
+# Quickshell restarts a watcher killed under it, and leaves one running when it
+# is stopped itself, so stop the shell first and then what it had started.
 cleanup() {
+  local children=()
+
   if [[ -n $QS_PID ]]; then
-    pkill -P "$QS_PID" 2>/dev/null || true
+    mapfile -t children < <(pgrep -P "$QS_PID" 2>/dev/null || true)
     kill "$QS_PID" 2>/dev/null || true
+    for _ in {1..30}; do
+      kill -0 "$QS_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -KILL "$QS_PID" 2>/dev/null || true
     wait "$QS_PID" 2>/dev/null || true
+    (( ${#children[@]} == 0 )) || kill "${children[@]}" 2>/dev/null || true
   fi
   rm -rf "$stage"
 }
@@ -53,12 +63,18 @@ sleep 1
 (( $(changes) == 0 )) || fail "a seat that does not change raises no signal" "$(cat "$stage/log")"
 pass "a seat that does not change raises no signal"
 
-# A keyboard arrives as an event node and its handler links in one burst.
-touch "$stage/root/dev/input/event40" "$stage/root/dev/input/event41"
+# A keyboard arrives as an event node and its handler links, closer together
+# than the settle delay, so a signal only lands once the last of them has.
+touch "$stage/root/dev/input/event40"
+sleep 0.3
+touch "$stage/root/dev/input/event41"
+sleep 0.3
 mkdir "$stage/root/dev/input/js9"
-sleep 1.5
+sleep 0.3
+(( $(changes) == 0 )) || fail "a device's burst of nodes raises nothing until it settles" "$(cat "$stage/log")"
+sleep 1.2
 (( $(changes) == 1 )) || fail "a device arriving raises one change signal once it settles" "$(cat "$stage/log")"
-sleep 2.5
+sleep 2.2
 (( $(changes) == 2 )) || fail "a device arriving raises one more change signal a few seconds on" "$(cat "$stage/log")"
 pass "a device arriving raises a change signal as it settles and once more after"
 
