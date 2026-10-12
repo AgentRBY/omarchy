@@ -246,6 +246,18 @@ Item {
     runWake()
   }
 
+  // The sleep lock asks for a lock before every suspend. One already up then
+  // gives up what it knows about the panels and starts a blank countdown, which
+  // suspend freezes. Right after the resume the countdown fires with a
+  // wall-clock gap, asks the panels, and blanks them 5 s later. The panels are
+  // not woken here: a DPMS enable just before suspend flashes a modeset.
+  function expectResume() {
+    if (!lockRequested) return
+    displaysBlank = false
+    forgetMonitorDpms()
+    armBlankTimer()
+  }
+
   function armBlankTimer() {
     idleBlankTimer.armedAt = Date.now()
     idleBlankTimer.restart()
@@ -327,10 +339,10 @@ Item {
   // Hyprland reports DPMS changes on no event stream, so the panels are asked
   // once each time something that can change them happens: a video lock
   // starting, the lock's own blank or wake finishing, outputs coming or going,
-  // omarchy-brightness-display waking or blanking them for anyone else, and a
-  // resume (omarchy-system-sleep-monitor leaves a watcher waiting for it).
-  // Input that wakes a panel behind the lock reaches the lock too, and wakes
-  // it the same way.
+  // and the first blank countdown after a resume. Input that wakes a panel
+  // behind the lock reaches the lock too, and wakes it the same way. A DPMS
+  // change made from outside (a raw hyprctl dpms bind, another tool) is only
+  // seen at the next of these.
   function refreshMonitorDpms() {
     monitorDpmsRetry.stop()
     monitorDpmsRetry.remaining = monitorDpmsRetry.budget
@@ -747,15 +759,12 @@ Item {
   Process {
     id: wakeProcess
     command: ["bash", "-c", "omarchy-system-wake"]
-    // Checked when it finishes, so the display command needn't call back.
-    environment: ({ OMARCHY_DISPLAY_FROM_LOCK: "1" })
     onExited: root.refreshMonitorDpms()
   }
 
   Process {
     id: blankProcess
     command: ["bash", "-c", "omarchy-brightness-keyboard off; omarchy-brightness-display off"]
-    environment: ({ OMARCHY_DISPLAY_FROM_LOCK: "1" })
     onExited: root.refreshMonitorDpms()
   }
 
@@ -801,8 +810,10 @@ Item {
     onTriggered: {
       // A countdown frozen by suspend fires right after resume, which would
       // blank the freshly woken unlock screen under the user. Wall-clock time
-      // exposes the gap: take a fresh run-up instead of blanking.
+      // exposes the gap: take a fresh run-up instead of blanking, and ask
+      // what the resume did to the panels.
       if (Date.now() - armedAt > interval + 2000) {
+        root.refreshMonitorDpms()
         root.armBlankTimer()
         return
       }
@@ -899,14 +910,8 @@ Item {
 
     function lock(): string {
       if (!root.passwordPamConfigured) return "missing-pam"
-      if (!root.currentlyLocked() && !root.beginLock()) return "failed"
-      return "ok"
-    }
-
-    // Commands that wake or blank the panels call this, and so does the
-    // resume watcher: Hyprland announces DPMS on no event the lock can hear.
-    function refreshDisplays(): string {
-      root.refreshMonitorDpms()
+      if (root.currentlyLocked()) root.expectResume()
+      else if (!root.beginLock()) return "failed"
       return "ok"
     }
 

@@ -83,9 +83,17 @@ ShellRoot {
   function lockIpc() {
     var objects = service.data || []
     for (var i = 0; i < objects.length; i++) {
-      if (objects[i].target === "lock" && typeof objects[i].refreshDisplays === "function") return objects[i]
+      if (objects[i].target === "lock" && typeof objects[i].lock === "function") return objects[i]
     }
     throw new Error("Missing lock IPC handler")
+  }
+
+  function blankTimer() {
+    var objects = service.data || []
+    for (var i = 0; i < objects.length; i++) {
+      if (objects[i].interval === 5000 && objects[i].repeat === false && "armedAt" in objects[i]) return objects[i]
+    }
+    throw new Error("Missing blank timer")
   }
 
   function mark() {
@@ -198,19 +206,30 @@ ShellRoot {
         service.runBlank()
       }],
       [1500, function() {
-        check(service.monitorDpmsKnown && service.screenBlank("TEST-1"), "the panel is dark before it comes back on its own")
-        // A resume lights the panel with no input and no output change; the
-        // idle wake's omarchy-brightness-display reports it over IPC.
+        check(service.monitorDpmsKnown && service.screenBlank("TEST-1"), "the panel is dark before the suspend")
+        // omarchy-system-sleep-lock asks for a lock before every suspend.
+        service.passwordPamConfigured = true
+        mark()
+        check(lockIpc().lock() === "ok", "a lock request on a locked session succeeds")
+        check(service.lockRequested, "a lock request on a locked session keeps it locked")
+        check(!service.monitorDpmsKnown && blankTimer().running, "a lock request before suspend forgets the panels and starts a blank countdown")
+        // The suspend freezes that countdown, so it fires after the resume with
+        // a wall-clock gap; the resume lit the panel with no input.
+        blankTimer().armedAt -= 60000
         dpmsState.setText("on\n")
       }],
       [300, function() {
-        check(service.screenBlank("TEST-1"), "nothing tells the lock until the wake is reported")
-        mark()
-        lockIpc().refreshDisplays()
+        check(since() === 0, "getting ready for a resume neither wakes nor asks the panels (asked " + since() + " times)")
       }],
-      [1000, function() {
-        check(since() === 1, "a reported wake is checked with one question (asked " + since() + " times)")
-        check(service.monitorDpmsKnown && !service.screenBlank("TEST-1"), "a panel woken behind the lock plays the video")
+      [5000, function() {
+        check(since() === 1, "the first countdown after a resume asks the panels once (asked " + since() + " times)")
+        check(service.monitorDpmsKnown && !service.screenBlank("TEST-1"), "a panel the resume lit plays the video")
+        check(blankTimer().running, "the first countdown after a resume takes a fresh run-up instead of blanking")
+        mark()
+      }],
+      [5500, function() {
+        check(since() === 1, "the blank after the run-up is confirmed with one question (asked " + since() + " times)")
+        check(service.monitorDpmsKnown && service.screenBlank("TEST-1"), "the run-up ends with the panel blanked again")
         // Hyprland fails to answer once, as it can while outputs reconfigure.
         hyprctlFailures.setText("1\n")
         mark()
@@ -229,7 +248,8 @@ ShellRoot {
       [300, function() {
         mark()
         tracing = true
-        lockIpc().refreshDisplays()
+        // Any of the lock's triggers asks the same way.
+        service.refreshMonitorDpms()
       }],
       [300, function() {
         // The lock blanks while that answer is still on its way.

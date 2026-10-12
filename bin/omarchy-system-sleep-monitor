@@ -4,44 +4,6 @@
 # omarchy:group=system
 # omarchy:hidden=true
 
-# A resume can light the panels with no input, no output change and no event
-# the lock hears. This monitor has to exit to release the sleep inhibitor, so a
-# watcher of its own, outside this service, waits for the wake and tells the
-# lock to look. systemd-run returns once the watcher reports it is listening,
-# so the inhibitor is released only after that, within a bounded wait.
-schedule_resume_refresh() {
-  timeout --kill-after=0.1s 1s systemd-run --user --quiet --collect \
-    --property=Type=notify --property=NotifyAccess=all --property=RuntimeMaxSec=1d \
-    "$OMARCHY_PATH/bin/omarchy-system-sleep-monitor" --resume >/dev/null 2>&1 || true
-}
-
-# dbus-monitor prints nothing until it is a monitor with its match rules in
-# place, so its first line, whatever it is, means the wake can't be missed.
-# A watcher too slow to report that in time may be listening only after the
-# wake, so it asks logind whether the sleep is already over.
-consume_resume_events() {
-  local line ready=0 preparing
-
-  while IFS= read -r line; do
-    if (( !ready )); then
-      ready=1
-      systemd-notify --ready 2>/dev/null || true
-
-      preparing=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 \
-        org.freedesktop.login1.Manager PreparingForSleep 2>/dev/null)
-      if [[ $preparing == "b false" ]]; then
-        "$OMARCHY_PATH/bin/omarchy-shell" -q lock refreshDisplays
-        return 0
-      fi
-    fi
-
-    if [[ $line == *"boolean false"* ]]; then
-      "$OMARCHY_PATH/bin/omarchy-shell" -q lock refreshDisplays
-      return 0
-    fi
-  done
-}
-
 consume_sleep_events() {
   local line sleep_lock
   sleep_lock="$OMARCHY_PATH/bin/omarchy-system-sleep-lock"
@@ -49,14 +11,13 @@ consume_sleep_events() {
   while IFS= read -r line; do
     if [[ $line == *"boolean true"* ]]; then
       "$sleep_lock"
-      schedule_resume_refresh
       return 0
     fi
   done
 }
 
 monitor_sleep_events() {
-  local consumer=$1 monitor_fd monitor_pid status
+  local monitor_fd monitor_pid status
 
   coproc SLEEP_EVENTS {
     exec dbus-monitor --system \
@@ -71,7 +32,7 @@ monitor_sleep_events() {
   }
   trap cleanup_monitor EXIT
 
-  "$consumer" <&"$monitor_fd"
+  consume_sleep_events <&"$monitor_fd"
   status=$?
   cleanup_monitor
   trap - EXIT
@@ -85,11 +46,7 @@ case ${1:-} in
     exit 0
     ;;
   --inhibited)
-    monitor_sleep_events consume_sleep_events
-    exit 0
-    ;;
-  --resume)
-    monitor_sleep_events consume_resume_events
+    monitor_sleep_events
     exit 0
     ;;
 esac

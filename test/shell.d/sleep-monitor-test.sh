@@ -32,13 +32,6 @@ printf '   boolean true\n'
 exec sleep 30
 SH
 
-# Never arm a real timer on the machine running the suite.
-cat >"$mock_bin/systemd-run" <<'SH'
-#!/bin/bash
-
-printf '%s\n' "$*" >>"${RUN_LOG:-/dev/null}"
-SH
-
 cat >"$mock_omarchy/bin/omarchy-system-sleep-lock" <<'SH'
 #!/bin/bash
 
@@ -47,7 +40,6 @@ SH
 
 chmod +x \
   "$mock_bin/systemd-inhibit" \
-  "$mock_bin/systemd-run" \
   "$mock_bin/dbus-monitor" \
   "$mock_omarchy/bin/omarchy-system-sleep-lock"
 ln -s "$sleep_monitor" "$mock_omarchy/bin/omarchy-system-sleep-monitor"
@@ -112,74 +104,3 @@ if kill -0 "$producer_pid" 2>/dev/null; then
   fail "sleep monitor cleans up its producer when terminated" "producer still running: $producer_pid"
 fi
 pass "sleep monitor cleans up its producer when terminated"
-
-# A resume can light the panels behind the lock with nothing the lock hears.
-# The monitor exits to release the inhibitor, so a sleep starts a watcher of
-# its own outside the service, which waits for the wake and asks the lock.
-cat >"$mock_bin/dbus-monitor" <<'SH'
-#!/bin/bash
-
-# The bus's greeting comes first, once the match rules are in place.
-printf 'signal sender=org.freedesktop.DBus member=NameAcquired\n'
-printf '   boolean %s\n' "${SLEEP_SIGNAL:-true}"
-exec sleep 30
-SH
-cat >"$mock_bin/systemd-notify" <<'SH'
-#!/bin/bash
-
-printf 'systemd-notify %s\n' "$*" >>"$SHELL_LOG"
-SH
-cat >"$mock_bin/busctl" <<'SH'
-#!/bin/bash
-
-printf 'b %s\n' "${PREPARING:-true}"
-SH
-cat >"$mock_omarchy/bin/omarchy-shell" <<'SH'
-#!/bin/bash
-
-printf 'omarchy-shell %s\n' "$*" >>"$SHELL_LOG"
-SH
-chmod +x "$mock_bin/dbus-monitor" "$mock_bin/systemd-notify" "$mock_bin/busctl" "$mock_omarchy/bin/omarchy-shell"
-run_log="$tmpdir/run-log"
-shell_log="$tmpdir/shell-log"
-: >"$lock_log"
-
-OMARCHY_PATH="$mock_omarchy" \
-  PATH="$mock_bin:$PATH" \
-  LOCK_LOG="$lock_log" \
-  RUN_LOG="$run_log" \
-  SHELL_LOG="$shell_log" \
-  "$sleep_monitor"
-
-[[ $(<"$lock_log") == "locked" ]] || fail "the sleep still locks before starting the resume watcher"
-[[ $(<"$run_log") == "--user --quiet --collect --property=Type=notify --property=NotifyAccess=all --property=RuntimeMaxSec=1d $mock_omarchy/bin/omarchy-system-sleep-monitor --resume" ]] ||
-  fail "a sleep starts a resume watcher outside the service and waits for it to listen" "$(cat "$run_log" 2>/dev/null)"
-[[ ! -e $shell_log ]] || fail "the sleep itself does not ask the lock" "$(<"$shell_log")"
-pass "a sleep starts a resume watcher outside the service and waits for it to listen"
-
-SLEEP_SIGNAL=false \
-  OMARCHY_PATH="$mock_omarchy" \
-  PATH="$mock_bin:$PATH" \
-  SHELL_LOG="$shell_log" \
-  timeout 5 "$sleep_monitor" --resume || fail "the resume watcher exits once the machine wakes"
-[[ $(<"$shell_log") == $'systemd-notify --ready\nomarchy-shell -q lock refreshDisplays' ]] ||
-  fail "the resume watcher reports it is listening, then asks the lock once the machine wakes" "$(cat "$shell_log" 2>/dev/null)"
-pass "the resume watcher reports it is listening, then asks the lock once the machine wakes"
-
-# A watcher that only got listening after the wake finds the sleep over, and
-# asks at once rather than waiting for a signal that has already gone by.
-cat >"$mock_bin/dbus-monitor" <<'SH'
-#!/bin/bash
-
-printf 'signal sender=org.freedesktop.DBus member=NameAcquired\n'
-exec sleep 30
-SH
-: >"$shell_log"
-PREPARING=false \
-  OMARCHY_PATH="$mock_omarchy" \
-  PATH="$mock_bin:$PATH" \
-  SHELL_LOG="$shell_log" \
-  timeout 5 "$sleep_monitor" --resume || fail "a late resume watcher exits at once"
-[[ $(<"$shell_log") == $'systemd-notify --ready\nomarchy-shell -q lock refreshDisplays' ]] ||
-  fail "a late resume watcher asks the lock at once" "$(cat "$shell_log" 2>/dev/null)"
-pass "a resume watcher listening only after the wake asks the lock at once"

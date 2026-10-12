@@ -43,7 +43,7 @@ assert(
   'the lock state is read from the session lock itself, not a cached binding'
 )
 assert(
-  /function lock\(\): string \{[\s\S]*?if \(!root\.currentlyLocked\(\) && !root\.beginLock\(\)\) return "failed"/.test(serviceQml)
+  /function lock\(\): string \{[\s\S]*?if \(root\.currentlyLocked\(\)\) root\.expectResume\(\)\s*else if \(!root\.beginLock\(\)\) return "failed"/.test(serviceQml)
     && /function isLocked\(\): string \{\s*return root\.currentlyLocked\(\)/.test(serviceQml)
     && /locked: root\.currentlyLocked\(\),/.test(serviceQml),
   'lock, isLocked, and status decide from the current lock state'

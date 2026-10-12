@@ -204,8 +204,6 @@ dpms_internal() {
 
   [[ -n $INTERNAL ]] || return 0
   hyprctl dispatch "hl.dsp.dpms({ action = \"$action\", monitor = \"$INTERNAL\" })" >/dev/null 2>&1 || true
-  # Hyprland announces DPMS on no event; a lock showing a video asks again.
-  omarchy-shell -q lock refreshDisplays
 }
 
 enable_internal() {
