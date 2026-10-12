@@ -243,6 +243,25 @@ run_migration || fail "migration fails with only the pending marker" "$(cat "$te
 [[ ! -e $root/etc/omarchy/thunderbolt-authorization.pending ]] || fail "migration leaves the pending marker"
 pass "Bolt's mode is untouched when Omarchy never saved one"
 
+# A first setup failed and its undo deleted policy.json before restoring
+# boltd.conf: Bolt's original config survives only in the setup journal.
+for original in "$(printf '[config]\nAuthMode = enabled\n' | base64 -w0)" ""; do
+  reset_machine
+  mkdir -p "$root/etc/omarchy" "$root/var/lib/omarchy/thunderbolt-authorization"
+  touch "$root/etc/omarchy/thunderbolt-authorization.enabled"
+  echo disabled >"$root/bolt/authmode"
+  if [[ -n $original ]]; then
+    saved="{\"data\":\"$original\",\"mode\":\"600\"}"
+  else
+    saved=null
+  fi
+  echo "{\"files\":{\"/var/lib/boltd/boltd.conf\":$saved},\"units\":{}}" \
+    >"$root/var/lib/omarchy/thunderbolt-authorization/setup-recovery.json"
+  run_migration || fail "migration fails with only the setup journal" "$(cat "$test_dir/output")"
+  [[ $(value authmode) == "enabled" ]] || fail "migration leaves Bolt off when its original config is only in the setup journal"
+done
+pass "Bolt's original mode is recovered from the setup journal"
+
 # Turning on Thunderbolt Boot was interrupted: the originals are only in the
 # recovery journal. One controller's list already matches; another is gone.
 reset_machine

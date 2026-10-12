@@ -94,8 +94,21 @@ if [[ -d $tb_dir || -e /etc/omarchy/thunderbolt-authorization.enabled || -e /etc
     fi
   done < <(jq -r '(.trusted // {}) as $trusted | .enrolled // {} | to_entries[] | select($trusted[.key]) | "\(.key) \(.value.StoreTime)"' <<<"$state")
 
-  # A deferred install that never finished setup left Bolt's mode untouched.
-  if mode=$(jq -er .original_authmode <<<"$state"); then
+  # A first setup that failed and then failed to undo itself can lose
+  # policy.json after switching Bolt off; Bolt's original config is then only
+  # in the setup journal. A deferred install that never finished setup left
+  # Bolt's mode untouched and has neither.
+  setup=$(sudo cat "$tb_dir/setup-recovery.json" 2>/dev/null || echo '{}')
+  config=$(jq -c '[.files // {} | to_entries[] | select(.key | endswith("/boltd.conf")) | .value]' <<<"$setup")
+  mode=$(jq -r '.original_authmode // empty' <<<"$state")
+  if [[ -z $mode && $config != "[]" ]]; then
+    mode=$(jq -r '.[0].data // ""' <<<"$config" | base64 -d | awk '
+      /^[[:space:]]*\[/ { section = ($0 ~ /^[[:space:]]*\[config\][[:space:]]*$/) }
+      section && /^[[:space:]]*AuthMode[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); mode = $0 }
+      END { print mode == "" ? "enabled" : mode }
+    ')
+  fi
+  if [[ -n $mode ]]; then
     sudo boltctl config global.auth-mode "$mode"
   fi
 
