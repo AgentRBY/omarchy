@@ -326,10 +326,17 @@ Item {
 
   // Hyprland reports DPMS changes on no event stream, so the panels are asked
   // once each time something that can change them happens: a video lock
-  // starting, the lock's own blank or wake finishing, and outputs coming or
-  // going. Input that wakes a panel behind the lock reaches the lock too, and
-  // wakes it the same way.
+  // starting, the lock's own blank or wake finishing, outputs coming or going,
+  // and omarchy-brightness-display waking them for anyone else (the idle wake
+  // after a resume, say). Input that wakes a panel behind the lock reaches the
+  // lock too, and wakes it the same way.
   function refreshMonitorDpms() {
+    monitorDpmsRetry.stop()
+    monitorDpmsRetry.remaining = monitorDpmsRetry.budget
+    queryMonitorDpms()
+  }
+
+  function queryMonitorDpms() {
     if (!watchMonitorDpms) return
     if (monitorDpmsProcess.running) {
       monitorDpmsPending = true
@@ -350,9 +357,9 @@ Item {
     try {
       monitors = JSON.parse(String(text || ""))
     } catch (error) {
-      return
+      return false
     }
-    if (!Array.isArray(monitors)) return
+    if (!Array.isArray(monitors)) return false
 
     var dpms = {}
     for (var i = 0; i < monitors.length; i++) {
@@ -361,6 +368,7 @@ Item {
     }
     monitorDpms = dpms
     monitorDpmsKnown = true
+    return true
   }
 
   function submitPassword(value) {
@@ -738,6 +746,8 @@ Item {
   Process {
     id: wakeProcess
     command: ["bash", "-c", "omarchy-system-wake"]
+    // Checked when it finishes, so the display command needn't call back.
+    environment: ({ OMARCHY_DISPLAY_WAKE_FROM_LOCK: "1" })
     onExited: root.refreshMonitorDpms()
   }
 
@@ -756,11 +766,28 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        if (monitorDpmsProcess.generation === root.monitorDpmsGeneration && root.watchMonitorDpms) root.applyMonitorDpms(text)
+        // An answer overtaken by a blank or wake is dropped: that request
+        // finishing asks again.
+        if (monitorDpmsProcess.generation !== root.monitorDpmsGeneration || !root.watchMonitorDpms) return
+        if (!root.applyMonitorDpms(text) && monitorDpmsRetry.remaining > 0) monitorDpmsRetry.restart()
       }
     }
     onExited: {
-      if (root.monitorDpmsPending) root.refreshMonitorDpms()
+      if (root.monitorDpmsPending) root.queryMonitorDpms()
+    }
+  }
+
+  // Hyprland can fail to answer while outputs reconfigure, and no later event
+  // is due to ask again, so a failed question is retried a few times.
+  Timer {
+    id: monitorDpmsRetry
+    readonly property int budget: 3
+    property int remaining: 3
+    interval: 1000
+    repeat: false
+    onTriggered: {
+      remaining -= 1
+      root.queryMonitorDpms()
     }
   }
 
@@ -871,6 +898,13 @@ Item {
     function lock(): string {
       if (!root.passwordPamConfigured) return "missing-pam"
       if (!root.currentlyLocked() && !root.beginLock()) return "failed"
+      return "ok"
+    }
+
+    // omarchy-brightness-display calls this after waking the panels, which
+    // Hyprland announces on no event the lock can hear.
+    function refreshDisplays(): string {
+      root.refreshMonitorDpms()
       return "ok"
     }
 

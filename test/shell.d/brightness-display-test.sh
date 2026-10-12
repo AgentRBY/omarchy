@@ -194,3 +194,36 @@ for conf in "" "ddc-require-connector-ddc extra" "ddc-future"; do
 done
 rm -f "$platform_root/displays.conf"
 pass "every external monitor is probed without the directive"
+
+# Waking the panels tells a locked video wallpaper they are lit, whether this
+# command lit them or they came back on their own; the lock's own wake doesn't.
+cat >"$mock_bin/hyprctl" <<'SH'
+#!/bin/bash
+printf 'hyprctl %s\n' "$*" >>"$CALL_LOG"
+if [[ $1 == "monitors" ]]; then
+  printf '[{"name":"eDP-1","disabled":false,"dpmsStatus":%s}]\n' "${PANEL_LIT:-false}"
+fi
+SH
+cat >"$mock_bin/omarchy-shell" <<'SH'
+#!/bin/bash
+printf 'omarchy-shell %s\n' "$*" >>"$CALL_LOG"
+SH
+chmod +x "$mock_bin/hyprctl" "$mock_bin/omarchy-shell"
+
+: >"$call_log"
+run_brightness on
+grep -q '^hyprctl dispatch .*action = "enable"' "$call_log" || fail "waking dark panels enables DPMS" "$(<"$call_log")"
+grep -qx 'omarchy-shell -q lock refreshDisplays' "$call_log" || fail "waking dark panels tells the lock" "$(<"$call_log")"
+pass "waking dark panels enables DPMS and tells the lock"
+
+: >"$call_log"
+PANEL_LIT=true run_brightness on
+! grep -q '^hyprctl dispatch' "$call_log" || fail "lit panels are not enabled again" "$(<"$call_log")"
+grep -qx 'omarchy-shell -q lock refreshDisplays' "$call_log" || fail "panels that came back on their own are reported to the lock" "$(<"$call_log")"
+pass "panels that came back on their own are reported to the lock"
+
+: >"$call_log"
+OMARCHY_DISPLAY_WAKE_FROM_LOCK=1 run_brightness on
+grep -q '^hyprctl dispatch .*action = "enable"' "$call_log" || fail "the lock's own wake still enables DPMS" "$(<"$call_log")"
+! grep -q '^omarchy-shell' "$call_log" || fail "the lock's own wake is not reported back to it" "$(<"$call_log")"
+pass "the lock's own wake is not reported back to it"

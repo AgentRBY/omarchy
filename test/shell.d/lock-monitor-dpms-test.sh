@@ -30,6 +30,8 @@ stub_bin="$TMPDIR/bin"
 home="$TMPDIR/home"
 dpms_state="$TMPDIR/dpms"
 blank_works="$TMPDIR/blank-works"
+hyprctl_failures="$TMPDIR/hyprctl-failures"
+wake_log="$TMPDIR/wake.log"
 
 mkdir -p "$config_dir" "$stub_bin" "$home/.local/state/omarchy/current"
 cp "$SHELL_TEST_DIR/fixtures/lock-monitor-dpms/shell.qml" "$config_dir/shell.qml"
@@ -41,12 +43,18 @@ ln -s "$ROOT/shell/Commons" "$config_dir/Commons"
 ln -s "$TMPDIR/wallpaper.mp4" "$home/.local/state/omarchy/current/background"
 printf 'on\n' >"$dpms_state"
 printf 'yes\n' >"$blank_works"
+printf '0\n' >"$hyprctl_failures"
 
 # Hyprland answers from a state file the brightness stub flips, so the lock
 # sees the panel do what it asked, or, with blank-works set to no, refuse.
 cat >"$stub_bin/hyprctl" <<EOF
 #!/bin/bash
 if [[ \$1 == "monitors" ]]; then
+  failures=\$(<"$hyprctl_failures")
+  if (( failures > 0 )); then
+    printf '%s\n' \$((failures - 1)) >"$hyprctl_failures"
+    exit 1
+  fi
   if [[ \$(<"$dpms_state") == "on" ]]; then dpms=true; else dpms=false; fi
   printf '[{"name":"TEST-1","disabled":false,"dpmsStatus":%s}]\n' "\$dpms"
 fi
@@ -61,8 +69,9 @@ elif [[ \$1 == "off" && \$(<"$blank_works") == "yes" ]]; then
 fi
 EOF
 
-cat >"$stub_bin/omarchy-system-wake" <<'EOF'
+cat >"$stub_bin/omarchy-system-wake" <<EOF
 #!/bin/bash
+printf '%s\n' "\${OMARCHY_DISPLAY_WAKE_FROM_LOCK:-unset}" >>"$wake_log"
 omarchy-brightness-display on
 EOF
 
@@ -74,6 +83,8 @@ chmod +x "$stub_bin"/*
 OMARCHY_PATH="$ROOT" \
 OMARCHY_QML_TEST_RESULT="$result" \
 LOCK_TEST_BLANK_WORKS="$blank_works" \
+LOCK_TEST_DPMS_STATE="$dpms_state" \
+LOCK_TEST_HYPRCTL_FAILURES="$hyprctl_failures" \
 HOME="$home" \
 XDG_CONFIG_HOME="$home/.config" \
 XDG_CACHE_HOME="$home/.cache" \
@@ -103,3 +114,6 @@ if ! jq -e '.ok == true' "$result" >/dev/null; then
 fi
 
 pass "a locked video wallpaper follows the panels without polling Hyprland"
+
+[[ -s $wake_log ]] && ! grep -vqx 1 "$wake_log" || fail "the lock's own wake tells the display command not to call back" "$(cat "$wake_log" 2>/dev/null)"
+pass "the lock's own wake tells the display command not to call back"

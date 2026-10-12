@@ -9,6 +9,8 @@ ShellRoot {
   readonly property string rootPath: Quickshell.env("OMARCHY_PATH")
   readonly property string resultPath: Quickshell.env("OMARCHY_QML_TEST_RESULT")
   readonly property string blankWorksPath: Quickshell.env("LOCK_TEST_BLANK_WORKS")
+  readonly property string dpmsStatePath: Quickshell.env("LOCK_TEST_DPMS_STATE")
+  readonly property string hyprctlFailuresPath: Quickshell.env("LOCK_TEST_HYPRCTL_FAILURES")
   property var failures: []
   property int checks: 0
   property var service: null
@@ -53,6 +55,14 @@ ShellRoot {
     blankWorks.setText(works ? "yes" : "no")
   }
 
+  function lockIpc() {
+    var objects = service.data || []
+    for (var i = 0; i < objects.length; i++) {
+      if (objects[i].target === "lock" && typeof objects[i].refreshDisplays === "function") return objects[i]
+    }
+    throw new Error("Missing lock IPC handler")
+  }
+
   function mark() {
     queriesAtMark = dpmsQueries
   }
@@ -64,6 +74,23 @@ ShellRoot {
   FileView {
     id: blankWorks
     path: root.blankWorksPath
+    blockWrites: true
+  }
+
+  FileView {
+    id: dpmsState
+    path: root.dpmsStatePath
+    // The stubs write these too, so follow them or an unchanged write is skipped.
+    watchChanges: true
+    onFileChanged: reload()
+    blockWrites: true
+  }
+
+  FileView {
+    id: hyprctlFailures
+    path: root.hyprctlFailuresPath
+    watchChanges: true
+    onFileChanged: reload()
     blockWrites: true
   }
 
@@ -138,6 +165,31 @@ ShellRoot {
       }],
       [4500, function() {
         check(since() === 0, "a settled lock asks nothing more (asked " + since() + " times)")
+        setBlankWorks(true)
+        service.runBlank()
+      }],
+      [1500, function() {
+        check(service.monitorDpmsKnown && service.screenBlank("TEST-1"), "the panel is dark before it comes back on its own")
+        // A resume lights the panel with no input and no output change; the
+        // idle wake's omarchy-brightness-display reports it over IPC.
+        dpmsState.setText("on\n")
+      }],
+      [300, function() {
+        check(service.screenBlank("TEST-1"), "nothing tells the lock until the wake is reported")
+        mark()
+        lockIpc().refreshDisplays()
+      }],
+      [1000, function() {
+        check(since() === 1, "a reported wake is checked with one question (asked " + since() + " times)")
+        check(service.monitorDpmsKnown && !service.screenBlank("TEST-1"), "a panel woken behind the lock plays the video")
+        // Hyprland fails to answer once, as it can while outputs reconfigure.
+        hyprctlFailures.setText("1\n")
+        mark()
+        service.runBlank()
+      }],
+      [2500, function() {
+        check(since() === 2, "a failed question is asked again (asked " + since() + " times)")
+        check(service.monitorDpmsKnown && service.screenBlank("TEST-1"), "the retried answer pauses the video on the dark panel")
         service.lockRequested = false
       }],
       [200, function() {
