@@ -72,6 +72,13 @@ PanelWindow {
   property int dropIndex: -1
   property real dragOffset: 0
   readonly property bool dragging: dragIndex >= 0
+  // Off while a drop resets the slots: they snap to where the reorder puts
+  // them rather than sliding back from where they stepped aside. Set before
+  // the drag state changes, so the slots never see the reset animated.
+  property bool animateShifts: true
+  // After a drop the slots have moved under a pointer that has not, so what
+  // they think is hovered is stale until it moves again.
+  property bool hoverStale: false
   // Where an app dragged in from the app grid would land, or -1.
   property int insertIndex: -1
 
@@ -104,6 +111,7 @@ PanelWindow {
 
   function dropExternalDrag(screenX, screenY, key) {
     window.moveExternalDrag(screenX, screenY)
+    window.settleShifts()
     if (window.insertIndex >= 0 && key && window.dock) window.dock.pinAt(key, window.insertIndex)
     window.endExternalDrag()
   }
@@ -145,7 +153,14 @@ PanelWindow {
     window.menuSlot = slot
   }
 
+  function settleShifts() {
+    window.animateShifts = false
+    Qt.callLater(function() { window.animateShifts = true })
+  }
+
   function endDrag() {
+    window.settleShifts()
+    window.hoverStale = true
     window.dragIndex = -1
     window.dropIndex = -1
     window.dragOffset = 0
@@ -275,6 +290,7 @@ PanelWindow {
     HoverHandler {
       id: bodyHover
       onHoveredChanged: if (!hovered && window.autohide) hideTimer.restart()
+      onPointChanged: if (!window.dragging) window.hoverStale = false
     }
 
     Grid {
@@ -296,7 +312,7 @@ PanelWindow {
   component Slot: Item {
     id: slot
 
-    property bool hovered: mouse.containsMouse
+    property bool hovered: mouse.containsMouse && !window.hoverStale
     property bool pressed: mouse.pressed
     property alias mouse: mouse
 
@@ -317,7 +333,10 @@ PanelWindow {
 
     property real displayedShift: window.insertIndex >= 0 ? -window.slotAcross / 2 : 0
 
-    Behavior on displayedShift { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+    Behavior on displayedShift {
+      enabled: window.animateShifts
+      NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+    }
 
     transform: Translate {
       x: window.vertical ? 0 : appsSlot.displayedShift
@@ -393,7 +412,7 @@ PanelWindow {
     // Only while dragging: once the drop reorders the slots, they are already
     // where they were shown.
     Behavior on displayedShift {
-      enabled: (window.dragging && !appSlot.lifted) || window.insertIndex >= 0
+      enabled: window.animateShifts && ((window.dragging && !appSlot.lifted) || window.insertIndex >= 0)
       NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
     }
 
@@ -420,6 +439,10 @@ PanelWindow {
       if (!window.dragging) {
         if (Math.abs(delta) < Style.space(6)) return
         window.closeMenu()
+        // The landing slot first: with the dragged slot set and no landing
+        // slot yet, every slot before it would count as in between and step
+        // aside for a moment.
+        window.dropIndex = appSlot.index
         window.dragIndex = appSlot.index
       }
       if (!appSlot.lifted) return
