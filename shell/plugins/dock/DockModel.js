@@ -127,9 +127,11 @@ function orderItems(items, order) {
   return result
 }
 
-// The order after an app is kept in the dock: it moves to the end.
-function orderWithKeyLast(order, key) {
-  return (order || []).filter(function(other) { return other !== key }).concat([key])
+// The order with key moved to index, counted once key has left its old slot.
+function orderWithKeyAt(order, key, index) {
+  var keys = (order || []).filter(function(other) { return other !== key })
+  keys.splice(Math.max(0, Math.min(keys.length, index)), 0, key)
+  return keys
 }
 
 // Where a dragged icon lands: its own slot moved by however many slots the
@@ -140,45 +142,15 @@ function dropIndex(fromIndex, offset, slotSize, count) {
   return Math.max(0, Math.min(count - 1, target))
 }
 
-// The pin list after dragging the item at fromIndex to toIndex. The dragged
-// app is pinned where it lands, as are the pinned apps around it in their new
-// order. Pins the dock is not showing, because their app is not installed,
-// keep their place at the end.
-function movedPins(items, allPinned, fromIndex, toIndex) {
-  var keys = (items || []).map(function(item) { return item.key })
-  if (fromIndex < 0 || fromIndex >= keys.length) return (allPinned || []).slice()
-  var moved = keys.splice(fromIndex, 1)[0]
-  keys.splice(Math.max(0, Math.min(keys.length, toIndex)), 0, moved)
-
-  var pinned = {}
-  for (var i = 0; i < items.length; i++) {
-    if (items[i].pinned) pinned[items[i].key] = true
-  }
-  pinned[moved] = true
-
-  var result = keys.filter(function(key) { return pinned[key] })
-  var shown = {}
-  for (var j = 0; j < keys.length; j++) shown[keys[j]] = true
-  for (var k = 0; k < (allPinned || []).length; k++) {
-    if (!shown[allPinned[k]] && result.indexOf(allPinned[k]) === -1) result.push(allPinned[k])
+// The pins to save for the dock's order: the pinned apps in that order, then
+// pins the dock is not showing, because their app is not installed, as they
+// were. pinned holds the pinned desktop ids as keys.
+function pinsInOrder(order, pinned, allPinned) {
+  var result = (order || []).filter(function(key) { return pinned[key] === true })
+  for (var i = 0; i < (allPinned || []).length; i++) {
+    if (result.indexOf(allPinned[i]) === -1 && (order || []).indexOf(allPinned[i]) === -1) result.push(allPinned[i])
   }
   return result
-}
-
-// The pin list after an app is dropped on the dock before the slot at index,
-// counted as the slots stand. An app the dock already shows moves there; any
-// other app joins it there.
-function pinnedAt(items, allPinned, key, index) {
-  var list = (items || []).slice()
-  var from = -1
-  for (var i = 0; i < list.length; i++) {
-    if (list[i].key === key) { from = i; break }
-  }
-  if (from < 0) {
-    list.push({ key: key, pinned: true })
-    from = list.length - 1
-  }
-  return movedPins(list, allPinned, from, from < index ? index - 1 : index)
 }
 
 // The window a click on an app brings forward. Windows on the workspace in
@@ -217,10 +189,9 @@ if (typeof module !== "undefined") {
     terminalCommand: terminalCommand,
     buildItems: buildItems,
     orderItems: orderItems,
-    orderWithKeyLast: orderWithKeyLast,
+    orderWithKeyAt: orderWithKeyAt,
     dropIndex: dropIndex,
-    movedPins: movedPins,
-    pinnedAt: pinnedAt,
+    pinsInOrder: pinsInOrder,
     pickWindow: pickWindow
   }
 }

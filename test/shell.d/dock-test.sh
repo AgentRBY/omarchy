@@ -54,33 +54,33 @@ assertEqual(dock.dropIndex(2, 85, 40, 6), 4, 'dock lands a dragged app as many s
 assertEqual(dock.dropIndex(2, -500, 40, 6), 0, 'dock lands an app dragged past the start in the first slot')
 assertEqual(dock.dropIndex(2, 500, 40, 6), 5, 'dock lands an app dragged past the end in the last slot')
 
-const dockItems = [
-  { key: 'chromium', pinned: true },
-  { key: 'Alacritty', pinned: true },
-  { key: 'signal', pinned: true },
-  { key: 'slack', pinned: false }
-]
 const allPins = ['chromium', 'Alacritty', 'spotify-not-installed', 'signal']
+const pinned = { chromium: true, Alacritty: true, signal: true }
 assertDeepEqual(
-  dock.movedPins(dockItems, allPins, 2, 0),
+  dock.pinsInOrder(['signal', 'chromium', 'Alacritty', 'slack'], pinned, allPins),
   ['signal', 'chromium', 'Alacritty', 'spotify-not-installed'],
-  'dock reorders pins by drag, keeping pins it does not show'
+  'dock saves pins in its order, keeping pins it does not show'
 )
 assertDeepEqual(
-  dock.movedPins(dockItems, allPins, 3, 1),
+  dock.pinsInOrder(['chromium', 'slack', 'Alacritty', 'signal'], Object.assign({ slack: true }, pinned), allPins),
   ['chromium', 'slack', 'Alacritty', 'signal', 'spotify-not-installed'],
   'dock pins a running app dragged in among the pins'
 )
 
 assertDeepEqual(
-  dock.pinnedAt(dockItems, allPins, 'obsidian', 1),
-  ['chromium', 'obsidian', 'Alacritty', 'signal', 'spotify-not-installed'],
-  'dock pins an app dropped from the app grid where it lands'
+  dock.orderWithKeyAt(['chromium', 'Alacritty', 'signal'], 'obsidian', 1),
+  ['chromium', 'obsidian', 'Alacritty', 'signal'],
+  'dock puts an app dropped from the app grid where it lands'
 )
 assertDeepEqual(
-  dock.pinnedAt(dockItems, allPins, 'chromium', 3),
-  ['Alacritty', 'signal', 'chromium', 'spotify-not-installed'],
+  dock.orderWithKeyAt(['chromium', 'Alacritty', 'signal'], 'chromium', 2),
+  ['Alacritty', 'signal', 'chromium'],
   'dock moves an app it already shows to where it is dropped'
+)
+assertDeepEqual(
+  dock.orderWithKeyAt(['chromium', 'slack', 'signal'], 'slack', 3),
+  ['chromium', 'signal', 'slack'],
+  'dock puts an app kept in the dock at the end'
 )
 
 const terminalEntries = [
@@ -100,13 +100,6 @@ assertDeepEqual(
   ['slack', 'chromium', 'signal', 'foot'],
   'dock keeps its own order, with apps that join going at the end'
 )
-assertDeepEqual(
-  dock.orderWithKeyLast(['chromium', 'slack', 'signal'], 'slack'),
-  ['chromium', 'signal', 'slack'],
-  'dock puts an app kept in the dock at the end'
-)
-assertDeepEqual(dock.orderWithKeyLast(['chromium'], 'obsidian'), ['chromium', 'obsidian'], 'dock adds a newly kept app at the end')
-
 const foot = [
   { workspaceId: 2, minimized: false, activated: false },
   { workspaceId: -99, minimized: true, activated: false },

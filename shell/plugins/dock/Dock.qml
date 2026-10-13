@@ -2,7 +2,6 @@ import QtQuick
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
-import Quickshell.Wayland
 import qs.Commons
 import "DockModel.js" as DockModel
 
@@ -12,7 +11,6 @@ import "DockModel.js" as DockModel
 Item {
   id: root
 
-  property string omarchyPath: Quickshell.env("OMARCHY_PATH")
   property var shell: null
   property var manifest: null
 
@@ -102,12 +100,6 @@ Item {
 
   function shownKeys() {
     return root.items.map(function(item) { return item.key })
-  }
-
-  function moveInOrder(key, toIndex) {
-    var keys = root.shownKeys().filter(function(other) { return other !== key })
-    keys.splice(Math.max(0, Math.min(keys.length, toIndex)), 0, key)
-    root.order = keys
   }
 
   function syncItemModel() {
@@ -238,42 +230,50 @@ Item {
     appGrid.open()
   }
 
-  function moveItem(fromIndex, toIndex) {
-    if (fromIndex === toIndex) return
-    var all = root.pendingPins || DockModel.pinnedIds(root.dockConfig, root.defaultDockConfig)
-    var pins = DockModel.movedPins(root.items, all, fromIndex, toIndex)
-    root.moveInOrder(root.items[fromIndex].key, toIndex)
-    root.pendingPins = pins
-    Util.execDetached("omarchy-dock pinned " + pins.map(function(id) { return Util.shellQuote(id) }).join(" "))
-  }
-
   readonly property var pinnedKeys: root.pendingPins || DockModel.pinnedIds(root.dockConfig, root.defaultDockConfig)
 
   function isPinned(key) {
     return root.pinnedKeys.indexOf(key) >= 0
   }
 
-  // Pins an app at a slot, moving it there if the dock already shows it. The
-  // index counts the slots as they stand, before the app leaves its old one.
-  function pinAt(key, index) {
+  // Moves an app to a slot in the dock's order, pinning it there; the pins are
+  // saved in the new order. The index counts the slots once the app has left
+  // its own.
+  function placeAt(key, index) {
     if (!key) return
-    var pins = DockModel.pinnedAt(root.items, root.pinnedKeys, key, index)
-    var from = root.items.map(function(item) { return item.key }).indexOf(key)
-    root.moveInOrder(key, from >= 0 && from < index ? index - 1 : index)
+    root.order = DockModel.orderWithKeyAt(root.shownKeys(), key, index)
+    var pinned = {}
+    root.pinnedKeys.forEach(function(other) { pinned[other] = true })
+    pinned[key] = true
+    root.savePins(DockModel.pinsInOrder(root.order, pinned, root.pinnedKeys))
+  }
+
+  // A reorder shows at once; the saved config catches up after.
+  function savePins(pins) {
     root.pendingPins = pins
     Util.execDetached("omarchy-dock pinned " + pins.map(function(id) { return Util.shellQuote(id) }).join(" "))
   }
 
-  // Keeping an app in the dock puts it at the end; taking one out leaves it in
-  // its slot while it still runs.
-  function setPinnedKey(key, pinned) {
-    if (!key) return
-    if (pinned) root.order = DockModel.orderWithKeyLast(root.shownKeys(), key)
-    Util.execDetached("omarchy-dock " + (pinned ? "pin " : "unpin ") + Util.shellQuote(key))
+  function moveItem(fromIndex, toIndex) {
+    if (fromIndex !== toIndex) root.placeAt(root.shownKeys()[fromIndex], toIndex)
   }
 
-  function setPinned(item, pinned) {
-    if (item) root.setPinnedKey(item.key, pinned)
+  // An app dropped before the slot at index, counted as the slots stand.
+  function pinAt(key, index) {
+    var from = root.shownKeys().indexOf(key)
+    root.placeAt(key, from >= 0 && from < index ? index - 1 : index)
+  }
+
+  // Keeping an app in the dock puts it at the end; taking one out leaves it in
+  // its slot while it still runs.
+  function setPinned(key, pinned) {
+    if (!key) return
+    if (pinned) {
+      root.placeAt(key, root.shownKeys().length)
+    } else {
+      root.pendingPins = root.pinnedKeys.filter(function(other) { return other !== key })
+      Util.execDetached("omarchy-dock unpin " + Util.shellQuote(key))
+    }
   }
 
   // Each workspace's layout is read once and cached. It only changes through
