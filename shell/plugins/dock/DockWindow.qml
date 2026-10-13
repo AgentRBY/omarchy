@@ -54,7 +54,7 @@ PanelWindow {
   readonly property int iconX: slotPadding
   readonly property int iconY: slotPadding
   // A pinned app that is not running is drawn faded.
-  readonly property real idleOpacity: 0.8
+  readonly property real idleOpacity: 0.7
   // Room inward of the dock for its menus: the tallest, the apps button's,
   // has a header and five rows.
   readonly property int popupRoom: Style.spacing.popupRowHeight * 6 + Style.spacing.sm * 2 + Style.normalBorderWidth * 2 + gap * 2
