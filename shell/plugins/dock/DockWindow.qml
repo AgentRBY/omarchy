@@ -63,10 +63,7 @@ PanelWindow {
     : position === "right" ? Item.Right
     : Item.Bottom
 
-  // With no background behind it, the apps button carries a thin outline in
-  // the theme's background color so it reads on light wallpapers.
   readonly property color dotColor: Commons.Color.bar.text
-  readonly property color dotOutline: Util.alpha(Commons.Color.bar.background, 0.7)
 
   // The app being dragged along the dock, how far the pointer has taken it,
   // and the slot it would land in.
@@ -349,8 +346,6 @@ PanelWindow {
       font.family: Style.fontFamily
       font.pixelSize: Math.round(window.iconSize * 0.9)
       color: window.dotColor
-      style: Text.Outline
-      styleColor: window.dotOutline
       scale: appsSlot.pressed ? 0.92 : (appsSlot.hovered ? 1.15 : 1)
       transformOrigin: window.popOrigin
 
