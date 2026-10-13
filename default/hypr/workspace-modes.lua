@@ -191,6 +191,18 @@ local function floating_ranges()
   return ranges
 end
 
+-- The size the mode gives a window, and where it opens: centered, and stepped
+-- from the last one so windows opened one after another do not stack exactly
+-- on each other. The window's own size is not settled when the rule places it,
+-- so the position is worked out from the size the rule gives it.
+local OPEN_WIDTH = "min(1100,monitor_w*0.64)"
+local OPEN_HEIGHT = "min(760,monitor_h*0.68)"
+
+local function open_position()
+  local step = cascade * 24 - 48
+  return string.format("(monitor_w-%s)/2+(%d) (monitor_h-%s)/2+(%d)", OPEN_WIDTH, step, OPEN_HEIGHT, step)
+end
+
 -- Matches every window but those of apps with float rules of their own.
 local function not_floating_on_their_own(match)
   for _, key in ipairs({ "class", "title" }) do
@@ -220,8 +232,8 @@ local function sync_open_rules()
       enabled = true,
       match = not_floating_on_their_own({ workspace = string.format("r[%d-%d]", range[1], range[2]), modal = false }),
       float = true,
-      size = "min(1100,monitor_w*0.64) min(760,monitor_h*0.68)",
-      center = true,
+      size = OPEN_WIDTH .. " " .. OPEN_HEIGHT,
+      move = open_position(),
       tag = "+" .. OPENED_TAG,
     })
   end
@@ -241,6 +253,9 @@ local function claim_opened(window)
   for _, tag in ipairs(window.tags or {}) do
     if tag == OPENED_TAG or tag == OPENED_TAG .. "*" then
       set_claimed(window, true)
+      -- The next window the rule opens steps on from this one.
+      cascade = (cascade + 1) % 5
+      sync_open_rules()
       return
     end
   end

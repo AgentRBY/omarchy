@@ -395,9 +395,11 @@ local function open_rule()
 end
 local rule = open_rule()
 assert(rule and rule.float and rule.enabled and rule.match.workspace == "r[1-1]", "no open rule floats windows on the floating workspace")
+local first_position = rule.move
 local opened = window("0x1", 1, { floating = true, tags = { "omarchy-mode-opened*" } })
 state().subscriptions["window.open"][1](opened)
 assert(has_tag(opened, "omarchy-mode-floated"), "a window the open rule floated was not claimed by the mode")
+assert(open_rule().move ~= first_position, "the next window opens exactly on top of the last")
 o.workspace_mode({ workspace = "1", mode = "dwindle" })
 assert(not opened.floating, "a window the open rule floated kept floating once the workspace tiled")
 assert(open_rule().enabled == false, "the open rule still applies after the workspace tiled")
