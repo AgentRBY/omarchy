@@ -11,7 +11,8 @@ for desktop_file in "$applications"/*.desktop; do
   [[ -f $desktop_file ]] || continue
   grep -q '^StartupWMClass=' "$desktop_file" && continue
 
-  exec_line=$(grep -m1 '^Exec=' "$desktop_file")
+  # An entry without an Exec, such as a Hidden=true override, opens nothing.
+  exec_line=$(grep -m1 '^Exec=' "$desktop_file" || true)
   url=""
 
   if [[ $exec_line =~ ^Exec=omarchy-webapp-handler-hey ]]; then
@@ -23,5 +24,7 @@ for desktop_file in "$applications"/*.desktop; do
   [[ -n $url ]] || continue
 
   window_class=$(omarchy-webapp-window-class "$url") || continue
-  [[ -n $window_class ]] && printf 'StartupWMClass=%s\n' "$window_class" >>"$desktop_file"
+  if [[ -n $window_class ]]; then
+    printf 'StartupWMClass=%s\n' "$window_class" >>"$desktop_file"
+  fi
 done

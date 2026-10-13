@@ -446,6 +446,27 @@ assert(rule.match.title == "negative:(?:^Picker$)", "the open rule does not pass
 fi
 pass "apps with float rules of their own are left to them on a floating workspace"
 
+# Apps floated through a tag keep their floating too: one tagged into a tag a
+# float rule matches is passed over, while a rule floating a tag together with
+# a title passes over only that title, not everything with the tag.
+printf 'o.workspace_mode({ workspace = "1", mode = "floating" })\n' >"$modes_dir/1.lua"
+if ! run_lua '
+o.window("^1password$", { tag = "+floating-window" })
+o.window({ tag = "floating-window" }, { float = true })
+o.window("^chromium$", { tag = "+chromium-based-browser" })
+o.window({ tag = "chromium-based-browser", title = "^Meet - .+" }, { float = true })
+require("default.hypr.workspace-layouts")
+local rule
+for _, candidate in ipairs(state().rules) do
+  if candidate.name == "omarchy-floating-open-1" then rule = candidate end
+end
+assert(rule.match.class == "negative:(?:^1password$)", "the open rule does not pass over an app tagged to float: " .. tostring(rule.match.class))
+assert(rule.match.title == "negative:(?:^Meet - .+)", "the open rule does not pass over just the title a tag rule floats: " .. tostring(rule.match.title))
+'; then
+  fail "apps floated through a tag are left to it on a floating workspace"
+fi
+pass "apps floated through a tag are left to it on a floating workspace"
+
 # A window moved to a special workspace, like the scratchpad, is left alone.
 printf 'o.workspace_mode({ workspace = "1", mode = "floating" })\n' >"$modes_dir/1.lua"
 if ! run_lua '

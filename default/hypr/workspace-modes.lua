@@ -203,10 +203,24 @@ local function open_position()
   return string.format("(monitor_w-%s)/2+(%d) (monitor_h-%s)/2+(%d)", OPEN_WIDTH, step, OPEN_HEIGHT, step)
 end
 
--- Matches every window but those of apps with float rules of their own.
+-- Matches every window but those of apps with float rules of their own,
+-- directly or through a tag a float rule matches.
 local function not_floating_on_their_own(match)
+  local floating = o.floating_apps or { class = {}, title = {}, tags = {}, tagged = {} }
+  local excluded = { class = {}, title = {} }
   for _, key in ipairs({ "class", "title" }) do
-    local patterns = (o.floating_apps or {})[key] or {}
+    for _, pattern in ipairs(floating[key]) do
+      table.insert(excluded[key], pattern)
+    end
+  end
+  for tag in pairs(floating.tags) do
+    for _, tagged in ipairs(floating.tagged[tag] or {}) do
+      table.insert(excluded[tagged.key], tagged.pattern)
+    end
+  end
+
+  for _, key in ipairs({ "class", "title" }) do
+    local patterns = excluded[key]
     if #patterns > 0 then
       local alternatives = {}
       for _, pattern in ipairs(patterns) do

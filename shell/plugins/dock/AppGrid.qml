@@ -20,6 +20,8 @@ Item {
   property bool dragging: false
   property var dragEntry: null
   property point dragPoint
+  // The app waiting on the user to confirm uninstalling it.
+  property var uninstallEntry: null
   // The app whose menu is open, and where it opened.
   property var menuEntry: null
   property point menuPoint
@@ -54,7 +56,7 @@ Item {
     if (root.appLibrary) root.appLibrary.refreshIcons()
     // The cells from last time are reused when nothing changed, so the grid
     // opens with its icons already drawn.
-    if (root.filterText !== "" || root.apps.length === 0) {
+    if (root.appsStale || root.filterText !== "" || root.apps.length === 0) {
       root.filterText = ""
       root.rebuild()
     } else {
@@ -67,6 +69,7 @@ Item {
   function close() {
     if (root.dragging && root.dock) root.dock.endExternalDrag()
     root.opened = false
+    root.uninstallEntry = null
     root.dragging = false
     root.dragEntry = null
     root.menuEntry = null
@@ -88,6 +91,25 @@ Item {
     root.close()
   }
 
+  function requestUninstall(entry) {
+    if (!entry) return
+    root.menuEntry = null
+    uninstallConfirm.selectedIndex = 1
+    root.uninstallEntry = entry
+  }
+
+  function cancelUninstall() {
+    root.uninstallEntry = null
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function confirmUninstall() {
+    var entry = root.uninstallEntry
+    root.uninstallEntry = null
+    root.close()
+    if (entry && root.appLibrary) root.appLibrary.remove(entry.id, root.appLibrary.entryName(entry))
+  }
+
   function openMenu(entry, point) {
     root.menuEntry = entry
     root.menuPoint = point
@@ -99,6 +121,7 @@ Item {
   }
 
   function rebuild() {
+    root.appsStale = false
     var rows = root.appLibrary ? root.appLibrary.sortedEntries(root.filterText) : []
     root.apps = rows.map(function(row) { return row.entry })
     root.selectedIndex = Math.max(0, Math.min(root.selectedIndex, root.apps.length - 1))
@@ -131,9 +154,16 @@ Item {
     font.pixelSize: Style.font.body
   }
 
+  // Apps installed or removed while the grid is closed are picked up when it
+  // next opens.
+  property bool appsStale: false
+
   Connections {
     target: root.appLibrary
-    function onAppsChanged() { if (root.opened) root.rebuild() }
+    function onAppsChanged() {
+      if (root.opened) root.rebuild()
+      else root.appsStale = true
+    }
   }
 
   OverlayWindow {
@@ -176,6 +206,25 @@ Item {
         onClicked: root.menuEntry = null
       }
 
+      ConfirmDialog {
+        id: uninstallConfirm
+
+        anchors.fill: parent
+        opened: !!root.uninstallEntry
+        z: 10
+        message: "Do you want to uninstall " + (root.uninstallEntry && root.appLibrary ? root.appLibrary.entryName(root.uninstallEntry) : "") + "?"
+        confirmText: "Uninstall"
+        background: Commons.Color.menu.background
+        foreground: Commons.Color.menu.text
+        scrim: Commons.Color.menu.scrim
+        selectedBackground: Commons.Color.menu.selectedBackground
+        selectedText: Commons.Color.menu.selectedText
+        fontFamily: Style.font.menuFamily
+        cornerRadius: Style.cornerRadius
+        onCanceled: root.cancelUninstall()
+        onConfirmed: root.confirmUninstall()
+      }
+
       Item {
         id: keyCatcher
         anchors.fill: parent
@@ -183,7 +232,13 @@ Item {
 
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
-          if (event.key === Qt.Key_Escape) {
+          if (root.uninstallEntry) {
+            if (uninstallConfirm.handleKey(event)) event.accepted = true
+            return
+          }
+          if (event.key === Qt.Key_Delete) {
+            root.requestUninstall(root.apps[root.selectedIndex])
+          } else if (event.key === Qt.Key_Escape) {
             if (root.menuEntry) root.menuEntry = null
             else if (root.filterText) root.setFilter("")
             else root.close()
@@ -410,6 +465,11 @@ Item {
             if (root.dock && menu.entry) root.dock.setPinned(String(menu.entry.id || ""), !menu.pinned)
             root.menuEntry = null
           }
+
+        MenuRow {
+          text: "Uninstall"
+          onTriggered: root.requestUninstall(menu.entry)
+        }
         }
       }
     }
