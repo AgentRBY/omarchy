@@ -332,24 +332,37 @@ PanelWindow {
       if (window.dock) window.dock.openApps()
     }
 
-    // A grid of app squares, the Nerd Font "apps" glyph, reads as "all apps"
-    // in any icon theme.
-    Text {
+    // A grid of app squares reads as "all apps" in any icon theme. Drawn
+    // rather than taken from a font, so its edges stay crisp on the
+    // transparent dock and it fills its slot like the app icons beside it.
+    Item {
       x: window.iconX
       y: window.iconY
       width: window.iconSize
       height: window.iconSize
-      horizontalAlignment: Text.AlignHCenter
-      verticalAlignment: Text.AlignVCenter
-      textFormat: Text.PlainText
-      text: "\uDB80\uDC3B"
-      font.family: Style.fontFamily
-      font.pixelSize: Math.round(window.iconSize * 0.9)
-      color: window.dotColor
       scale: appsSlot.pressed ? 0.92 : (appsSlot.hovered ? 1.15 : 1)
       transformOrigin: window.popOrigin
 
       Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+
+      Grid {
+        readonly property int square: Math.round(window.iconSize * 0.22)
+
+        anchors.centerIn: parent
+        columns: 3
+        spacing: Math.round(window.iconSize * 0.1)
+
+        Repeater {
+          model: 9
+
+          delegate: Rectangle {
+            width: parent.square
+            height: parent.square
+            radius: Math.max(1, Math.round(parent.square * 0.2))
+            color: window.dotColor
+          }
+        }
+      }
     }
   }
 
