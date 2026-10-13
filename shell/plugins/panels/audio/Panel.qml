@@ -494,7 +494,7 @@ Panel {
   // panel's brightnessName ladder; bands are wide enough that small
   // tweaks don't rename the room you're in.
   function outputVolumeName(volume, muted) {
-    return Model.outputVolumeName(volume, muted)
+    return Model.outputVolumeName(volume, muted, Commons.I18n.t)
   }
 
   function setOutputVolume(v) {
@@ -860,7 +860,7 @@ Panel {
               spacing: Style.space(2)
 
               Text {
-                text: "Audio"
+                text: Commons.I18n.t("audio.title")
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.title
@@ -902,7 +902,7 @@ Panel {
 
               PanelSectionHeader {
                 id: outputHeader
-                text: "OUTPUT"
+                text: Commons.I18n.t("audio.output")
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
                 anchors.left: parent.left
@@ -989,7 +989,7 @@ Panel {
 
               PanelSectionHeader {
                 id: microphoneHeader
-                text: "INPUT"
+                text: Commons.I18n.t("audio.input")
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
                 anchors.left: parent.left
@@ -1097,7 +1097,7 @@ Panel {
             visible: root.displayAudioStreams.length > 0
 
             PanelSectionHeader {
-              text: "SOURCES"
+              text: Commons.I18n.t("audio.sources")
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
             }

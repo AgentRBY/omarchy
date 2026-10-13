@@ -411,7 +411,7 @@ BarWidget {
       spacing: Style.space(8)
 
       Text {
-        text: "Tray icons"
+        text: Commons.I18n.t("tray.title")
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
@@ -419,7 +419,7 @@ BarWidget {
       }
 
       Text {
-        text: "Pinned icons stay visible. Hidden icons never show."
+        text: Commons.I18n.t("tray.help")
         color: Qt.darker(root.foreground, 1.4)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -429,7 +429,7 @@ BarWidget {
 
       Text {
         visible: root.allItems.length === 0
-        text: "No tray items reporting."
+        text: Commons.I18n.t("tray.empty")
         color: Qt.darker(root.foreground, 1.5)
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall

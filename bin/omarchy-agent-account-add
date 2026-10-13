@@ -85,7 +85,7 @@ finish() {
 fail() {
   if [[ $events == "true" ]]; then
     printf '@@omarchy error %s\n' "$1"
-    omarchy-notification-send -g 󰚩 -u critical "Couldn't add the $name account" "$1"
+    omarchy-notification-send -g 󰚩 -u critical "$(omarchy-i18n agents.addFailed "$name")" "$1"
   else
     echo "$1" >&2
   fi

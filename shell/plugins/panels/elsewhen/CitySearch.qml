@@ -18,7 +18,7 @@ Column {
   property var offsetLabel: function(zoneId) { return "" }
   property bool loading: false
   property string buttonText: "+  Add a city"
-  property string placeholderText: "Search cities\u2026"
+  property string placeholderText: Commons.I18n.t("elsewhen.searchCities")
   property string loadingText: "Loading zones\u2026"
   property real fontSize: Style.font.bodySmall
   property color foreground: Commons.Color.foreground

@@ -882,7 +882,7 @@ Item {
       anchors.fill: parent
       opened: root.deleteConfirmOpen
       z: 10
-      message: "Do you want to delete " + (root.pendingDeleteTheme ? root.labelForPath(root.pendingDeleteTheme) : "") + "?"
+      message: Commons.I18n.t("imagePicker.deleteTheme").arg(root.pendingDeleteTheme ? root.labelForPath(root.pendingDeleteTheme) : "")
       confirmText: "Delete"
       background: root.dimColor
       foreground: root.foreground

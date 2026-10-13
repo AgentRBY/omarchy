@@ -39,6 +39,8 @@ Item {
   function refresh() {
     defaultMenuFile.reload()
     userMenuFile.reload()
+    languageFile.reload()
+    menuCatalogFile.reload()
     return "ok"
   }
 
@@ -50,6 +52,14 @@ Item {
   // path doesn't have to shell out to bash + jq on every open.
   property string defaultMenuPath: omarchyPath + "/default/omarchy/omarchy-menu.jsonc"
   property string userMenuPath: Quickshell.env("HOME") + "/.config/omarchy/extensions/omarchy-menu.jsonc"
+  // Display language for the shipped rows. The code lives in
+  // ~/.config/omarchy/language (omarchy-language owns it); a missing file
+  // means English. The catalog at default/i18n/<code>/menu.json is applied
+  // to the default items before the user extension merges on top, so a
+  // user's own rows and retitles always win.
+  property string language: "en"
+  property var menuCatalog: ({})
+  readonly property string languagePath: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/omarchy/language"
   property var defaultMenuItems: []
   property var userMenuItems: []
   // Whether each file has answered once, loaded or (the user's) missing. At
@@ -255,11 +265,33 @@ Item {
     return MenuModel.parseMenuJsonc(raw)
   }
 
+  function parseCatalog(raw) {
+    try {
+      var parsed = JSON.parse(raw || "{}")
+      return (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed : ({})
+    } catch (e) {
+      return ({})
+    }
+  }
+
+  function setLanguage(raw) {
+    var code = String(raw || "").trim()
+    if (!/^[a-z]{2,3}(-[A-Za-z]{2})?$/.test(code)) code = "en"
+    if (root.language === code) return
+    root.language = code
+    menuCatalogFile.reload()
+  }
+
   // Merge defaults + user extension. Later entries override earlier ones
   // on a per-key basis (so the user can tweak label/icon/action without
   // re-declaring the whole row).
   function rebuildItemsFromSources() {
-    var mergedMenu = MenuModel.mergeMenuSources(root.defaultMenuItems, root.userMenuItems)
+    var translatedDefaults = MenuModel.applyTranslations(root.defaultMenuItems, root.menuCatalog)
+    var mergedMenu = MenuModel.mergeMenuSources(translatedDefaults, root.userMenuItems)
+    // The root row is injected by the merge (it has no JSONC entry), so its
+    // "Go" label comes from the catalog's root entry instead.
+    var rootCatalog = root.menuCatalog.root
+    if (rootCatalog && rootCatalog.label && mergedMenu.items.root) mergedMenu.items.root.label = rootCatalog.label
     root.providerRevision += 1
     root.providersLoaded = ({})
     root.providerQueue = []
@@ -292,6 +324,15 @@ Item {
       script: "current=$(powerprofilesctl get 2>/dev/null); omarchy-powerprofiles-list 2>/dev/null | while read -r p; do [[ -z $p ]] && continue; printf '%s\\t%s\\t%s\\n' \"$p\" \"$p\" \"$current\"; done",
       icon: "\udb81\udc0b",
       actionFor: function(value) { return "omarchy-powerprofiles-set autodetect " + Util.shellQuote(value) }
+    },
+    // Rows carry a fourth field (the English name) so searching "danish"
+    // finds the row labeled with its native name; mergeProviderRows turns
+    // it into an alias.
+    "languages": {
+      script: "current=$(omarchy-language 2>/dev/null); omarchy-language list 2>/dev/null | while IFS=$'\\t' read -r name code english; do [[ -z $code ]] && continue; printf '%s\\t%s\\t%s\\t%s\\n' \"$name\" \"$code\" \"$current\" \"$english\"; done",
+      icon: "\uf1ab",
+      volatile: true,
+      actionFor: function(value) { return "omarchy-language " + Util.shellQuote(value) }
     }
   })
 
@@ -395,7 +436,7 @@ Item {
         description: "",
         action: spec.actionFor(value),
         provider: "",
-        aliases: [],
+        aliases: parts[3] ? [parts[3]] : [],
         when: "",
         checked: "",
         disabled: "",
@@ -577,7 +618,7 @@ Item {
     if (root.dmenuMultiple && root.dmenuOnChange.length === 0) {
       displayModel.append({
         itemId: "dmenu.apply", disabled: false, kind: "dmenu", icon: "", iconFont: "",
-        appIcon: "", appId: "", label: "Apply", target: "",
+        appIcon: "", appId: "", label: Commons.I18n.t("common.apply"), target: "",
         detail: root.dmenuSelected.length + " selected", path: "", childCount: 0,
         action: "", provider: "", score: -1, section: ""
       })
@@ -1101,6 +1142,28 @@ Item {
     onFileChanged: reload()
   }
 
+  // The language choice and its catalog are watched the same way, so
+  // picking a language under Setup retitles the menu with no shell restart.
+  FileView {
+    id: languageFile
+    path: root.languagePath
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.setLanguage(text())
+    onLoadFailed: root.setLanguage("")
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: menuCatalogFile
+    path: root.omarchyPath + "/default/i18n/" + root.language + "/menu.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: { root.menuCatalog = root.parseCatalog(text()); root.rebuildItemsFromSources() }
+    onLoadFailed: { root.menuCatalog = ({}); root.rebuildItemsFromSources() }
+    onFileChanged: reload()
+  }
+
   // ---------------------------------------------------------------- guards
   //
   // `when:` (visibility) and `checked:` (✓ marker) are bash expressions the
@@ -1286,7 +1349,7 @@ Item {
           anchors.fill: parent
           opened: root.deleteConfirmOpen
           z: 10
-          message: "Do you want to uninstall " + ((root.deleteTarget && root.deleteTarget.label) || "") + "?"
+          message: Commons.I18n.t("common.uninstallConfirm").arg((root.deleteTarget && root.deleteTarget.label) || "")
           confirmText: "Uninstall"
           background: root.background
           foreground: root.foreground

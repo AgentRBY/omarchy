@@ -629,7 +629,7 @@ Panel {
               id: locationField
               width: Style.space(190)
               enabled: !root.savingLocation
-              placeholderText: "Search city"
+              placeholderText: Commons.I18n.t("weather.searchCity")
               foreground: root.bar.foreground
               font.family: root.bar.fontFamily
 
@@ -696,7 +696,7 @@ Panel {
             Column {
               spacing: Style.space(5)
               Text {
-                text: "FEELS"
+                text: Commons.I18n.t("weather.feels")
                 color: Qt.darker(root.bar.foreground, 1.5)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -714,7 +714,7 @@ Panel {
             Column {
               spacing: Style.space(5)
               Text {
-                text: "WIND"
+                text: Commons.I18n.t("weather.wind")
                 color: Qt.darker(root.bar.foreground, 1.5)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -732,7 +732,7 @@ Panel {
             Column {
               spacing: Style.space(5)
               Text {
-                text: "HUMID"
+                text: Commons.I18n.t("weather.humid")
                 color: Qt.darker(root.bar.foreground, 1.5)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -805,7 +805,7 @@ Panel {
 
       Text {
         visible: !root.current
-        text: "Fetching forecast…"
+        text: Commons.I18n.t("weather.fetching")
         color: Qt.darker(root.bar.foreground, 1.5)
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.bodySmall

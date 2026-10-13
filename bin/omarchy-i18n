@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# omarchy:summary=Print a user-facing string in the current language
+# omarchy:args=<key> [printf-args...]
+# omarchy:hidden=true
+
+set -euo pipefail
+
+# Looks up <key> in default/i18n/<language>/cli.json, falling back to the
+# English catalog and finally to the key itself. Remaining arguments are
+# substituted into the string with printf, so catalog entries use %s-style
+# placeholders. English is the default language.
+
+key=${1:-}
+if [[ -z $key ]]; then
+  echo "Usage: omarchy-i18n <key> [printf-args...]" >&2
+  exit 1
+fi
+shift
+
+language=$(omarchy-language)
+
+string=""
+for code in "$language" en; do
+  catalog=$OMARCHY_PATH/default/i18n/$code/cli.json
+  if [[ -f $catalog ]]; then
+    string=$(jq -r --arg key "$key" '.[$key] // empty' "$catalog")
+    [[ -n $string ]] && break
+  fi
+done
+
+if [[ -z $string ]]; then
+  string=$key
+fi
+
+# Only run printf substitution when the caller passed arguments, so plain
+# strings containing % (battery percentages and the like) print untouched.
+if (($# > 0)); then
+  # shellcheck disable=SC2059 # the format comes from our own catalogs
+  printf "$string" "$@"
+else
+  printf '%s' "$string"
+fi

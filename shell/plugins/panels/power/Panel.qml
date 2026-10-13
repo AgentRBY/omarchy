@@ -348,7 +348,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
-              text: "Battery"
+              text: Commons.I18n.t("power.battery")
               color: root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.title
@@ -435,8 +435,8 @@ Panel {
           Column {
             width: (parent.width - parent.spacing) / 2
             spacing: Style.spacing.labelGap
-            InfoPair { label: "Battery size"; value: root.batteryInfo.size || "" }
-            InfoPair { label: "Charge cycles"; value: root.batteryInfo.cycles || "—" }
+            InfoPair { label: Commons.I18n.t("power.batterySize"); value: root.batteryInfo.size || "" }
+            InfoPair { label: Commons.I18n.t("power.chargeCycles"); value: root.batteryInfo.cycles || "—" }
           }
 
           Column {
@@ -463,7 +463,7 @@ Panel {
           spacing: Style.space(10)
 
           PanelSectionHeader {
-            text: "POWER PROFILE"
+            text: Commons.I18n.t("power.powerProfile")
             foreground: root.bar.foreground
             fontFamily: root.bar.fontFamily
           }

@@ -616,6 +616,41 @@ function toggleDmenuSelection(selected, value) {
     : selected.filter(function(item) { return item !== value })
 }
 
+// Returns a copy of items with label/title/description replaced from a
+// translation catalog ({id: {label, title, description}}), as shipped in
+// default/i18n/<code>/menu.json. The English label stays searchable by
+// moving it into aliases when the translation differs. Items without a
+// catalog entry pass through untouched, so an incomplete (or missing)
+// catalog degrades to English row by row. Applied to the default items
+// before the user extension merges, so user rows and retitles always win.
+function applyTranslations(items, catalog) {
+  var source = Array.isArray(items) ? items : []
+  var strings = (catalog && typeof catalog === "object") ? catalog : ({})
+  var out = []
+  for (var i = 0; i < source.length; i++) {
+    var entry = source[i]
+    var translated = entry && strings[entry.id]
+    if (!translated || typeof translated !== "object") {
+      out.push(entry)
+      continue
+    }
+    var next = {}
+    for (var k in entry) next[k] = entry[k]
+    if (translated.label) {
+      if (translated.label !== entry.label && entry.label) {
+        var aliases = Array.isArray(entry.aliases) ? entry.aliases.slice() : []
+        if (aliases.indexOf(entry.label) < 0) aliases.push(entry.label)
+        next.aliases = aliases
+      }
+      next.label = translated.label
+    }
+    if (translated.title) next.title = translated.title
+    if (translated.description) next.description = translated.description
+    out.push(next)
+  }
+  return out
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     summonAction: summonAction,
@@ -649,6 +684,7 @@ if (typeof module !== "undefined") {
     dmenuValue: dmenuValue,
     dmenuSelections: dmenuSelections,
     toggleDmenuSelection: toggleDmenuSelection,
-    displayRow: displayRow
+    displayRow: displayRow,
+    applyTranslations: applyTranslations
   }
 }

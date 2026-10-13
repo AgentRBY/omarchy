@@ -1,0 +1,127 @@
+#!/bin/bash
+
+# omarchy:summary=Show or set the Omarchy language and system locale
+# omarchy:args=[<code>|list]
+# omarchy:examples=omarchy language | omarchy language da | omarchy language list
+
+set -euo pipefail
+
+locales_json=${OMARCHY_LOCALES_JSON:-$OMARCHY_PATH/default/i18n/locales.json}
+language_file=${OMARCHY_LANGUAGE_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/language}
+
+known_language() {
+  jq -e --arg code "$1" 'has($code)' "$locales_json" >/dev/null 2>&1
+}
+
+current_language() {
+  local code=""
+  if [[ -f $language_file ]]; then
+    code=$(head -n 1 "$language_file" | tr -d '[:space:]')
+  fi
+
+  if [[ -n $code ]] && known_language "$code"; then
+    echo "$code"
+  else
+    echo "en"
+  fi
+}
+
+locale_for() {
+  jq -r --arg code "$1" '.[$code].locale // empty' "$locales_json"
+}
+
+name_for() {
+  jq -r --arg code "$1" '.[$code].name // empty' "$locales_json"
+}
+
+list_languages() {
+  # One tab-delimited row per language: native name, code, English name.
+  # English first, the rest sorted by English name so the picker is findable
+  # in any language.
+  jq -r '
+    to_entries
+    | map({code: .key, name: .value.name, englishName: .value.englishName})
+    | sort_by(if .code == "en" then "" else .englishName end)
+    | .[]
+    | [.name, .code, .englishName] | @tsv
+  ' "$locales_json"
+}
+
+locale_generated() {
+  # locale -a normalizes punctuation away (en_US.utf8), so compare squashed.
+  local want available
+  want=$(echo "$1" | tr -cd 'a-zA-Z0-9' | tr '[:upper:]' '[:lower:]')
+  available=" $(locale -a 2>/dev/null | tr -cd 'a-zA-Z0-9\n' | tr '[:upper:]' '[:lower:]' | tr '\n' ' ') "
+  [[ $available == *" $want "* ]]
+}
+
+apply_locale() {
+  local locale=$1
+  local locale_conf=${OMARCHY_LOCALE_CONF:-/etc/locale.conf}
+  local locale_gen=${OMARCHY_LOCALE_GEN:-/etc/locale.gen}
+  # The OMARCHY_LOCALE_* overrides point at test files that need no privilege;
+  # the real /etc paths do (same convention as install/config/locale.sh).
+  local -a priv=(sudo)
+  if [[ -n ${OMARCHY_LOCALE_CONF:-} || -n ${OMARCHY_LOCALE_GEN:-} ]]; then
+    priv=()
+  fi
+
+  if ! locale_generated "$locale"; then
+    if grep -q "^#$locale " "$locale_gen" 2>/dev/null; then
+      "${priv[@]}" sed -i "s/^#$locale /$locale /" "$locale_gen"
+    elif ! grep -q "^$locale " "$locale_gen" 2>/dev/null; then
+      echo "$locale UTF-8" | "${priv[@]}" tee -a "$locale_gen" >/dev/null
+    fi
+    "${priv[@]}" locale-gen "$locale" >/dev/null
+  fi
+
+  # Only LANG changes; LC_* lines somebody set stay.
+  if grep -q '^LANG=' "$locale_conf" 2>/dev/null; then
+    "${priv[@]}" sed -i "s/^LANG=.*/LANG=$locale/" "$locale_conf"
+  else
+    echo "LANG=$locale" | "${priv[@]}" tee -a "$locale_conf" >/dev/null
+  fi
+}
+
+set_language() {
+  local code=$1
+  if ! known_language "$code"; then
+    echo "Usage: omarchy-language [<code>|list]" >&2
+    echo "Unknown language code: $code" >&2
+    echo "Run 'omarchy-language list' to see the available codes." >&2
+    exit 1
+  fi
+
+  local locale name
+  locale=$(locale_for "$code")
+  name=$(name_for "$code")
+
+  # Generating a locale needs sudo; when we were launched without a terminal
+  # (from the menu), continue in a floating terminal where sudo can prompt,
+  # the way omarchy-default-browser handles its install step.
+  if [[ ${2:-} != "--apply" ]] && ! locale_generated "$locale" && [[ ! -t 0 ]]; then
+    exec omarchy-launch-floating-terminal-with-presentation omarchy-language "$code" --apply
+  fi
+
+  mkdir -p "$(dirname "$language_file")"
+  echo "$code" >"$language_file"
+
+  apply_locale "$locale"
+
+  omarchy-notification-send "$(omarchy-i18n language.changed "$name")" "$(omarchy-i18n language.relogin)"
+}
+
+case "${1:-}" in
+"")
+  current_language
+  ;;
+list)
+  list_languages
+  ;;
+locale)
+  locale_for "${2:-$(current_language)}"
+  ;;
+*)
+  set_language "$1" "${2:-}"
+  ;;
+esac

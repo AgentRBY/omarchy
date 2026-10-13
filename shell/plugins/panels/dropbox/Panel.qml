@@ -317,7 +317,7 @@ Panel {
             Column {
               width: parent.width
               spacing: Style.spacing.labelGap
-              InfoPair { label: "Stored"; value: Model.usageText(dropbox.usedBytes, dropbox.quotaBytes, dropbox.quotaKnown) }
+              InfoPair { label: Commons.I18n.t("dropbox.stored"); value: Model.usageText(dropbox.usedBytes, dropbox.quotaBytes, dropbox.quotaKnown) }
             }
           }
 
@@ -332,7 +332,7 @@ Panel {
             spacing: Style.space(10)
 
             PanelSectionHeader {
-              text: "RECENT FILES"
+              text: Commons.I18n.t("dropbox.recentFiles")
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
@@ -340,7 +340,7 @@ Panel {
             Text {
               visible: dropbox.files.length === 0
               width: parent.width
-              text: "No synced files found."
+              text: Commons.I18n.t("dropbox.noFiles")
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body

@@ -325,7 +325,7 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              text: "No matches for “" + root.filterText + "”"
+              text: Commons.I18n.t("emojis.noMatches").arg(root.filterText)
               color: root.foreground
               opacity: 0.7
               font.family: root.fontFamily

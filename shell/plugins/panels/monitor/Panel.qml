@@ -289,7 +289,7 @@ Panel {
   // span ~10–20 points so casual tweaks change the label, while small
   // nudges within one band don't.
   function brightnessName(percent) {
-    return Model.brightnessName(percent)
+    return Model.brightnessName(percent, Commons.I18n.t)
   }
 
   function updateDisplays(displaysJson) {
@@ -559,7 +559,7 @@ Panel {
               spacing: Style.space(2)
 
               Text {
-                text: "Display"
+                text: Commons.I18n.t("monitor.display")
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.title
@@ -605,7 +605,7 @@ Panel {
 
               PanelSectionHeader {
                 id: brightnessHeader
-                text: "BRIGHTNESS"
+                text: Commons.I18n.t("monitor.brightness")
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
                 anchors.left: parent.left
@@ -678,7 +678,7 @@ Panel {
 
               PanelSectionHeader {
                 id: textSizeHeader
-                text: "TEXT SIZE"
+                text: Commons.I18n.t("monitor.textSize")
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
                 anchors.left: parent.left
@@ -750,7 +750,7 @@ Panel {
 
               PanelSectionHeader {
                 id: scaleHeader
-                text: "SCALE"
+                text: Commons.I18n.t("monitor.scale")
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
                 anchors.left: parent.left
@@ -812,7 +812,7 @@ Panel {
             visible: root.displays.length > 1
 
             PanelSectionHeader {
-              text: "DISPLAYS"
+              text: Commons.I18n.t("monitor.displays")
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
             }

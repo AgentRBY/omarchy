@@ -538,7 +538,7 @@ Panel {
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               anchors.margins: Style.space(12)
-              text: "Tailscale CLI is not installed or not on PATH."
+              text: Commons.I18n.t("tailscale.notInstalled")
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -557,7 +557,7 @@ Panel {
             spacing: Style.space(10)
 
             PanelSectionHeader {
-              text: "CONNECTIONS"
+              text: Commons.I18n.t("tailscale.connections")
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
@@ -590,7 +590,7 @@ Panel {
             spacing: Style.space(10)
 
             PanelSectionHeader {
-              text: "EXIT NODES"
+              text: Commons.I18n.t("tailscale.exitNodes")
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
@@ -620,7 +620,7 @@ Panel {
                   id: mullvadSearch
                   width: parent.width
                   foreground: root.foreground
-                  placeholderText: "Search regions"
+                  placeholderText: Commons.I18n.t("tailscale.searchRegions")
                   text: root.mullvadQuery
                   onTextChanged: {
                     root.mullvadQuery = text
@@ -656,7 +656,7 @@ Panel {
                 Text {
                   visible: root.filteredMullvadRegions.length === 0
                   width: parent.width
-                  text: "No Mullvad regions found."
+                  text: Commons.I18n.t("tailscale.noRegions")
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -694,7 +694,7 @@ Panel {
             spacing: Style.space(10)
 
             PanelSectionHeader {
-              text: "MACHINES"
+              text: Commons.I18n.t("tailscale.machines")
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
@@ -702,7 +702,7 @@ Panel {
             Text {
               visible: tailscale.installed && tailscale.active && tailscale.peers.length === 0
               width: parent.width
-              text: "No machines found on this tailnet."
+              text: Commons.I18n.t("tailscale.noMachines")
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -795,7 +795,7 @@ Panel {
 
         Text {
           Layout.fillWidth: true
-          text: "Authorize Tailscale operator"
+          text: Commons.I18n.t("tailscale.authorizeOperator")
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -804,7 +804,7 @@ Panel {
 
         Text {
           Layout.fillWidth: true
-          text: "Allow this user to operate this Tailscale profile"
+          text: Commons.I18n.t("tailscale.authorizeHelp")
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

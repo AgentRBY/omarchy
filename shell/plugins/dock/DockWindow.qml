@@ -550,14 +550,14 @@ PanelWindow {
 
       MenuRow {
         visible: window.settingsMenu
-        text: "Auto-hide"
+        text: Commons.I18n.t("dock.autoHide")
         checked: window.autohide
         onTriggered: Util.execDetached("omarchy-dock autohide " + (window.autohide ? "off" : "on"))
       }
 
       MenuRow {
         visible: menu.hasEntry && menu.running
-        text: "New Window"
+        text: Commons.I18n.t("dock.newWindow")
         onTriggered: window.dock.launch(menu.item)
       }
 
@@ -569,7 +569,7 @@ PanelWindow {
 
       MenuRow {
         visible: menu.running
-        text: "Quit"
+        text: Commons.I18n.t("dock.quit")
         onTriggered: window.dock.quit(menu.item)
       }
     }

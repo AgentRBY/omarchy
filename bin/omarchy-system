@@ -48,7 +48,7 @@ elif [[ ${2:-} == "--execute" ]]; then
   fi
   status=$?
   if (( status != 0 )); then
-    omarchy-notification-send -u critical "${action^} failed" "Could not complete $action. Please try again."
+    omarchy-notification-send -u critical "$(omarchy-i18n system.actionFailed "${action^}")" "$(omarchy-i18n system.couldNotComplete "$action")"
     exit "$status"
   fi
 elif [[ -z ${2:-} ]]; then

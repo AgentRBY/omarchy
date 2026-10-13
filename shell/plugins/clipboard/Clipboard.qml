@@ -132,7 +132,7 @@ Item {
   }
 
   function rebuildDisplay() {
-    var rows = ClipboardHistory.displayRows(root.history, root.filterText, 50)
+    var rows = ClipboardHistory.displayRows(root.history, root.filterText, 50, Commons.I18n.t)
 
     displayModel.clear()
     for (var i = 0; i < rows.length; i++) {
@@ -399,7 +399,7 @@ Item {
           anchors.fill: parent
           opened: root.clearConfirmOpen
           z: 10
-          message: "Delete entire clipboard history?"
+          message: Commons.I18n.t("clipboard.deleteHistory")
           confirmText: "Delete"
           background: root.background
           foreground: root.foreground

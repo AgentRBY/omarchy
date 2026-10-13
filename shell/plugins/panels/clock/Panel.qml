@@ -352,7 +352,7 @@ Panel {
 
               PanelToolTip {
                 visible: heroMouse.containsMouse
-                text: "Back to today"
+                text: Commons.I18n.t("clock.backToToday")
                 fontFamily: root.contentFontFamily
               }
             }
@@ -385,7 +385,7 @@ Panel {
 
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
-                  text: "BORN"
+                  text: Commons.I18n.t("clock.born")
                   color: Qt.darker(root.contentForeground, 1.5)
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -396,7 +396,7 @@ Panel {
                   id: bornField
                   width: Style.space(70)
                   anchors.verticalCenter: parent.verticalCenter
-                  placeholderText: "year"
+                  placeholderText: Commons.I18n.t("clock.year")
                   foreground: root.contentForeground
                   font.family: root.contentFontFamily
                   inputMethodHints: Qt.ImhDigitsOnly
@@ -408,7 +408,7 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                   anchors.verticalCenterOffset: 0
                   leftPadding: Style.space(6)
-                  text: "LIVE TO"
+                  text: Commons.I18n.t("clock.liveTo")
                   color: Qt.darker(root.contentForeground, 1.5)
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -495,7 +495,7 @@ Panel {
                 id: lifeLabel
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
-                text: "LIFE"
+                text: Commons.I18n.t("clock.life")
                 color: Qt.darker(root.contentForeground, 1.5)
                 font.family: root.contentFontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -614,7 +614,7 @@ Panel {
 
                   PanelToolTip {
                     visible: weekStartMouse.containsMouse
-                    text: "Start weeks on " + root.nextWeekStartLabel
+                    text: Commons.I18n.t("clock.startWeeksOn").arg(root.nextWeekStartLabel)
                     fontFamily: root.contentFontFamily
                   }
                 }

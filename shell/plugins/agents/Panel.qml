@@ -347,9 +347,9 @@ Panel {
 
   // A few ways into making Omarchy your own, handed to the default agent.
   readonly property var starterPrompts: [
-    { glyph: "󰏘", label: "Theme", prompt: "Make me a new Omarchy theme. Ask me what look or inspiration I have in mind, then build it following the Omarchy skill's theming guide and switch to it." },
-    { glyph: "󰐱", label: "Plugin", prompt: "Make me a new Omarchy shell plugin. Ask me what I'd like it to do, then build it following the Omarchy skill's plugin guide and enable it." },
-    { glyph: "󰣆", label: "App", prompt: "Make me a new app for my Omarchy desktop. Ask me what it should do, then build it following the omarchy-app skill and install it so it shows up in the app launcher." }
+    { glyph: "󰏘", label: Commons.I18n.t("agents.theme"), prompt: "Make me a new Omarchy theme. Ask me what look or inspiration I have in mind, then build it following the Omarchy skill's theming guide and switch to it." },
+    { glyph: "󰐱", label: Commons.I18n.t("agents.plugin"), prompt: "Make me a new Omarchy shell plugin. Ask me what I'd like it to do, then build it following the Omarchy skill's plugin guide and enable it." },
+    { glyph: "󰣆", label: Commons.I18n.t("agents.app"), prompt: "Make me a new app for my Omarchy desktop. Ask me what it should do, then build it following the omarchy-app skill and install it so it shows up in the app launcher." }
   ]
 
   function startPrompt(prompt) {
@@ -952,7 +952,7 @@ Panel {
           PanelHero {
             id: hero
             width: parent.width
-            title: "Agents"
+            title: Commons.I18n.t("agents.title")
             meta: root.heroPhrase
             foreground: root.foreground
             fontFamily: root.fontFamily
@@ -1024,7 +1024,7 @@ Panel {
             spacing: Style.space(12)
 
             PanelSectionHeader {
-              text: "MAKE SOMETHING COOL"
+              text: Commons.I18n.t("agents.makeSomethingCool")
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
@@ -1078,7 +1078,7 @@ Panel {
     Text {
       visible: root.blankSlate && root.picking
       width: parent.width
-      text: "Sign in to an AI coding subscription, and this panel keeps track of how much of it you have left."
+      text: Commons.I18n.t("agents.signInIntro")
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -1150,7 +1150,7 @@ Panel {
 
       Text {
         width: parent.width
-        text: "Name this account. It signs in through a private window, so your browser's current account isn't picked up."
+        text: Commons.I18n.t("agents.nameAccount")
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -1160,7 +1160,7 @@ Panel {
       TextField {
         id: addNameField
         width: parent.width
-        placeholderText: "Work"
+        placeholderText: Commons.I18n.t("agents.placeholderWork")
         foreground: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
@@ -1192,7 +1192,7 @@ Panel {
         spacing: Style.space(4)
 
         Text {
-          text: "Confirm this code in your browser"
+          text: Commons.I18n.t("agents.confirmCode")
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -1216,7 +1216,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: "If the page shows a code instead of finishing, paste it here."
+          text: Commons.I18n.t("agents.pasteCode")
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -1226,7 +1226,7 @@ Panel {
         TextField {
           id: pasteField
           width: parent.width
-          placeholderText: "Code"
+          placeholderText: Commons.I18n.t("agents.placeholderCode")
           foreground: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -1237,7 +1237,7 @@ Panel {
 
       TextLink {
         visible: root.addUrl !== ""
-        text: "Open the sign-in page again"
+        text: Commons.I18n.t("agents.reopenSignIn")
         onClicked: root.reopenSignIn()
       }
     }
@@ -1343,7 +1343,7 @@ Panel {
     TextLink {
       visible: !section.multi && root.needsSignIn(section.provider)
       picked: root.hasKey("providerSignin", section.providerIndex)
-      text: "Sign-in required"
+      text: Commons.I18n.t("agents.signInRequired")
       idleColor: root.urgent
       tooltip: "Sign in to " + (section.provider ? section.provider.providerName : "") + " again"
       onClicked: root.signInAgain(section.provider, null)
@@ -1411,7 +1411,7 @@ Panel {
           textFormat: Text.PlainText
           width: parent.width * 0.3
           anchors.verticalCenter: parent.verticalCenter
-          text: "Balance"
+          text: Commons.I18n.t("agents.balance")
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -1581,7 +1581,7 @@ Panel {
 
     PanelToolTip {
       visible: tileMouse.containsMouse
-      text: "Start your default agent on a new " + tile.title.toLowerCase()
+      text: Commons.I18n.t("agents.startOnNew").arg(tile.title.toLowerCase())
     }
   }
 
@@ -1785,7 +1785,7 @@ Panel {
           id: signInLink
           visible: root.needsSignIn(head.account)
           picked: head.pickedKind === "signin"
-          text: "Sign-in required"
+          text: Commons.I18n.t("agents.signInRequired")
           idleColor: root.urgent
           tooltip: "Sign in to this account again"
           onClicked: root.signInAgain(head.owner, head.account)
@@ -1823,7 +1823,7 @@ Panel {
         id: headActive
         visible: head.isActive
         anchors.right: parent.right
-        text: "ACTIVE"
+        text: Commons.I18n.t("agents.active")
         color: Commons.Color.accent
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -1871,7 +1871,7 @@ Panel {
 
     Text {
       id: unavailableLabel
-      text: "Usage unavailable"
+      text: Commons.I18n.t("agents.usageUnavailable")
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall

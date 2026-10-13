@@ -1364,7 +1364,7 @@ Panel {
         Button {
           id: portalAction
           width: parent.width
-          text: "Open Captive Portal"
+          text: Commons.I18n.t("network.openCaptivePortal")
           iconText: "󰏌"
           foreground: root.bar.urgent
           accent: root.bar.urgent
@@ -1383,7 +1383,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: "Sign in or accept this network’s terms to access the internet."
+          text: Commons.I18n.t("network.captivePortalHelp")
           textFormat: Text.PlainText
           wrapMode: Text.WordWrap
           color: root.bar.foreground
@@ -1409,34 +1409,34 @@ Panel {
           // opened, once the first probe returned, shoving everything below
           // them down. They now hold their place and read "--" until there is
           // a sample.
-          InfoLabel { text: "Ping" }
+          InfoLabel { text: Commons.I18n.t("network.ping") }
           DetailValue {
             text: root.formatPingLatency(root.internetPingLatency)
             color: root.internetPingPacketLoss > 0 ? root.bar.urgent : root.bar.foreground
           }
-          InfoLabel { text: "Packet Loss" }
+          InfoLabel { text: Commons.I18n.t("network.packetLoss") }
           DetailValue {
             text: root.formatPacketLoss(root.internetPingPacketLoss)
             color: root.internetPingPacketLoss > 0 ? root.bar.urgent : root.bar.foreground
           }
 
-          InfoLabel { text: "Receiving" }
+          InfoLabel { text: Commons.I18n.t("network.receiving") }
           DetailValue { text: root.hasTransferStats ? root.formatRate(root.downloadRate) : "--" }
-          InfoLabel { text: "Sending" }
+          InfoLabel { text: Commons.I18n.t("network.sending") }
           DetailValue { text: root.hasTransferStats ? root.formatRate(root.uploadRate) : "--" }
 
-          InfoLabel { text: "Downloaded" }
+          InfoLabel { text: Commons.I18n.t("network.downloaded") }
           DetailValue { text: root.hasTransferStats ? root.formatBytes(parseFloat(root.info.rx_bytes || "0")) : "--" }
-          InfoLabel { text: "Uploaded" }
+          InfoLabel { text: Commons.I18n.t("network.uploaded") }
           DetailValue { text: root.hasTransferStats ? root.formatBytes(parseFloat(root.info.tx_bytes || "0")) : "--" }
 
-          InfoLabel { text: "IP Address" }
+          InfoLabel { text: Commons.I18n.t("network.ipAddress") }
           DetailValue {
             text: root.info.ip || "--"
             copyable: !!root.info.ip
             tooltipText: "Copy IP"
           }
-          InfoLabel { text: "Gateway" }
+          InfoLabel { text: Commons.I18n.t("network.gateway") }
           DetailValue {
             text: root.info.gateway || "--"
             copyable: !!root.info.gateway
@@ -1481,7 +1481,7 @@ Panel {
 
             PanelSectionHeader {
               id: bandAutoLabel
-              text: "AUTOMATIC"
+              text: Commons.I18n.t("network.automatic")
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
               anchors.verticalCenter: parent.verticalCenter
@@ -1586,7 +1586,7 @@ Panel {
         spacing: Style.space(10)
 
         PanelSectionHeader {
-          text: "DNS PROVIDER"
+          text: Commons.I18n.t("network.dnsProvider")
           foreground: root.bar.foreground
           fontFamily: root.bar.fontFamily
         }
@@ -1642,7 +1642,7 @@ Panel {
 
       PanelSectionHeader {
         visible: root.wifiStationAvailable && root.scanning
-        text: "SCANNING WI-FI…"
+        text: Commons.I18n.t("network.scanningWifi")
         foreground: root.bar.foreground
         fontFamily: root.bar.fontFamily
       }
@@ -1950,7 +1950,7 @@ Panel {
 
         PanelToolTip {
           visible: rightMouse.containsMouse || row.forgetFocused
-          text: "Forget network"
+          text: Commons.I18n.t("network.forgetNetwork")
           fontFamily: root.bar.fontFamily
         }
       }
@@ -2026,7 +2026,7 @@ Panel {
         anchors.right: connectPwBtn.left
         anchors.top: parent.top
         anchors.rightMargin: Style.space(6)
-        placeholderText: "Identity (user@domain)"
+        placeholderText: Commons.I18n.t("network.identity")
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         foreground: root.bar.foreground
@@ -2052,7 +2052,7 @@ Panel {
         anchors.bottomMargin: Style.spacing.rowGap / 2
         anchors.rightMargin: Style.space(6)
         password: true
-        placeholderText: "Passphrase"
+        placeholderText: Commons.I18n.t("network.passphrase")
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         foreground: root.bar.foreground

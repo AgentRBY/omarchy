@@ -741,7 +741,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
-              text: "Bluetooth"
+              text: Commons.I18n.t("bluetooth.title")
               color: root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.title
@@ -778,7 +778,7 @@ Panel {
           spacing: Style.space(10)
 
           PanelSectionHeader {
-            text: "CONNECTED"
+            text: Commons.I18n.t("bluetooth.connected")
             foreground: root.bar.foreground
             fontFamily: root.bar.fontFamily
           }

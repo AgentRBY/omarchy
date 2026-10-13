@@ -127,25 +127,35 @@ function isImagePath(path) {
   return /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(String(path || ""))
 }
 
-function fileEntryText(entry) {
+// tr is an optional translate(key, english) from the QML side (I18n.t);
+// without it the English text stands, which is what the Node tests assert.
+function translator(tr) {
+  return typeof tr === "function" ? tr : function(key, english) { return english }
+}
+
+function fileEntryText(entry, tr) {
   var paths = filePaths(entry)
   if (paths.length === 0) return ""
   if (paths.length === 1) return fileName(paths[0])
-  return paths.length + " files"
+  return translator(tr)("clipboard.files", "%1 files").replace("%1", paths.length)
 }
 
-function imagePreviewText(entry) {
+function imagePreviewText(entry, tr) {
+  var t = translator(tr)
   var timestamp = String(entry && entry.capturedAt || "")
-  if (!timestamp) return "Image"
+  if (!timestamp) return t("clipboard.image", "Image")
 
-  var label = String(entry && entry.mime || "") === "image/png" ? "Screenshot" : "Image"
-  return label + " from " + timestamp
+  var screenshot = String(entry && entry.mime || "") === "image/png"
+  var pattern = screenshot
+    ? t("clipboard.screenshotFrom", "Screenshot from %1")
+    : t("clipboard.imageFrom", "Image from %1")
+  return pattern.replace("%1", timestamp)
 }
 
-function previewText(entry) {
+function previewText(entry, tr) {
   if (!entry) return ""
-  if (entry.type === "image") return imagePreviewText(entry)
-  var fileText = fileEntryText(entry)
+  if (entry.type === "image") return imagePreviewText(entry, tr)
+  var fileText = fileEntryText(entry, tr)
   if (fileText) return fileText
   return String(entry.text || "").replace(/\s+/g, " ")
 }
@@ -171,7 +181,7 @@ function cappedEntry(entry) {
   return { type: "text", text: entry.text.slice(0, cut > 0 ? cut : displayTextLimit) }
 }
 
-function displayRows(history, query, limit) {
+function displayRows(history, query, limit, tr) {
   var values = Array.isArray(history) ? history : []
   var needle = String(query || "").trim().toLowerCase()
   var max = limit === undefined || limit === null ? 50 : Number(limit)
@@ -193,7 +203,7 @@ function displayRows(history, query, limit) {
     rows.push({
       entryType: isFile ? "file" : entry.type,
       fullText: isImage ? "" : fullText(entry),
-      previewText: previewText(entry),
+      previewText: previewText(entry, tr),
       previewImage: previewPath,
       path: isImage ? String(entry.path || "") : (isFile && paths.length === 1 ? paths[0] : ""),
       mime: isImage ? String(entry.mime || "image/png") : "text/plain",

@@ -28,9 +28,9 @@ Item {
   property var options: []
   property var optionsCommand: []
   property string optionsCommandCwd: ""
-  property string placeholderText: "Search..."
-  property string emptyText: "No options"
-  property string noSelectionText: "None selected"
+  property string placeholderText: Commons.I18n.t("common.search")
+  property string emptyText: Commons.I18n.t("common.noOptions")
+  property string noSelectionText: Commons.I18n.t("common.noneSelected")
   property string triggerLabel: ""
   property bool showLabel: true
 
@@ -493,7 +493,7 @@ Item {
               textFormat: Text.PlainText
               anchors.centerIn: parent
               visible: resultList.count === 0
-              text: root.loadingOptions ? "Loading…" : (root.optionsError !== "" ? root.optionsError : root.emptyText)
+              text: root.loadingOptions ? Commons.I18n.t("common.loading") : (root.optionsError !== "" ? root.optionsError : root.emptyText)
               color: Qt.darker(root.foreground, 1.6)
               font.family: root.fontFamily
               font.pixelSize: Style.font.body

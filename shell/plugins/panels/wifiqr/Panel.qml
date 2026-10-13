@@ -305,7 +305,7 @@ Item {
 
           Text {
             visible: root.loading
-            text: "Generating QR code…"
+            text: I18n.t("wifiqr.generating")
             color: root.onScrimDim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -328,7 +328,7 @@ Item {
 
           Text {
             visible: root.showingQr
-            text: "Scan to join this network"
+            text: I18n.t("wifiqr.scanToJoin")
             color: root.onScrimDim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
