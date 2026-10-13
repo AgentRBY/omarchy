@@ -341,7 +341,7 @@ PanelWindow {
       y: window.iconY
       width: window.iconSize
       height: window.iconSize
-      scale: appsSlot.pressed ? 0.92 : (appsSlot.hovered ? 1.15 : 1)
+      scale: appsSlot.hovered ? 1.15 : 1
       transformOrigin: window.popOrigin
 
       Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
@@ -468,7 +468,7 @@ PanelWindow {
       smooth: true
       mipmap: true
       opacity: appSlot.launching ? appSlot.pulse : (appSlot.windowCount > 0 ? 1 : window.idleOpacity)
-      scale: appSlot.lifted ? 1.15 : (appSlot.pressed ? 0.92 : (appSlot.hovered ? 1.15 : 1))
+      scale: appSlot.lifted || appSlot.hovered ? 1.15 : 1
       transformOrigin: window.popOrigin
 
       Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
