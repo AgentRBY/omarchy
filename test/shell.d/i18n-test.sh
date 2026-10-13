@@ -17,13 +17,10 @@ const registry = readJson('locales.json')
 const codes = Object.keys(registry)
 assertEqual(codes.length, 50, 'i18n registry holds 50 languages')
 assert(codes[0] === 'en', 'i18n registry lists English first (the default)')
-for (const code of codes) {
-  const entry = registry[code]
-  assert(/^[a-z]{2,3}(-[A-Za-z]{2})?$/.test(code), `registry code ${code} is a language tag`)
-  for (const field of ['name', 'englishName', 'formatLocale', 'locale'])
-    assert(typeof entry[field] === 'string' && entry[field].length > 0, `registry ${code} has ${field}`)
-  assert(/\.UTF-8$/.test(entry.locale), `registry ${code} locale is UTF-8`)
-}
+const badRegistry = codes.filter((code) => !/^[a-z]{2,3}(-[A-Za-z]{2})?$/.test(code)
+  || ['name', 'englishName', 'formatLocale', 'locale'].some((f) => typeof registry[code][f] !== 'string' || registry[code][f].length === 0)
+  || !/\.UTF-8$/.test(registry[code].locale))
+assert(badRegistry.length === 0, 'every registry entry is complete with a UTF-8 locale', JSON.stringify(badRegistry))
 
 // The English menu catalog must mirror the shipped menu definition, so a
 // relabeled row cannot leave translations pointing at stale English.
@@ -31,29 +28,26 @@ const enMenu = readJson('en/menu.json')
 const menuItems = MenuModel.parseMenuJsonc(fs.readFileSync(path.join(root, 'default/omarchy/omarchy-menu.jsonc'), 'utf8'))
 assertEqual(enMenu.root.label, 'Go', 'English menu catalog carries the injected root label')
 assert(menuItems.some((item) => item.id === 'setup.language' && item.provider === 'languages'), 'Setup > Language row uses the languages provider')
-for (const item of menuItems) {
-  const source = enMenu[item.id]
-  assert(source, `English menu catalog has ${item.id}`)
-  assertEqual(source.label, item.label, `English menu catalog label for ${item.id} matches the menu`)
-  if (item.title) assertEqual(source.title, item.title, `English menu catalog title for ${item.id} matches the menu`)
-}
-for (const id of Object.keys(enMenu))
-  assert(id === 'root' || menuItems.some((item) => item.id === id), `English menu catalog has no orphan id ${id}`)
+const staleMenu = menuItems.filter((item) => !enMenu[item.id] || enMenu[item.id].label !== item.label || (item.title && enMenu[item.id].title !== item.title))
+assert(staleMenu.length === 0, 'English menu catalog mirrors the menu definition', JSON.stringify(staleMenu.map((i) => i.id)))
+const orphanMenu = Object.keys(enMenu).filter((id) => id !== 'root' && !menuItems.some((item) => item.id === id))
+assert(orphanMenu.length === 0, 'English menu catalog has no orphan ids', JSON.stringify(orphanMenu))
 
 const placeholders = (value) => (String(value).match(/%(\d|s|%)/g) || []).sort().join(' ')
 function assertCatalogMirrors(kind, english, catalog, code) {
+  const problems = []
   const enKeys = Object.keys(english).sort()
-  assertDeepEqual(Object.keys(catalog).sort(), enKeys, `${code}/${kind}.json has exactly the English keys`)
+  if (JSON.stringify(Object.keys(catalog).sort()) !== JSON.stringify(enKeys)) problems.push('key set differs')
   for (const key of enKeys) {
+    if (!Object.hasOwn(catalog, key)) continue
     if (kind === 'menu') {
-      assertDeepEqual(Object.keys(catalog[key]).sort(), Object.keys(english[key]).sort(), `${code}/menu.json ${key} has the English fields`)
-      for (const field of Object.keys(english[key]))
-        assert(typeof catalog[key][field] === 'string' && catalog[key][field].length > 0, `${code}/menu.json ${key}.${field} is translated`)
-    } else {
-      assert(typeof catalog[key] === 'string' && catalog[key].length > 0, `${code}/${kind}.json ${key} is translated`)
-      assertEqual(placeholders(catalog[key]), placeholders(english[key]), `${code}/${kind}.json ${key} keeps the English placeholders`)
-    }
+      if (JSON.stringify(Object.keys(catalog[key]).sort()) !== JSON.stringify(Object.keys(english[key]).sort())) problems.push(`${key}: fields differ`)
+      else if (Object.keys(english[key]).some((f) => typeof catalog[key][f] !== 'string' || catalog[key][f].length === 0)) problems.push(`${key}: untranslated field`)
+    } else if (typeof catalog[key] !== 'string' || catalog[key].length === 0) problems.push(`${key}: untranslated`)
+    else if (placeholders(catalog[key]) !== placeholders(english[key])) problems.push(`${key}: placeholders differ`)
+    if (problems.length > 5) break
   }
+  assert(problems.length === 0, `${code}/${kind}.json mirrors the English catalog`, JSON.stringify(problems))
 }
 
 const enShell = readJson('en/shell.json')
@@ -81,13 +75,17 @@ function collectKeys(dir, extensions, pattern) {
   walk(dir)
   return found
 }
-const shellKeys = collectKeys(path.join(root, 'shell'), ['.qml', '.js'], /(?:I18n\.t|t)\("([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)"/g)
-for (const key of Object.keys(enShell)) assert(shellKeys.has(key), `shell key ${key} is referenced`)
-for (const key of shellKeys) assert(Object.hasOwn(enShell, key), `referenced shell key ${key} exists in the English catalog`)
+const shellKeys = collectKeys(path.join(root, 'shell'), ['.qml', '.js'], /(?:I18n\.t|[^a-zA-Z_.]t|translator\(tr\))\("([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)"/g)
+const unreferencedShell = Object.keys(enShell).filter((key) => !shellKeys.has(key))
+assert(unreferencedShell.length === 0, 'every shell catalog key is referenced', JSON.stringify(unreferencedShell))
+const unknownShell = [...shellKeys].filter((key) => !Object.hasOwn(enShell, key))
+assert(unknownShell.length === 0, 'every referenced shell key exists in the English catalog', JSON.stringify(unknownShell))
 
 const cliKeys = collectKeys(path.join(root, 'bin'), [''], /omarchy-i18n ([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)/g)
-for (const key of Object.keys(enCli)) assert(cliKeys.has(key), `cli key ${key} is referenced`)
-for (const key of cliKeys) assert(Object.hasOwn(enCli, key), `referenced cli key ${key} exists in the English catalog`)
+const unreferencedCli = Object.keys(enCli).filter((key) => !cliKeys.has(key))
+assert(unreferencedCli.length === 0, 'every cli catalog key is referenced', JSON.stringify(unreferencedCli))
+const unknownCli = [...cliKeys].filter((key) => !Object.hasOwn(enCli, key))
+assert(unknownCli.length === 0, 'every referenced cli key exists in the English catalog', JSON.stringify(unknownCli))
 
 // applyTranslations: translated labels win, English stays searchable,
 // untranslated rows pass through, and nothing mutates the source items.
@@ -121,10 +119,10 @@ assert(englishManual.length > 0, 'English manual exists')
 for (const code of codes) {
   if (code === 'en') continue
   const dir = path.join(manualDir, code)
-  assert(fs.existsSync(dir), `manual/${code} exists`)
-  assertDeepEqual(fs.readdirSync(dir).filter((name) => name.endsWith('.md')).sort(), englishManual, `manual/${code} has every English chapter`)
-  for (const file of englishManual)
-    assert(fs.readFileSync(path.join(dir, file), 'utf8').trim().length > 0, `manual/${code}/${file} is translated`)
+  if (!fs.existsSync(dir)) { assert(false, `manual/${code} exists`); continue }
+  const chapters = fs.readdirSync(dir).filter((name) => name.endsWith('.md')).sort()
+  const empty = englishManual.filter((file) => !chapters.includes(file) || fs.readFileSync(path.join(dir, file), 'utf8').trim().length === 0)
+  assert(JSON.stringify(chapters) === JSON.stringify(englishManual) && empty.length === 0, `manual/${code} has every English chapter translated`, JSON.stringify(empty))
 }
 JS
 

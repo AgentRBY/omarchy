@@ -7,7 +7,7 @@ import Quickshell.Io
 // ~/.config/omarchy/language (omarchy-language owns it); a missing file
 // means English. Strings come from default/i18n/<code>/shell.json layered
 // over the English catalog, so a missing translation falls back to English
-// per string. Use as I18n.t("osd.volume"), with .arg(...) for %1 holes.
+// per string. Use as I18n.t("common.search"), with .arg(...) for %1 holes.
 // The language file is watched, so switching language under Setup
 // re-renders the shell without a restart.
 QtObject {
