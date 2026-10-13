@@ -424,6 +424,26 @@ assert(tiled_max.fullscreen == 1, "a maximized window on a tiled workspace was u
 fi
 pass "a new window on a floating workspace brings a maximized one back to size"
 
+# Apps with float rules of their own keep them on a floating workspace: the
+# open rule passes them over, so they open at their own size and the mode never
+# claims them.
+printf 'o.workspace_mode({ workspace = "1", mode = "floating" })\n' >"$modes_dir/1.lua"
+if ! run_lua '
+o.window("^float-me$", { float = true })
+o.window({ title = "^Picker$" }, { float = true })
+o.window("^tile-me$", { opacity = "0.9" })
+require("default.hypr.workspace-layouts")
+local rule
+for _, candidate in ipairs(state().rules) do
+  if candidate.name == "omarchy-floating-open-1" then rule = candidate end
+end
+assert(rule.match.class == "negative:(?:^float-me$)", "the open rule does not pass over an app that floats on its own: " .. tostring(rule.match.class))
+assert(rule.match.title == "negative:(?:^Picker$)", "the open rule does not pass over a window titled to float: " .. tostring(rule.match.title))
+'; then
+  fail "apps with float rules of their own are left to them on a floating workspace"
+fi
+pass "apps with float rules of their own are left to them on a floating workspace"
+
 # A window moved to a special workspace, like the scratchpad, is left alone.
 printf 'o.workspace_mode({ workspace = "1", mode = "floating" })\n' >"$modes_dir/1.lua"
 if ! run_lua '

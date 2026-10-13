@@ -191,10 +191,26 @@ local function floating_ranges()
   return ranges
 end
 
+-- Matches every window but those of apps with float rules of their own.
+local function not_floating_on_their_own(match)
+  for _, key in ipairs({ "class", "title" }) do
+    local patterns = (o.floating_apps or {})[key] or {}
+    if #patterns > 0 then
+      local alternatives = {}
+      for _, pattern in ipairs(patterns) do
+        table.insert(alternatives, "(?:" .. pattern .. ")")
+      end
+      match[key] = "negative:" .. table.concat(alternatives, "|")
+    end
+  end
+  return match
+end
+
 -- A window opening on a floating workspace floats from its first frame, at the
 -- size the mode gives it, so it pops in from its own middle the way a tiled
 -- window does, instead of opening tiled and shrinking into place. Modal
--- dialogs float on their own account and are left to it.
+-- dialogs, and apps with float rules of their own, float on their own account
+-- and are left to it, at their own size and outside the mode's claim.
 local function sync_open_rules()
   local ranges = floating_ranges()
 
@@ -202,7 +218,7 @@ local function sync_open_rules()
     hl.window_rule({
       name = OPEN_RULE .. i,
       enabled = true,
-      match = { workspace = string.format("r[%d-%d]", range[1], range[2]), modal = false },
+      match = not_floating_on_their_own({ workspace = string.format("r[%d-%d]", range[1], range[2]), modal = false }),
       float = true,
       size = "min(1100,monitor_w*0.64) min(760,monitor_h*0.68)",
       center = true,

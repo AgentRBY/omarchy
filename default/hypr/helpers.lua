@@ -267,6 +267,10 @@ function o.notify(message)
   return "omarchy-notification-send -u low " .. shell_quote(message)
 end
 
+-- The class and title patterns of apps that float on their own account, so a
+-- floating workspace can leave their floating to them.
+o.floating_apps = { class = {}, title = {} }
+
 function o.window(match, rules)
   rules.match = rules.match or {}
 
@@ -275,6 +279,14 @@ function o.window(match, rules)
   else
     for key, value in pairs(match) do
       rules.match[key] = value
+    end
+  end
+
+  if rules.float == true then
+    for _, key in ipairs({ "class", "title" }) do
+      if type(rules.match[key]) == "string" then
+        table.insert(o.floating_apps[key], rules.match[key])
+      end
     end
   end
 
