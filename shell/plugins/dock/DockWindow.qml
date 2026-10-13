@@ -79,6 +79,7 @@ PanelWindow {
   // After a drop the slots have moved under a pointer that has not, so what
   // they think is hovered is stale until it moves again.
   property bool hoverStale: false
+  property point dropPoint
   // Where an app dragged in from the app grid would land, or -1.
   property int insertIndex: -1
 
@@ -290,7 +291,12 @@ PanelWindow {
     HoverHandler {
       id: bodyHover
       onHoveredChanged: if (!hovered && window.autohide) hideTimer.restart()
-      onPointChanged: if (!window.dragging) window.hoverStale = false
+      // Only a real move clears it: the release itself reports the pointer too.
+      onPointChanged: {
+        if (!window.hoverStale || window.dragging) return
+        var at = point.position
+        if (Math.hypot(at.x - window.dropPoint.x, at.y - window.dropPoint.y) > Style.space(4)) window.hoverStale = false
+      }
     }
 
     Grid {
@@ -312,7 +318,9 @@ PanelWindow {
   component Slot: Item {
     id: slot
 
-    property bool hovered: mouse.containsMouse && !window.hoverStale
+    // Only the dragged icon is lifted while a drag is on; none of the others
+    // pop as it passes over them.
+    property bool hovered: mouse.containsMouse && !window.hoverStale && !window.dragging
     property bool pressed: mouse.pressed
     property alias mouse: mouse
 
@@ -452,6 +460,7 @@ PanelWindow {
 
     mouse.onReleased: function(event) {
       if (!appSlot.lifted) return
+      window.dropPoint = appSlot.mapToItem(body, event.x, event.y)
       var from = window.dragIndex
       var to = window.dropIndex
       appSlot.dragged = true
