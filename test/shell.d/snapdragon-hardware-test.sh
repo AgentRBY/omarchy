@@ -110,9 +110,9 @@ rm -f "$request"
 
 # Omarchy's own kernel keeps its device trees under its package name. They come
 # before Arch Linux ARM's, so the trees match the kernel that boots.
-mkdir -p "$scratch/dtbroot/qcom" "$scratch/dtbroot/linux-omarchy-n1x/qcom"
+mkdir -p "$scratch/dtbroot/qcom" "$scratch/dtbroot/linux-omarchy/qcom"
 : >"$scratch/dtbroot/qcom/x1e80100-stock.dtb"
-: >"$scratch/dtbroot/linux-omarchy-n1x/qcom/x1e80100-own.dtb"
+: >"$scratch/dtbroot/linux-omarchy/qcom/x1e80100-own.dtb"
 run_dtb_root_setup() (
   omarchy-hw-aarch64-qualcomm() { return 0; }
   omarchy-pkg-add() { :; }
@@ -122,9 +122,9 @@ run_dtb_root_setup() (
   source "$dtb_setup"
 )
 run_dtb_root_setup
-grep -Fq "DeviceTreeAuto=$scratch/dtbroot/linux-omarchy-n1x/qcom/x1e80100-own.dtb" "$scratch/uki-root.conf" ||
+grep -Fq "DeviceTreeAuto=$scratch/dtbroot/linux-omarchy/qcom/x1e80100-own.dtb" "$scratch/uki-root.conf" ||
   fail "Snapdragon DTB setup takes the device trees of Omarchy's own kernel first"
-rm -r "$scratch/dtbroot/linux-omarchy-n1x"
+rm -r "$scratch/dtbroot/linux-omarchy"
 run_dtb_root_setup
 grep -Fq "DeviceTreeAuto=$scratch/dtbroot/qcom/x1e80100-stock.dtb" "$scratch/uki-root.conf" ||
   fail "Snapdragon DTB setup falls back to Arch Linux ARM's device trees"

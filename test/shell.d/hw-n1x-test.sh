@@ -66,14 +66,14 @@ write_sysfs "" "0x8086:0x1234"
 assert_fails hw_n1x "an unrelated machine is not N1x"
 fi
 
-# hardware/n1x.sh contract: guarded by the detector, on linux-omarchy-n1x,
+# hardware/n1x.sh contract: guarded by the detector, on linux-omarchy,
 # console pinned, the normal entry left quiet, a maintained rescue entry with
 # its own cmdline, NVIDIA kept unloaded only on pre-release firmware, and wired
 # before nvidia.sh.
 n1x="$ROOT/install/hardware/n1x.sh"
 assert_succeeds bash -n "$n1x" "n1x.sh parses"
 assert_succeeds grep -Fq 'omarchy-hw-aarch64-n1x || return 0' "$n1x" "n1x.sh is gated on the detector"
-assert_succeeds grep -Fq 'omarchy-pkg-add linux-omarchy-n1x linux-omarchy-n1x-headers' "$n1x" "N1x runs linux-omarchy-n1x"
+assert_succeeds grep -Fq 'omarchy-pkg-add linux-omarchy linux-omarchy-headers' "$n1x" "N1x runs linux-omarchy"
 assert_fails grep -Eq 'pacman -R' "$n1x" "kernels are removed through omarchy-pkg-drop"
 assert_succeeds grep -Fq 'MODULES+=(i2c_mt65xx i2c_hid_acpi)' "$n1x" "the internal keyboard works at the LUKS prompt"
 assert_succeeds grep -Fq 'KERNEL_CMDLINE[default]+=" mem_sleep_default=s2idle"' "$n1x" "suspend to idle instead of the firmware's deep sleep"
@@ -84,9 +84,9 @@ assert_succeeds grep -Fq 'ATTR{vendor}=="0x10de", ATTR{device}=="0x22cf", ATTR{p
 assert_fails grep -Fq 'KERNEL_CMDLINE[default]+=" console=tty0' "$n1x" "the installer pins the console on every aarch64 install, not n1x.sh again"
 assert_succeeds grep -Fq 'console=tty0 acpi=nospcr plymouth.enable=0' "$n1x" "the rescue entry pins the panel console itself"
 assert_succeeds grep -Fq 'rescue_cmdline="$root_cmdline initramfs_async=0 ' "$n1x" "the rescue entry unpacks its initramfs before init, like every other entry"
-assert_succeeds grep -Fq "'MKINITCPIO_FALLBACK=linux-omarchy-n1x'" "$n1x" "rescue entry is the hook-maintained fallback UKI"
+assert_succeeds grep -Fq "'MKINITCPIO_FALLBACK=linux-omarchy'" "$n1x" "rescue entry is the hook-maintained fallback UKI"
 assert_succeeds grep -Fq 'KERNEL_CMDLINE[fallback]=' "$n1x" "rescue entry has its own cmdline key"
-assert_succeeds grep -Fq 'BOOT_ORDER="linux-omarchy-n1x, linux-omarchy-n1x-fallback, *, Snapshots"' "$n1x" "normal entry boots by default, rescue next"
+assert_succeeds grep -Fq 'BOOT_ORDER="linux-omarchy, linux-omarchy-fallback, *, Snapshots"' "$n1x" "normal entry boots by default, rescue next"
 assert_succeeds grep -Fq 'EXCLUDE_SNAPSHOT_ENTRIES="Windows*, windows*, *fallback"' "$n1x" "snapshots leave the rescue entry out"
 assert_succeeds grep -Fq 'install nvidia_drm /bin/false' "$n1x" "NVIDIA stack blocked against explicit loads on pre-release firmware"
 assert_succeeds grep -Fq 'options nvidia_drm modeset=1 fbdev=1' "$n1x" "GPU drives the panel on release firmware"

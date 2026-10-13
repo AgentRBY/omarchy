@@ -7,13 +7,13 @@ omarchy-hw-aarch64-n1x || return 0
 
 echo "Detected NVIDIA N1x platform, applying platform configuration..."
 
-# The ISO installs linux-omarchy-n1x through archinstall's kernels list; make
+# The ISO installs linux-omarchy through archinstall's kernels list; make
 # sure its headers are present for DKMS and that no other kernel is left for
 # Limine to show.
-omarchy-pkg-add linux-omarchy-n1x linux-omarchy-n1x-headers
+omarchy-pkg-add linux-omarchy linux-omarchy-headers
 omarchy-pkg-drop linux linux-headers linux-aarch64 linux-aarch64-headers
 # NVIDIA's linux-n1x preceded it. A machine still running it keeps it as its
-# way back until it has booted linux-omarchy-n1x.
+# way back until it has booted linux-omarchy.
 if [[ $(cat "/usr/lib/modules/$(uname -r)/pkgbase" 2>/dev/null) != "linux-n1x" ]]; then
   omarchy-pkg-drop linux-n1x linux-n1x-headers
 fi
@@ -49,7 +49,7 @@ cat > /etc/limine-entry-tool.d/00-omarchy-n1x-sleep.conf <<'CONF'
 KERNEL_CMDLINE[default]+=" mem_sleep_default=s2idle"
 CONF
 
-# USB4: linux-omarchy-n1x drives the USB4 host routers (patches 1070-1081),
+# USB4: linux-omarchy drives the USB4 host routers (patches 1070-1081),
 # which power_wrap would otherwise release once xHCI is up; the SSPM cannot
 # power them again after that. The tunnel root ports are left unconfigured by
 # the firmware, so reserve bus numbers and windows for docks behind them. A
@@ -101,15 +101,15 @@ fi
 rescue_cmdline="$root_cmdline initramfs_async=0 console=tty0 acpi=nospcr plymouth.enable=0 nomodeset module_blacklist=nvidia,nvidia_drm,nvidia_modeset,nvidia_uvm,nvidia_peermem,nouveau modprobe.blacklist=nvidia,nvidia_drm,nvidia_modeset,nvidia_uvm,nvidia_peermem,nouveau nvidia_drm.modeset=0 systemd.unit=multi-user.target fbcon=map:0 loglevel=7 ignore_loglevel systemd.show_status=1 systemd.log_target=console vt.global_cursor_default=1"
 printf '%s\n' \
   '# N1x: a text-console rescue entry sits right below the normal one; see install/hardware/n1x.sh.' \
-  'MKINITCPIO_FALLBACK=linux-omarchy-n1x' \
+  'MKINITCPIO_FALLBACK=linux-omarchy' \
   "KERNEL_CMDLINE[fallback]=\"$rescue_cmdline\"" \
   'EXCLUDE_SNAPSHOT_ENTRIES="Windows*, windows*, *fallback"' \
-  'BOOT_ORDER="linux-omarchy-n1x, linux-omarchy-n1x-fallback, *, Snapshots"' \
+  'BOOT_ORDER="linux-omarchy, linux-omarchy-fallback, *, Snapshots"' \
   > /etc/limine-entry-tool.d/zz-omarchy-n1x-boot-order.conf
 
-mapfile -t n1x_pkgbase_files < <(grep -lFx linux-omarchy-n1x /usr/lib/modules/*/pkgbase 2>/dev/null || true)
+mapfile -t n1x_pkgbase_files < <(grep -lFx linux-omarchy /usr/lib/modules/*/pkgbase 2>/dev/null || true)
 if (( ${#n1x_pkgbase_files[@]} != 1 )); then
-  echo "Error: expected one installed linux-omarchy-n1x module tree, found ${#n1x_pkgbase_files[@]}" >&2
+  echo "Error: expected one installed linux-omarchy module tree, found ${#n1x_pkgbase_files[@]}" >&2
   return 1
 fi
 n1x_kernel_version=${n1x_pkgbase_files[0]#/usr/lib/modules/}

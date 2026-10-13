@@ -1,7 +1,7 @@
 # Top row for the ASUS ProArt P14 H7407BA (NVIDIA N1x, 0B05:4B42 keyboard on
 # i2c-hid).
 #
-# The keyboard leaves Fn-lock to the host, and hid-asus in linux-omarchy-n1x
+# The keyboard leaves Fn-lock to the host, and hid-asus in linux-omarchy
 # boots it with F1-F12 as function keys. Boot it with media keys instead, as
 # the laptop ships; Fn+Esc still switches to F1-F12. hid-asus loads from the
 # initramfs, so the option takes effect once the initramfs is rebuilt.

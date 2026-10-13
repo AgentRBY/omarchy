@@ -91,7 +91,7 @@ for family in aarch64-qualcomm aarch64-n1x aarch64-gb10; do
     done < <(names_of "$family")
   done
 done
-grep -Fxq linux-omarchy-n1x <<<"$(names_of aarch64-n1x)" || fail "the N1x runs its own kernel"
+grep -Fxq linux-omarchy <<<"$(names_of aarch64-n1x)" || fail "the N1x list names its kernel"
 ! grep -Eq 'proart|asus|xps' <<<"$(names_of aarch64-n1x)" || fail "a single N1x model's packages stay with its hardware setup"
 pass "Snapdragon, the N1x and the GB10 add their own lists, and only they do"
 
