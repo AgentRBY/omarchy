@@ -216,7 +216,8 @@ PanelWindow {
 
   Timer {
     id: hideTimer
-    interval: 600
+    // Long enough to cross a gap between the edge and the icons, no longer.
+    interval: 150
     onTriggered: {
       if (!bodyHover.hovered && !edgeHover.hovered && !window.menuOpen && !window.dragging) window.revealed = false
     }
