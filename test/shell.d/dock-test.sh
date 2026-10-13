@@ -26,10 +26,13 @@ assertDeepEqual(
 assertDeepEqual(dock.pinnedIds({}, { pinned: ['spotify'] }), ['spotify'], 'dock falls back to the default pins')
 assertDeepEqual(dock.pinnedIds({ pinned: [] }, { pinned: ['spotify'] }), [], 'dock keeps an emptied pin list empty')
 
+const app = (key, id, extra) => Object.assign({ key, id, hasEntry: true, workspaceId: 3 }, extra)
 const items = dock.buildItems(['chromium', 'Alacritty'], [
-  { key: 'signal', id: 1 },
-  { key: 'chromium', id: 2 },
-  { key: 'signal', id: 3 }
+  app('signal', 1),
+  app('chromium', 2),
+  app('signal', 3),
+  app('org.omarchy.agent', 4, { hasEntry: false }),
+  app('foot', 5, { workspaceId: -98 })
 ])
 assertDeepEqual(
   items.map(item => [item.key, item.pinned, item.windows.map(window => window.id)]),
@@ -38,8 +41,67 @@ assertDeepEqual(
     ['Alacritty', true, []],
     ['signal', false, [1, 3]]
   ],
-  'dock lists pinned apps first, then running apps grouped by app'
+  'dock lists pinned apps first, then running apps grouped by app, leaving out helpers and special workspaces'
 )
+
+assert(!dock.isDockWindow(app('foot', 6, { workspaceId: 0 })), 'dock leaves out windows without a regular workspace')
+assertEqual(dock.dropIndex(2, 0, 40, 6), 2, 'dock keeps a barely dragged app in its slot')
+assertEqual(dock.dropIndex(2, 85, 40, 6), 4, 'dock lands a dragged app as many slots on as the pointer went')
+assertEqual(dock.dropIndex(2, -500, 40, 6), 0, 'dock lands an app dragged past the start in the first slot')
+assertEqual(dock.dropIndex(2, 500, 40, 6), 5, 'dock lands an app dragged past the end in the last slot')
+
+const dockItems = [
+  { key: 'chromium', pinned: true },
+  { key: 'Alacritty', pinned: true },
+  { key: 'signal', pinned: true },
+  { key: 'slack', pinned: false }
+]
+const allPins = ['chromium', 'Alacritty', 'spotify-not-installed', 'signal']
+assertDeepEqual(
+  dock.movedPins(dockItems, allPins, 2, 0),
+  ['signal', 'chromium', 'Alacritty', 'spotify-not-installed'],
+  'dock reorders pins by drag, keeping pins it does not show'
+)
+assertDeepEqual(
+  dock.movedPins(dockItems, allPins, 3, 1),
+  ['chromium', 'slack', 'Alacritty', 'signal', 'spotify-not-installed'],
+  'dock pins a running app dragged in among the pins'
+)
+
+assertDeepEqual(
+  dock.pinnedAt(dockItems, allPins, 'obsidian', 1),
+  ['chromium', 'obsidian', 'Alacritty', 'signal', 'spotify-not-installed'],
+  'dock pins an app dropped from the app grid where it lands'
+)
+assertDeepEqual(
+  dock.pinnedAt(dockItems, allPins, 'chromium', 3),
+  ['Alacritty', 'signal', 'chromium', 'spotify-not-installed'],
+  'dock moves an app it already shows to where it is dropped'
+)
+
+const terminalEntries = [
+  { id: 'nvim', execString: 'nvim %F', command: ['nvim', '%F'], runInTerminal: true },
+  { id: 'HEY TUI', execString: 'xdg-terminal-exec --app-id=org.omarchy.hey -e hey tui', command: ['xdg-terminal-exec', '--app-id=org.omarchy.hey', '-e', 'hey', 'tui'], runInTerminal: false },
+  { id: 'btop', execString: '/usr/bin/btop', command: ['/usr/bin/btop'], runInTerminal: true }
+]
+assertEqual(dock.claimingEntryId('org.omarchy.nvim', terminalEntries), 'nvim', 'dock gives Neovim launched by the TUI launcher its own entry')
+assertEqual(dock.claimingEntryId('org.omarchy.btop', terminalEntries), 'btop', 'dock matches a terminal entry by its program name')
+assertEqual(dock.claimingEntryId('org.omarchy.hey', terminalEntries), 'HEY TUI', 'dock matches an entry that hands the terminal its app id')
+assertEqual(dock.claimingEntryId('org.omarchy.agent', terminalEntries), '', 'dock leaves an app id no entry claims unclaimed')
+assertEqual(dock.claimingEntryId('Alacritty', terminalEntries), '', 'dock leaves a terminal of its own to its own entry')
+assertDeepEqual(dock.terminalCommand(['nvim', '%F']), ['nvim'], 'dock launches a terminal app without its field codes')
+
+assertDeepEqual(
+  dock.orderItems([{ key: 'chromium' }, { key: 'signal' }, { key: 'slack' }, { key: 'foot' }], ['slack', 'gone', 'chromium']).map(item => item.key),
+  ['slack', 'chromium', 'signal', 'foot'],
+  'dock keeps its own order, with apps that join going at the end'
+)
+assertDeepEqual(
+  dock.orderWithKeyLast(['chromium', 'slack', 'signal'], 'slack'),
+  ['chromium', 'signal', 'slack'],
+  'dock puts an app kept in the dock at the end'
+)
+assertDeepEqual(dock.orderWithKeyLast(['chromium'], 'obsidian'), ['chromium', 'obsidian'], 'dock adds a newly kept app at the end')
 
 assertEqual(dock.nextWindowIndex([]), -1, 'dock has no window to bring forward for an app that is not running')
 assertEqual(dock.nextWindowIndex([false, false]), 0, 'dock brings forward the first window of an unfocused app')
@@ -65,7 +127,7 @@ if omarchy_dock position diagonal 2>/dev/null; then
 fi
 pass "dock position is set and read through omarchy-dock"
 
-[[ $(omarchy_dock pinned | head -1) == "chromium" ]] || fail "dock pins start from the defaults"
+[[ $(omarchy_dock pinned | paste -sd " ") == "org.gnome.Nautilus chromium foot omacalc omawrite X YouTube" ]] || fail "dock pins start from the defaults"
 omarchy_dock unpin spotify >/dev/null
 omarchy_dock pin com.example.App.desktop >/dev/null
 omarchy_dock pin com.example.App >/dev/null
@@ -78,8 +140,49 @@ jq -e '
   fail "dock pins and unpins apps once each" "$(cat "$home/.config/omarchy/shell.json")"
 pass "dock pins and unpins apps through omarchy-dock"
 
+omarchy_dock pinned signal chromium.desktop signal >/dev/null
+[[ $(omarchy_dock pinned | paste -sd ' ') == "signal chromium" ]] ||
+  fail "dock pin order is set in one go" "$(cat "$home/.config/omarchy/shell.json")"
+pass "dock pin order is set through omarchy-dock pinned"
+
+[[ $(omarchy_dock autohide) == "off" ]] || fail "dock auto-hide starts off"
+omarchy_dock autohide toggle >/dev/null
+jq -e '.dock.autohide == true' "$home/.config/omarchy/shell.json" >/dev/null || fail "dock auto-hide toggles on"
+[[ $(omarchy_dock autohide) == "on" ]] || fail "dock auto-hide reads back"
+omarchy_dock autohide off >/dev/null
+jq -e '.dock.autohide == false' "$home/.config/omarchy/shell.json" >/dev/null || fail "dock auto-hide turns off"
+if omarchy_dock autohide sometimes 2>/dev/null; then
+  fail "dock auto-hide takes only on, off, or toggle"
+fi
+pass "dock auto-hide is set through omarchy-dock autohide"
+
 # The dock only shows on floating workspaces, and gets out of the way of a
 # fullscreen window.
 grep -qF 'dock.isFloating(workspaceId) && !(workspace && workspace.hasFullscreen)' "$ROOT/shell/plugins/dock/DockWindow.qml" ||
   fail "dock shows only on floating workspaces without a fullscreen window"
 pass "dock shows only on floating workspaces without a fullscreen window"
+
+# Minimizing moves a window to the dock's hidden workspace without following
+# it, then focuses the workspace it left, so the next window opens there and
+# not beside the minimized one.
+cat >"$mock_bin/hyprctl" <<STUB
+#!/bin/bash
+case "\$1" in
+  clients) printf '[{"address":"0xabc","workspace":{"id":3}}]\n' ;;
+  activewindow) printf '{"address":"0xdef","workspace":{"id":5}}\n' ;;
+  dispatch) printf '%s\n' "\$2" >>"$TMPDIR/hyprctl.log" ;;
+esac
+STUB
+chmod +x "$mock_bin/hyprctl"
+minimize() { PATH="$mock_bin:$ROOT/bin:$PATH" omarchy-hyprland-window-minimize "$@"; }
+
+minimize 0xabc
+grep -qxF 'hl.dsp.window.move({ workspace = "special:minimized", follow = false, window = "address:0xabc" })' "$TMPDIR/hyprctl.log" ||
+  fail "minimize moves the window to the dock's hidden workspace" "$(cat "$TMPDIR/hyprctl.log")"
+[[ $(tail -1 "$TMPDIR/hyprctl.log") == 'hl.dsp.focus({ workspace = "3" })' ]] ||
+  fail "minimize focuses the workspace the window left" "$(cat "$TMPDIR/hyprctl.log")"
+: >"$TMPDIR/hyprctl.log"
+minimize
+grep -qF 'address:0xdef' "$TMPDIR/hyprctl.log" && [[ $(tail -1 "$TMPDIR/hyprctl.log") == 'hl.dsp.focus({ workspace = "5" })' ]] ||
+  fail "minimize takes the active window when given none" "$(cat "$TMPDIR/hyprctl.log")"
+pass "minimize sends a window to the dock and keeps focus on its workspace"

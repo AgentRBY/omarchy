@@ -68,12 +68,13 @@
   "dock": {
     "position": "bottom",
     "pinned": [
-      "chromium",
-      "Alacritty",
       "org.gnome.Nautilus",
-      "obsidian",
-      "signal",
-      "spotify"
+      "chromium",
+      "foot",
+      "omacalc",
+      "omawrite",
+      "X",
+      "YouTube"
     ]
   },
   "plugins": []

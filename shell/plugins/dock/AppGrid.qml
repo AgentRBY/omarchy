@@ -10,20 +10,44 @@ Item {
   id: root
 
   property var appLibrary: null
+  property var dock: null
 
   property bool opened: false
+  // While an app is dragged out toward the dock, the grid steps aside so the
+  // dock shows through, and the app's icon follows the pointer. The grid keeps
+  // the pointer for as long as the button is held, and tells the dock where it
+  // is.
+  property bool dragging: false
+  property var dragEntry: null
+  property point dragPoint
+  // The app whose menu is open, and where it opened.
+  property var menuEntry: null
+  property point menuPoint
   property string filterText: ""
   property int selectedIndex: 0
   property var apps: []
 
   readonly property int iconSize: Math.round(56 * Style.fontScale)
-  readonly property int cellWidth: Math.round(iconSize * 2)
-  readonly property int cellHeight: iconSize + Style.font.body * 3 + Style.spacing.lg * 2
+  readonly property int labelHeight: Math.ceil(labelMetrics.height) * 2
+  readonly property int cellGutter: Style.spacing.sm
+  readonly property int cellPadding: Style.spacing.lg
+  readonly property int cellWidth: Math.round(iconSize * 2.2)
+  readonly property int cellHeight: cellPadding * 2 + iconSize + Style.spacing.md + labelHeight
+  readonly property int maxColumns: 7
+  readonly property int visibleRows: 4
+  readonly property int borderWidth: Math.max(1, Style.space(2))
   readonly property int contentMargin: Style.spacing.panelPadding
-  readonly property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
-  readonly property int columns: Math.max(1, Math.min(7, Math.floor((panel.width * 0.8 - contentMargin * 2) / cellWidth)))
-  readonly property int cardWidth: columns * cellWidth + contentMargin * 2
-  readonly property int cardHeight: Math.min(panel.height * 0.8, headerHeight + Style.spacing.md + cellHeight * 5 + contentMargin * 2)
+  readonly property int inset: contentMargin + borderWidth
+  readonly property int headerHeight: Math.max(Style.space(36), Style.font.heading + Style.spacing.controlPaddingY * 2)
+  readonly property int headerSpacing: Style.spacing.xl
+  readonly property int screenMargin: Style.space(40)
+
+  // The card fits whole columns, and the grid sits centered in it so any
+  // leftover width splits evenly on both sides.
+  readonly property int cardWidth: Math.min(panel.width - screenMargin * 2, maxColumns * cellWidth + inset * 2)
+  readonly property int columns: Math.max(1, Math.floor((cardWidth - inset * 2) / cellWidth))
+  readonly property int gridWidth: columns * cellWidth
+  readonly property int cardHeight: Math.min(panel.height - screenMargin * 2, inset * 2 + headerHeight + headerSpacing + visibleRows * cellHeight)
 
   function open() {
     root.filterText = ""
@@ -35,7 +59,32 @@ Item {
   }
 
   function close() {
+    if (root.dragging && root.dock) root.dock.endExternalDrag()
     root.opened = false
+    root.dragging = false
+    root.dragEntry = null
+    root.menuEntry = null
+  }
+
+  function dragTo(entry, point) {
+    if (!root.dragging) {
+      root.menuEntry = null
+      root.dragEntry = entry
+      root.dragging = true
+    }
+    root.dragPoint = point
+    if (root.dock) root.dock.moveExternalDrag(panel.screen, point.x, point.y)
+  }
+
+  function dropDrag() {
+    var entry = root.dragEntry
+    if (entry && root.dock) root.dock.dropExternalDrag(panel.screen, root.dragPoint.x, root.dragPoint.y, String(entry.id || ""))
+    root.close()
+  }
+
+  function openMenu(entry, point) {
+    root.menuEntry = entry
+    root.menuPoint = point
   }
 
   function toggle() {
@@ -66,7 +115,14 @@ Item {
     var entry = root.apps[index]
     if (!entry || !root.appLibrary) return
     root.close()
-    root.appLibrary.launch(entry.id, root.appLibrary.entryName(entry))
+    if (root.dock) root.dock.launchEntry(entry)
+    else root.appLibrary.launch(entry.id, root.appLibrary.entryName(entry))
+  }
+
+  FontMetrics {
+    id: labelMetrics
+    font.family: Style.font.menuFamily
+    font.pixelSize: Style.font.body
   }
 
   Connections {
@@ -78,15 +134,21 @@ Item {
     id: panel
     shown: root.opened
     WlrLayershell.namespace: "omarchy-dock-apps"
-
     Rectangle {
       anchors.fill: parent
       color: Commons.Color.menu.scrim
+      opacity: root.dragging ? 0 : 1
+
+      Behavior on opacity { NumberAnimation { duration: 150 } }
     }
 
     MouseArea {
       anchors.fill: parent
-      onClicked: root.close()
+      acceptedButtons: Qt.LeftButton | Qt.RightButton
+      onClicked: {
+        if (root.menuEntry) root.menuEntry = null
+        else root.close()
+      }
     }
 
     BorderSurface {
@@ -96,10 +158,17 @@ Item {
       anchors.centerIn: parent
       radius: Style.cornerRadius
       color: Commons.Color.menu.background
-      borderSpec: Border.surfaceSpec("menu", "border", Commons.Color.menu.border, Math.max(1, Style.space(2)))
+      borderSpec: Border.surfaceSpec("menu", "border", Commons.Color.menu.border, root.borderWidth)
       padding: root.contentMargin
+      opacity: root.dragging ? 0 : 1
 
-      MouseArea { anchors.fill: parent; onClicked: {} }
+      Behavior on opacity { NumberAnimation { duration: 150 } }
+
+      MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onClicked: root.menuEntry = null
+      }
 
       Item {
         id: keyCatcher
@@ -109,7 +178,8 @@ Item {
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
           if (event.key === Qt.Key_Escape) {
-            if (root.filterText) root.setFilter("")
+            if (root.menuEntry) root.menuEntry = null
+            else if (root.filterText) root.setFilter("")
             else root.close()
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
@@ -133,21 +203,26 @@ Item {
       }
 
       Column {
-        anchors.fill: parent
+        width: root.gridWidth
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
         anchors.topMargin: card.contentTopInset
-        anchors.rightMargin: card.contentRightInset
         anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
-        spacing: Style.spacing.md
+        spacing: root.headerSpacing
 
-        Item {
-          width: parent.width
+        Rectangle {
+          x: root.cellGutter
+          width: parent.width - root.cellGutter * 2
           height: root.headerHeight
+          radius: Style.cornerRadius
+          color: Util.alpha(Commons.Color.menu.text, 0.06)
 
           Text {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.leftMargin: Style.spacing.controlPaddingX
+            anchors.rightMargin: Style.spacing.controlPaddingX
             anchors.verticalCenter: parent.verticalCenter
             textFormat: Text.PlainText
             text: root.filterText || "Search apps…"
@@ -172,22 +247,23 @@ Item {
             cellHeight: root.cellHeight
             boundsBehavior: Flickable.StopAtBounds
 
-            delegate: Rectangle {
+            delegate: Item {
               id: cell
 
               required property int index
               required property var modelData
               readonly property bool selected: index === root.selectedIndex
+              property point pressPoint
+              // A press that wanders is a drag in the making, not a click.
+              property bool moved: false
 
               width: root.cellWidth
               height: root.cellHeight
-              radius: Style.cornerRadius
-              color: selected ? Commons.Color.menu.selectedBackground : "transparent"
 
               Image {
                 id: icon
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: Style.spacing.lg
+                y: root.cellPadding
                 width: root.iconSize
                 height: root.iconSize
                 sourceSize: Qt.size(root.iconSize * 2, root.iconSize * 2)
@@ -198,17 +274,28 @@ Item {
                 mipmap: true
               }
 
+              // The selection marks the app's name, not the whole cell.
+              Rectangle {
+                anchors.centerIn: label
+                width: Math.min(cell.width - root.cellGutter * 2, label.contentWidth + Style.spacing.md * 2)
+                height: label.contentHeight + Style.spacing.xs * 2
+                radius: Style.cornerRadius
+                color: cell.selected ? Commons.Color.menu.selectedBackground : "transparent"
+              }
+
               Text {
+                id: label
                 anchors.top: icon.bottom
                 anchors.topMargin: Style.spacing.md
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: parent.width - Style.spacing.md * 2
+                width: parent.width - (root.cellGutter + Style.spacing.md) * 2
                 textFormat: Text.PlainText
                 text: root.appLibrary ? root.appLibrary.entryName(cell.modelData) : ""
                 color: cell.selected ? Commons.Color.menu.selectedText : Commons.Color.menu.text
                 font.family: Style.font.menuFamily
                 font.pixelSize: Style.font.body
                 horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignTop
                 wrapMode: Text.Wrap
                 maximumLineCount: 2
                 elide: Text.ElideRight
@@ -218,8 +305,32 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onContainsMouseChanged: if (containsMouse) root.selectedIndex = cell.index
-                onClicked: root.launch(cell.index)
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                // The grid would otherwise take a dragging press for a scroll.
+                preventStealing: true
+                onContainsMouseChanged: if (containsMouse && !root.dragging) root.selectedIndex = cell.index
+                onPressed: function(event) {
+                  cell.moved = false
+                  cell.pressPoint = Qt.point(event.x, event.y)
+                }
+                onPositionChanged: function(event) {
+                  if (!(pressedButtons & Qt.LeftButton)) return
+                  if (!cell.moved && Math.hypot(event.x - cell.pressPoint.x, event.y - cell.pressPoint.y) > Style.space(4)) cell.moved = true
+                  if (cell.moved) root.dragTo(cell.modelData, cell.mapToItem(panel.contentItem, event.x, event.y))
+                }
+                onReleased: function(event) {
+                  if (root.dragging && event.button === Qt.LeftButton) root.dropDrag()
+                }
+                onCanceled: if (root.dragging) root.close()
+                onClicked: function(event) {
+                  if (cell.moved) return
+                  if (event.button === Qt.RightButton) {
+                    root.openMenu(cell.modelData, cell.mapToItem(panel.contentItem, event.x, event.y))
+                    return
+                  }
+                  root.menuEntry = null
+                  root.launch(cell.index)
+                }
               }
             }
           }
@@ -236,6 +347,93 @@ Item {
           }
         }
       }
+    }
+    // The dragged app's icon, under the pointer.
+    Image {
+      visible: root.dragging && !!root.dragEntry
+      x: root.dragPoint.x - width / 2
+      y: root.dragPoint.y - height / 2
+      width: root.iconSize
+      height: root.iconSize
+      sourceSize: Qt.size(root.iconSize * 2, root.iconSize * 2)
+      source: root.dragEntry && root.appLibrary ? root.appLibrary.iconSource(root.dragEntry.icon) : ""
+      fillMode: Image.PreserveAspectFit
+      smooth: true
+      mipmap: true
+    }
+
+    // Right-click on an app: open it, or keep it in the dock or take it out.
+    BorderSurface {
+      id: menu
+
+      readonly property var entry: root.menuEntry
+      readonly property bool pinned: !!entry && !!root.dock && root.dock.isPinned(String(entry.id || ""))
+
+      visible: !!entry && !root.dragging
+      width: Math.max(Style.space(160), menuColumn.implicitWidth) + padding * 2
+      height: menuColumn.implicitHeight + padding * 2
+      x: Math.min(root.menuPoint.x, panel.width - width - Style.gapsOut)
+      y: Math.min(root.menuPoint.y, panel.height - height - Style.gapsOut)
+      radius: Style.cornerRadius
+      color: Commons.Color.popups.background
+      borderSpec: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Style.normalBorderWidth)
+      padding: Style.spacing.sm
+
+      Column {
+        id: menuColumn
+        x: menu.contentLeftInset
+        y: menu.contentTopInset
+        width: menu.width - menu.contentLeftInset - menu.contentRightInset
+
+        MenuRow {
+          text: "Open"
+          onTriggered: {
+            var entry = menu.entry
+            root.close()
+            if (entry && root.dock) root.dock.launchEntry(entry)
+            else if (entry && root.appLibrary) root.appLibrary.launch(entry.id, root.appLibrary.entryName(entry))
+          }
+        }
+
+        MenuRow {
+          visible: !!root.dock
+          text: menu.pinned ? "Remove from Dock" : "Keep in Dock"
+          onTriggered: {
+            if (root.dock && menu.entry) root.dock.setPinnedKey(String(menu.entry.id || ""), !menu.pinned)
+            root.menuEntry = null
+          }
+        }
+      }
+    }
+  }
+
+  component MenuRow: Rectangle {
+    id: row
+
+    property string text: ""
+    signal triggered()
+
+    width: parent ? parent.width : 0
+    height: visible ? Style.spacing.popupRowHeight : 0
+    radius: Style.cornerRadius
+    color: rowMouse.containsMouse ? Style.hoverFill : "transparent"
+
+    Text {
+      anchors.verticalCenter: parent.verticalCenter
+      x: Style.spacing.controlPaddingX
+      textFormat: Text.PlainText
+      text: row.text
+      color: Commons.Color.popups.text
+      font.family: Style.font.family
+      font.pixelSize: Style.font.body
+    }
+
+    MouseArea {
+      id: rowMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: row.triggered()
     }
   }
 }
