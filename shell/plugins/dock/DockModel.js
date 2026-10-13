@@ -71,12 +71,6 @@ function claimingEntryId(appId, entries) {
   return ""
 }
 
-// The command Omarchy's TUI launcher runs for a terminal entry, without the
-// field codes the entry leaves for a launcher to fill in.
-function terminalCommand(command) {
-  return (command || []).filter(function(word) { return !/^%[a-zA-Z]$/.test(String(word)) })
-}
-
 // Pinned apps come first, in pin order, whether or not they run. Running apps
 // that are not pinned follow in the order their first window appeared. Each
 // window is { key, hasEntry, workspaceId, ... } where key is the desktop id of
@@ -186,7 +180,6 @@ if (typeof module !== "undefined") {
     isDockWindow: isDockWindow,
     isMinimizedWorkspace: isMinimizedWorkspace,
     claimingEntryId: claimingEntryId,
-    terminalCommand: terminalCommand,
     buildItems: buildItems,
     orderItems: orderItems,
     orderWithKeyAt: orderWithKeyAt,

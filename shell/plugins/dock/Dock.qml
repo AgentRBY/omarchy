@@ -166,15 +166,8 @@ Item {
     root.launchEntry(entry)
   }
 
-  // A terminal app goes through Omarchy's TUI launcher, which names its window
-  // after the command, so the dock can tell it from the terminal itself.
   function launchEntry(entry) {
-    if (!entry) return
-    var command = entry.runInTerminal ? DockModel.terminalCommand(entry.command) : []
-    if (command.length > 0)
-      Util.execDetached("omarchy-launch-tui " + command.map(function(word) { return Util.shellQuote(word) }).join(" "))
-    else if (root.appLibrary)
-      root.appLibrary.launch(entry.id, entry.name)
+    if (entry && root.appLibrary) root.appLibrary.launch(entry.id, entry.name)
   }
 
   function activate(item) {

@@ -93,7 +93,6 @@ assertEqual(dock.claimingEntryId('org.omarchy.btop', terminalEntries), 'btop', '
 assertEqual(dock.claimingEntryId('org.omarchy.hey', terminalEntries), 'HEY TUI', 'dock matches an entry that hands the terminal its app id')
 assertEqual(dock.claimingEntryId('org.omarchy.agent', terminalEntries), '', 'dock leaves an app id no entry claims unclaimed')
 assertEqual(dock.claimingEntryId('Alacritty', terminalEntries), '', 'dock leaves a terminal of its own to its own entry')
-assertDeepEqual(dock.terminalCommand(['nvim', '%F']), ['nvim'], 'dock launches a terminal app without its field codes')
 
 assertDeepEqual(
   dock.orderItems([{ key: 'chromium' }, { key: 'signal' }, { key: 'slack' }, { key: 'foot' }], ['slack', 'gone', 'chromium']).map(item => item.key),
@@ -205,3 +204,10 @@ STUB
 minimize
 [[ ! -s $TMPDIR/hyprctl.log ]] || fail "minimize leaves windows on a tiled workspace alone" "$(cat "$TMPDIR/hyprctl.log")"
 pass "minimize leaves windows on a tiled workspace alone"
+
+# Terminal apps launch through Omarchy's TUI launcher from every launcher that
+# uses the app library, so their windows carry an app id of their own.
+grep -qF 'var command = root.terminalCommand(DesktopEntries.byId(id))' "$ROOT/shell/services/AppLibrary.qml" &&
+  grep -qF '"omarchy-launch-tui "' "$ROOT/shell/services/AppLibrary.qml" ||
+  fail "the app library launches terminal apps through the TUI launcher"
+pass "the app library launches terminal apps through the TUI launcher"
