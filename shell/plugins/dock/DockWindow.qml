@@ -52,8 +52,8 @@ PanelWindow {
   // A pinned app that is not running is drawn faded.
   readonly property real idleOpacity: 0.7
   // Room inward of the dock for its menus: the tallest, the apps button's,
-  // has a header and five rows.
-  readonly property int popupRoom: Style.spacing.popupRowHeight * 6 + Style.spacing.sm * 2 + Style.normalBorderWidth * 2 + gap * 2
+  // has five rows.
+  readonly property int popupRoom: Style.spacing.popupRowHeight * 5 + Style.spacing.sm * 2 + Style.normalBorderWidth * 2 + gap * 2
   // Icons pop away from the screen edge.
   readonly property int popOrigin: position === "top" ? Item.Top
     : position === "left" ? Item.Left
@@ -535,11 +535,6 @@ PanelWindow {
       y: menu.contentTopInset
       width: menu.width - menu.contentLeftInset - menu.contentRightInset
 
-      MenuHeader {
-        visible: window.settingsMenu
-        text: "Position"
-      }
-
       Repeater {
         model: [["top", "Top"], ["bottom", "Bottom"], ["left", "Left"], ["right", "Right"]]
 
@@ -578,18 +573,6 @@ PanelWindow {
         onTriggered: window.dock.quit(menu.item)
       }
     }
-  }
-
-  component MenuHeader: Text {
-    width: parent ? parent.width : 0
-    height: visible ? Style.spacing.popupRowHeight : 0
-    leftPadding: Style.spacing.controlPaddingX
-    verticalAlignment: Text.AlignVCenter
-    textFormat: Text.PlainText
-    color: Commons.Color.popups.text
-    opacity: 0.6
-    font.family: Style.font.family
-    font.pixelSize: Style.font.bodySmall
   }
 
   component MenuRow: Rectangle {
