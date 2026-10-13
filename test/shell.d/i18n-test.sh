@@ -33,21 +33,28 @@ assert(staleMenu.length === 0, 'English menu catalog mirrors the menu definition
 const orphanMenu = Object.keys(enMenu).filter((id) => id !== 'root' && !menuItems.some((item) => item.id === id))
 assert(orphanMenu.length === 0, 'English menu catalog has no orphan ids', JSON.stringify(orphanMenu))
 
+// I18N_STRUCTURAL=1 is the pull-request gate: individual PRs only add the
+// English side, so missing translations are pending work for the sync
+// workflow rather than failures. Structure must still hold either way.
+const structural = process.env.I18N_STRUCTURAL === '1'
 const placeholders = (value) => (String(value).match(/%(\d|s|%)/g) || []).sort().join(' ')
 function assertCatalogMirrors(kind, english, catalog, code) {
   const problems = []
   const enKeys = Object.keys(english).sort()
-  if (JSON.stringify(Object.keys(catalog).sort()) !== JSON.stringify(enKeys)) problems.push('key set differs')
+  if (!structural && JSON.stringify(Object.keys(catalog).sort()) !== JSON.stringify(enKeys)) problems.push('key set differs')
+  for (const key of Object.keys(catalog))
+    if (!Object.hasOwn(english, key)) problems.push(`${key}: not in the English catalog`)
   for (const key of enKeys) {
     if (!Object.hasOwn(catalog, key)) continue
     if (kind === 'menu') {
-      if (JSON.stringify(Object.keys(catalog[key]).sort()) !== JSON.stringify(Object.keys(english[key]).sort())) problems.push(`${key}: fields differ`)
-      else if (Object.keys(english[key]).some((f) => typeof catalog[key][f] !== 'string' || catalog[key][f].length === 0)) problems.push(`${key}: untranslated field`)
+      if (!structural && JSON.stringify(Object.keys(catalog[key]).sort()) !== JSON.stringify(Object.keys(english[key]).sort())) problems.push(`${key}: fields differ`)
+      else if (Object.keys(catalog[key]).some((f) => !Object.hasOwn(english[key], f) || typeof catalog[key][f] !== 'string' || catalog[key][f].length === 0)) problems.push(`${key}: invalid field`)
+      else if (!structural && Object.keys(english[key]).some((f) => typeof catalog[key][f] !== 'string' || catalog[key][f].length === 0)) problems.push(`${key}: untranslated field`)
     } else if (typeof catalog[key] !== 'string' || catalog[key].length === 0) problems.push(`${key}: untranslated`)
     else if (placeholders(catalog[key]) !== placeholders(english[key])) problems.push(`${key}: placeholders differ`)
     if (problems.length > 5) break
   }
-  assert(problems.length === 0, `${code}/${kind}.json mirrors the English catalog`, JSON.stringify(problems))
+  assert(problems.length === 0, `${code}/${kind}.json ${structural ? 'is structurally sound' : 'mirrors the English catalog'}`, JSON.stringify(problems))
 }
 
 const enShell = readJson('en/shell.json')
@@ -129,10 +136,19 @@ assert(englishManual.length > 0, 'English manual exists')
 for (const code of codes) {
   if (code === 'en') continue
   const dir = path.join(manualDir, code)
-  if (!fs.existsSync(dir)) { assert(false, `manual/${code} exists`); continue }
+  if (!fs.existsSync(dir)) {
+    assert(structural, `manual/${code} exists`)
+    continue
+  }
   const chapters = fs.readdirSync(dir).filter((name) => name.endsWith('.md')).sort()
-  const empty = englishManual.filter((file) => !chapters.includes(file) || fs.readFileSync(path.join(dir, file), 'utf8').trim().length === 0)
-  assert(JSON.stringify(chapters) === JSON.stringify(englishManual) && empty.length === 0, `manual/${code} has every English chapter translated`, JSON.stringify(empty))
+  const extra = chapters.filter((file) => !englishManual.includes(file))
+  const empty = chapters.filter((file) => fs.readFileSync(path.join(dir, file), 'utf8').trim().length === 0)
+  if (structural) {
+    assert(extra.length === 0 && empty.length === 0, `manual/${code} chapters are a translated subset of English`, JSON.stringify([...extra, ...empty]))
+  } else {
+    const missing = englishManual.filter((file) => !chapters.includes(file))
+    assert(JSON.stringify(chapters) === JSON.stringify(englishManual) && empty.length === 0, `manual/${code} has every English chapter translated`, JSON.stringify([...missing, ...empty]))
+  }
 }
 JS
 
@@ -237,6 +253,54 @@ rm -f "$OMARCHY_LANGUAGE_FILE"
 omarchy-language da </dev/null
 assert_bash_equal "$(cat "$LAUNCH_LOG")" "omarchy-language da --apply" "privileged locale work hands off to a terminal"
 [[ ! -f $OMARCHY_LANGUAGE_FILE ]] && pass "the choice is not persisted before the locale applies" || fail "the choice is not persisted before the locale applies"
+
+# --- Translation sync tooling (scripts/i18n-sync.py) ---
+
+require_command python3
+
+if [[ ${I18N_STRUCTURAL:-} == "1" ]]; then
+  skip "no translations are pending (structural mode)"
+else
+  pending_locales=$(python3 "$ROOT/scripts/i18n-sync.py" pending | jq -c '.locales')
+  assert_bash_equal "$pending_locales" "[]" "no translations are pending"
+fi
+
+extract_candidates=$(python3 "$ROOT/scripts/i18n-sync.py" extract-scan | jq -c '.candidates | length')
+assert_bash_equal "$extract_candidates" "0" "no embedded English literals await extraction"
+
+# A miniature tree exercises staleness: one key changed in English, one
+# deleted from the translation, one manual chapter missing.
+fix=$work/fixture
+mkdir -p "$fix/default/i18n/en" "$fix/default/i18n/da" "$fix/default/omarchy" "$fix/manual" "$fix/shell" "$fix/bin"
+cat >"$fix/default/i18n/locales.json" <<'FIXJSON'
+{
+  "en": {"name": "English", "englishName": "English", "formatLocale": "en-US", "locale": "en_US.UTF-8"},
+  "da": {"name": "Dansk", "englishName": "Danish", "formatLocale": "da-DK", "locale": "da_DK.UTF-8"}
+}
+FIXJSON
+printf '{\n  "a.one": "One",\n  "a.two": "Two"\n}\n' >"$fix/default/i18n/en/shell.json"
+printf '{}\n' >"$fix/default/i18n/en/cli.json"
+printf '{\n  "root": {\n    "label": "Go"\n  }\n}\n' >"$fix/default/i18n/en/menu.json"
+printf '{}\n' >"$fix/default/omarchy/omarchy-menu.jsonc"
+printf '{\n  "strings": [],\n  "files": []\n}\n' >"$fix/default/i18n/extract-allowlist.json"
+printf '{\n  "a.one": "En",\n  "a.two": "To"\n}\n' >"$fix/default/i18n/da/shell.json"
+printf '{}\n' >"$fix/default/i18n/da/cli.json"
+printf '{\n  "root": {\n    "label": "Gaa"\n  }\n}\n' >"$fix/default/i18n/da/menu.json"
+printf '# Hello\n\nWorld.\n' >"$fix/manual/01-hello.md"
+mkdir -p "$fix/manual/da"
+printf '# Hej\n\nVerden.\n' >"$fix/manual/da/01-hello.md"
+python3 "$ROOT/scripts/i18n-sync.py" --root "$fix" manifest >/dev/null
+assert_bash_equal "$(python3 "$ROOT/scripts/i18n-sync.py" --root "$fix" pending | jq -c '.locales')" "[]" "sync fixture starts with nothing pending"
+
+printf '{\n  "a.one": "One changed",\n  "a.two": "Two"\n}\n' >"$fix/default/i18n/en/shell.json"
+printf '{\n  "a.two": "To"\n}\n' >"$fix/default/i18n/da/shell.json"
+printf '# New\n' >"$fix/manual/02-new.md"
+pending_units=$(python3 "$ROOT/scripts/i18n-sync.py" --root "$fix" pending | jq -c '.jobs.da.pending | sort')
+assert_bash_equal "$pending_units" '["manual:02-new.md","shell:a.one"]' "sync detects changed English and missing chapters"
+
+printf 'Text {\n  text: "Brand new string"\n}\n' >"$fix/shell/Panel.qml"
+scan_strings=$(python3 "$ROOT/scripts/i18n-sync.py" --root "$fix" extract-scan | jq -c '[.candidates[].string]')
+assert_bash_equal "$scan_strings" '["Brand new string"]' "extract-scan finds embedded English literals"
 
 # Every registry locale must be one glibc can actually generate.
 if [[ -f /usr/share/i18n/SUPPORTED ]]; then

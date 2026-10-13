@@ -1,0 +1,267 @@
+name: Sync translations
+
+# Keeps the 49 translations converged with English without blocking it:
+# extract any English embedded directly in code, translate whatever the
+# manifest says is pending (one Muse runner per language, no write
+# credentials), then land everything as one auto-merging pull request.
+# Modeled on omarchy-site's translate-news workflow; keep the Muse
+# install pin in step with it. Requires the MUSE_API_KEY Actions secret,
+# "Allow auto-merge" enabled, and i18n-check as a required status check
+# on quattro so auto-merge waits for validation.
+on:
+  push:
+    branches: [quattro]
+    paths:
+      - 'default/i18n/en/**'
+      - 'default/omarchy/omarchy-menu.jsonc'
+      - 'manual/*.md'
+      - 'shell/**'
+      - 'bin/**'
+  workflow_dispatch:
+  schedule:
+    # Retry unfinished translations without delaying English.
+    - cron: '41 3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: i18n-sync
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      locales: ${{ steps.pending.outputs.locales }}
+      extract: ${{ steps.pending.outputs.extract }}
+      has_work: ${{ steps.pending.outputs.has_work }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: quattro
+          persist-credentials: false
+      - name: Find pending translations and embedded English
+        id: pending
+        run: |
+          python3 scripts/i18n-sync.py pending > "$RUNNER_TEMP/pending.json"
+          python3 scripts/i18n-sync.py extract-scan > "$RUNNER_TEMP/scan.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          directory = Path(os.environ['RUNNER_TEMP'])
+          pending = json.loads((directory / 'pending.json').read_text())
+          scan = json.loads((directory / 'scan.json').read_text())
+          extract = bool(scan['candidates'] or scan['menuCatalogStale'])
+          if extract:
+              # New English keys make every language pending.
+              registry = json.loads(Path('default/i18n/locales.json').read_text())
+              locales = sorted(code for code in registry if code != 'en')
+          else:
+              locales = pending['locales']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f"locales={json.dumps(locales)}\n")
+              out.write(f"extract={'true' if extract else 'false'}\n")
+              out.write(f"has_work={'true' if locales or extract else 'false'}\n")
+          PY
+
+  extract:
+    needs: prepare
+    if: needs.prepare.outputs.has_work == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: quattro
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Start the sync branch from quattro
+        run: git checkout -B i18n-sync
+      - name: No extraction needed
+        if: needs.prepare.outputs.extract != 'true'
+        run: echo "No embedded English to extract."
+      - name: Install Muse
+        if: needs.prepare.outputs.extract == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/muse-bin"
+          curl --fail --silent --show-error --location https://api.meta.ai/muse-launcher.sh --output "$RUNNER_TEMP/muse-bin/muse"
+          echo "c6db294799a190ca380da274beb3b9c0e160e0da9681a3d364ce8b0e5fa3a4bc  $RUNNER_TEMP/muse-bin/muse" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/muse-bin/muse"
+          MUSE_LAUNCHER_INSTALL=1 "$RUNNER_TEMP/muse-bin/muse"
+          echo "MUSE_NO_AUTO_UPDATE=1" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/muse-bin" >> "$GITHUB_PATH"
+      - name: Configure Muse
+        if: needs.prepare.outputs.extract == 'true'
+        env:
+          MUSE_API_KEY: ${{ secrets.MUSE_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          key = os.environ.get('MUSE_API_KEY')
+          if not key:
+              raise SystemExit('Add the MUSE_API_KEY Actions secret to enable automatic translations.')
+          config = Path.home() / '.config/muse'
+          config.mkdir(parents=True, exist_ok=True)
+          auth = config / 'auth.json'
+          auth.write_text(json.dumps({'schema_version': 1, 'providers': {'meta': {'api_key': key}}}))
+          auth.chmod(0o600)
+          PY
+      - name: Extract embedded English into the catalogs
+        if: needs.prepare.outputs.extract == 'true'
+        env:
+          MUSE_MODEL: ${{ vars.MUSE_MODEL || 'muse-spark-1.3-contributor' }}
+        run: python3 scripts/i18n-sync.py extract-apply --model "$MUSE_MODEL"
+      - name: Remove Muse credentials
+        if: always()
+        run: rm -f "$HOME/.config/muse/auth.json"
+      - name: Validate extraction
+        run: |
+          python3 scripts/i18n-sync.py extract-scan --check
+          I18N_STRUCTURAL=1 bash test/shell.d/i18n-test.sh
+          for f in $(git diff --name-only -- bin/); do bash -n "$f"; done
+      - name: Commit extraction to the sync branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bin shell default/i18n/en default/i18n/extract-allowlist.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Extract embedded English into catalogs'
+          fi
+          git push --force origin i18n-sync
+
+  translate:
+    needs: [prepare, extract]
+    if: needs.prepare.outputs.locales != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        locale: ${{ fromJSON(needs.prepare.outputs.locales) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: i18n-sync
+          persist-credentials: false
+      - name: Install Muse
+        run: |
+          mkdir -p "$RUNNER_TEMP/muse-bin"
+          curl --fail --silent --show-error --location https://api.meta.ai/muse-launcher.sh --output "$RUNNER_TEMP/muse-bin/muse"
+          echo "c6db294799a190ca380da274beb3b9c0e160e0da9681a3d364ce8b0e5fa3a4bc  $RUNNER_TEMP/muse-bin/muse" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/muse-bin/muse"
+          MUSE_LAUNCHER_INSTALL=1 "$RUNNER_TEMP/muse-bin/muse"
+          echo "MUSE_NO_AUTO_UPDATE=1" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/muse-bin" >> "$GITHUB_PATH"
+      - name: Configure Muse
+        env:
+          MUSE_API_KEY: ${{ secrets.MUSE_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          key = os.environ.get('MUSE_API_KEY')
+          if not key:
+              raise SystemExit('Add the MUSE_API_KEY Actions secret to enable automatic translations.')
+          config = Path.home() / '.config/muse'
+          config.mkdir(parents=True, exist_ok=True)
+          auth = config / 'auth.json'
+          auth.write_text(json.dumps({'schema_version': 1, 'providers': {'meta': {'api_key': key}}}))
+          auth.chmod(0o600)
+          PY
+      - name: Translate this language's pending units
+        continue-on-error: true
+        env:
+          MUSE_MODEL: ${{ vars.MUSE_MODEL || 'muse-spark-1.3-contributor' }}
+          LOCALE: ${{ matrix.locale }}
+        run: python3 scripts/i18n-sync.py translate --locale "$LOCALE" --concurrency 2 --model "$MUSE_MODEL" --done-file "$RUNNER_TEMP/done.json"
+      - name: Package only this language's translations
+        env:
+          LOCALE: ${{ matrix.locale }}
+        run: python3 scripts/i18n-sync.py pack "$LOCALE" "$RUNNER_TEMP/translations" --done-file "$RUNNER_TEMP/done.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: translations-${{ matrix.locale }}
+          path: |
+            ${{ runner.temp }}/translations/*.patch
+            ${{ runner.temp }}/translations/*.done.json
+          retention-days: 3
+          if-no-files-found: error
+      - name: Remove Muse credentials
+        if: always()
+        run: rm -f "$HOME/.config/muse/auth.json"
+
+  collect:
+    needs: [prepare, extract, translate]
+    # Keep valid results even if a different language runner failed.
+    if: ${{ always() && !cancelled() && needs.prepare.result == 'success' && needs.extract.result == 'success' && needs.prepare.outputs.has_work == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: i18n-sync
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Download completed languages
+        if: needs.prepare.outputs.locales != '[]'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: translations-*
+          path: ${{ runner.temp }}/translations
+          merge-multiple: true
+      - name: Collect completed translations
+        if: needs.prepare.outputs.locales != '[]'
+        env:
+          EXPECTED_LOCALES: ${{ needs.prepare.outputs.locales }}
+        run: |
+          expected=$(python3 -c "import json,sys; print(','.join(json.loads(sys.argv[1])))" "$EXPECTED_LOCALES")
+          python3 scripts/i18n-sync.py collect "$RUNNER_TEMP/translations" --expected "$expected"
+      - name: Validate combined translations
+        run: I18N_STRUCTURAL=1 bash test/shell.d/i18n-test.sh
+      - name: Commit and open the auto-merging pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin quattro
+          changed=false
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update translations'
+            changed=true
+          fi
+          git push origin i18n-sync
+          pr=$(gh pr list --head i18n-sync --base quattro --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            if [ "$changed" = true ] || [ "$(git rev-list --count origin/quattro..HEAD)" -gt 0 ]; then
+              pr=$(gh pr create --base quattro --head i18n-sync --title 'Update translations' --body 'Automated translation sync: extracts embedded English into the catalogs and fills pending translations for all 49 languages. Generated by the Sync translations workflow; merges automatically once i18n-check passes.')
+              pr=$(basename "$pr")
+            fi
+          fi
+          if [ -n "$pr" ]; then
+            gh pr merge --auto --squash "$pr" || echo "Auto-merge could not be enabled for #$pr (enable 'Allow auto-merge' in repository settings); the PR is left open for a human."
+          fi
+      - name: Report translations still pending
+        if: always()
+        run: |
+          python3 scripts/i18n-sync.py pending > "$RUNNER_TEMP/pending.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          pending = json.loads((Path(os.environ['RUNNER_TEMP']) / 'pending.json').read_text())
+          total = sum(job['count'] for job in pending['jobs'].values())
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write(f"Pending translation units: **{total}** across {len(pending['locales'])} languages.\n\n")
+              out.write('English remains the fallback while translations catch up. Unfinished work is retried on the next run.\n')
+          PY
