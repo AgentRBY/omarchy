@@ -11,6 +11,7 @@ panel only ever reads the JSON this prints.
 """
 
 import argparse
+import base64
 import fcntl
 import hashlib
 import json
@@ -998,10 +999,17 @@ def signed_in_identity(codex_home):
     return ""
   if str(config.get("cli_auth_credentials_store") or "file") != "file":
     return ""
+  # account_id names the workspace, whose members each have their own limits,
+  # so the user comes from the ID token's claims, read as Codex reads them.
   try:
-    return str(json.loads((codex_home / "auth.json").read_text(encoding="utf-8"))["tokens"]["account_id"] or "")
+    tokens = json.loads((codex_home / "auth.json").read_text(encoding="utf-8"))["tokens"]
+    payload = tokens["id_token"].split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["https://api.openai.com/auth"]
+    workspace = str(tokens["account_id"] or "")
+    user = str(claims.get("chatgpt_user_id") or claims.get("user_id") or "")
   except Exception:
     return ""
+  return f"{workspace}\n{user}" if workspace and user else ""
 
 
 # Keyed by the home and the account it is signed in to, so a home signed in to

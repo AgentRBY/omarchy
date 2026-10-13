@@ -17,7 +17,23 @@ export XDG_DATA_HOME="$test_tmp/data"
 unset CODEX_HOME CODEX_ACCESS_TOKEN
 
 mkdir -p "$HOME/.codex/sessions" "$test_tmp/bin"
-printf '{"tokens":{"account_id":"acct-one"}}\n' >"$HOME/.codex/auth.json"
+
+# Signs ~/.codex in as a user of a workspace, the way Codex writes it: the
+# workspace as account_id, the user in the ID token's claims.
+cat >"$test_tmp/login" <<'PY'
+#!/usr/bin/python3
+import base64, json, os, sys
+claims = {"https://api.openai.com/auth": {"chatgpt_account_id": sys.argv[1], "chatgpt_user_id": sys.argv[2]}}
+payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8", "surrogatepass")).decode().rstrip("=")
+home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+with open(os.path.join(home, "auth.json"), "w") as handle:
+  json.dump({"tokens": {"id_token": f"e30.{payload}.sig", "account_id": sys.argv[1]}}, handle)
+PY
+chmod +x "$test_tmp/login"
+login() {
+  "$test_tmp/login" "$@"
+}
+login ws-one user-a
 
 # A stand-in app-server whose rate-limit answer CODEX_FAKE picks: limits, a
 # backend error, a sign-out, or dying with or without saying why.
@@ -40,9 +56,7 @@ for line in sys.stdin:
       print(json.dumps({"id": message["id"], "error": {"code": -32603, "message": "failed to fetch codex rate limits"}}), flush=True)
       continue
     if mode == "switch":
-      home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
-      with open(os.path.join(home, "auth.json"), "w") as handle:
-        handle.write('{"tokens":{"account_id":"acct-three"}}\n')
+      os.system(os.environ["CODEX_LOGIN"] + " ws-three user-c")
     if mode == "auth":
       print(json.dumps({"id": message["id"], "error": {"code": -32603, "message": "not authenticated"}}), flush=True)
       continue
@@ -55,7 +69,7 @@ PY
 chmod +x "$test_tmp/bin/codex"
 
 collect() {
-  CODEX_FAKE="$1" PATH="$test_tmp/bin:$PATH" "$ROOT/bin/omarchy-agent-usage-codex" --force
+  CODEX_FAKE="$1" CODEX_LOGIN="$test_tmp/login" PATH="$test_tmp/bin:$PATH" "$ROOT/bin/omarchy-agent-usage-codex" --force
 }
 
 fresh=$(collect ok)
@@ -81,11 +95,13 @@ for mode in auth silent; do
   pass "a Codex sign-out ($mode) is reported, not hidden behind old limits"
 done
 
-printf '{"tokens":{"account_id":"acct-two"}}\n' >"$HOME/.codex/auth.json"
-other=$(collect backend)
-[[ $(jq -c '{limits, status: .usageStatusText}' <<<"$other") == '{"limits":[],"status":"Codex limits unavailable"}' ]] ||
-  fail "a home signed in to another account never shows the last one's limits" "$other"
-pass "a home signed in to another account never shows the last one's limits"
+for who in "ws-two user-a" "ws-one user-b"; do
+  login $who
+  other=$(collect backend)
+  [[ $(jq -c '{limits, status: .usageStatusText}' <<<"$other") == '{"limits":[],"status":"Codex limits unavailable"}' ]] ||
+    fail "a home signed in to someone else never shows the last one's limits ($who)" "$other"
+done
+pass "a home signed in to someone else, in another workspace or the same one, never shows the last one's limits"
 
 # The login auth.json names is only who answers when nothing overrides it.
 collect ok >/dev/null
@@ -113,13 +129,14 @@ switched=$(collect switch)
 after=$(collect backend)
 [[ $(jq -c '.limits' <<<"$after") == '[]' ]] ||
   fail "limits from a probe across a login change are kept for neither login" "$after"
-printf '{"tokens":{"account_id":"acct-two"}}\n' >"$HOME/.codex/auth.json"
+login ws-one user-b
 before=$(collect backend)
 [[ $(jq '.limits[0].percent * 100 | round' <<<"$before") == 40 ]] ||
   fail "limits from a probe across a login change are kept for neither login" "$before"
 pass "limits from a probe across a login change are kept for neither login"
 
-for auth in '{"tokens":["unexpected"]}' '{"tokens":{"account_id":"\ud800"}}'; do
+login ws-one $'\xed\xa0\x80'
+for auth in '{"tokens":["unexpected"]}' '{"tokens":{"account_id":"ws-one"}}' "$(cat "$HOME/.codex/auth.json")"; do
   printf '%s\n' "$auth" >"$HOME/.codex/auth.json"
   odd=$(collect backend) || fail "an auth.json of another shape still gives a record ($auth)"
   [[ $(jq -r '.usageStatusText' <<<"$odd") == "Codex limits unavailable" ]] ||
