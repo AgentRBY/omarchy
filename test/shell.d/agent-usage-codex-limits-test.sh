@@ -119,8 +119,10 @@ before=$(collect backend)
   fail "limits from a probe across a login change are kept for neither login" "$before"
 pass "limits from a probe across a login change are kept for neither login"
 
-printf '{"tokens":["unexpected"]}\n' >"$HOME/.codex/auth.json"
-odd=$(collect backend) || fail "an auth.json of another shape still gives a record"
-[[ $(jq -r '.usageStatusText' <<<"$odd") == "Codex limits unavailable" ]] ||
-  fail "an auth.json of another shape still gives a record" "$odd"
+for auth in '{"tokens":["unexpected"]}' '{"tokens":{"account_id":"\ud800"}}'; do
+  printf '%s\n' "$auth" >"$HOME/.codex/auth.json"
+  odd=$(collect backend) || fail "an auth.json of another shape still gives a record ($auth)"
+  [[ $(jq -r '.usageStatusText' <<<"$odd") == "Codex limits unavailable" ]] ||
+    fail "an auth.json of another shape still gives a record ($auth)" "$odd"
+done
 pass "an auth.json of another shape still gives a record"

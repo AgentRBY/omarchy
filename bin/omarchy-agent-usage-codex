@@ -988,7 +988,7 @@ def fetch_codex_rpc(home=None):
 def signed_in_identity(codex_home):
   token = ENV.get("CODEX_ACCESS_TOKEN")
   if token:
-    return "token:" + hashlib.sha1(token.encode("utf-8")).hexdigest()
+    return "token:" + hashlib.sha1(token.encode("utf-8", "surrogatepass")).hexdigest()
   try:
     with (codex_home / "config.toml").open("rb") as handle:
       config = tomllib.load(handle)
@@ -1012,7 +1012,8 @@ def limits_cache_path(home):
   identity = signed_in_identity(codex_home)
   if not identity:
     return None
-  digest = hashlib.sha1(f"{codex_home}\n{identity}".encode("utf-8")).hexdigest()[:16]
+  # surrogatepass: a lone surrogate from JSON or the environment must not stop the record.
+  digest = hashlib.sha1(f"{codex_home}\n{identity}".encode("utf-8", "surrogatepass")).hexdigest()[:16]
   try:
     return cache_root() / f"codex-limits-{digest}.json"
   except Exception as exc:
