@@ -34,6 +34,8 @@ chmod +x "$stub_dir/hyprctl"
 cat >"$stub_dir/omarchy-notification-send" <<'EOF'
 #!/bin/bash
 printf '%s\n' "$*" >>"$NOTIFICATION_LOG"
+[[ " $* " == *" -p "* ]] && echo 42
+exit 0
 EOF
 chmod +x "$stub_dir/omarchy-notification-send"
 
@@ -531,3 +533,12 @@ if ! HOME="$home_dir" XDG_STATE_HOME="$home_dir/.local/state" OMARCHY_PATH="$ROO
   fail "a saved floating mode floats the workspace without inventing a layout"
 fi
 pass "a saved floating mode floats the workspace without inventing a layout"
+
+# A layout change replaces the last layout notification rather than stacking
+# another under it.
+: >"$notification_log"
+toggle
+toggle
+[[ $(grep -c -- "-r 42 " "$notification_log") -ge 1 ]] ||
+  fail "a layout change replaces the last layout notification" "$(cat "$notification_log")"
+pass "layout changes replace a single notification"
