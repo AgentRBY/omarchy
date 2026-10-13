@@ -50,10 +50,16 @@ Item {
   readonly property int cardHeight: Math.min(panel.height - screenMargin * 2, inset * 2 + headerHeight + headerSpacing + visibleRows * cellHeight)
 
   function open() {
-    root.filterText = ""
     root.selectedIndex = 0
     if (root.appLibrary) root.appLibrary.refreshIcons()
-    root.rebuild()
+    // The cells from last time are reused when nothing changed, so the grid
+    // opens with its icons already drawn.
+    if (root.filterText !== "" || root.apps.length === 0) {
+      root.filterText = ""
+      root.rebuild()
+    } else {
+      grid.positionViewAtBeginning()
+    }
     root.opened = true
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -269,7 +275,9 @@ Item {
                 sourceSize: Qt.size(root.iconSize * 2, root.iconSize * 2)
                 source: root.appLibrary ? root.appLibrary.iconSource(cell.modelData.icon) : ""
                 fillMode: Image.PreserveAspectFit
-                asynchronous: true
+                // Loaded with the cell, from Qt's image cache after the first
+                // open, so icons do not pop in after the grid has appeared.
+                asynchronous: false
                 smooth: true
                 mipmap: true
               }
@@ -399,7 +407,7 @@ Item {
           visible: !!root.dock
           text: menu.pinned ? "Remove from Dock" : "Keep in Dock"
           onTriggered: {
-            if (root.dock && menu.entry) root.dock.setPinnedKey(String(menu.entry.id || ""), !menu.pinned)
+            if (root.dock && menu.entry) root.dock.setPinned(String(menu.entry.id || ""), !menu.pinned)
             root.menuEntry = null
           }
         }
