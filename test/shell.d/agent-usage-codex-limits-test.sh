@@ -82,3 +82,22 @@ other=$(collect backend)
 [[ $(jq -c '{limits, status: .usageStatusText}' <<<"$other") == '{"limits":[],"status":"Codex limits unavailable"}' ]] ||
   fail "a home signed in to another account never shows the last one's limits" "$other"
 pass "a home signed in to another account never shows the last one's limits"
+
+# The login auth.json names is only who answers when nothing overrides it.
+collect ok >/dev/null
+token=$(CODEX_ACCESS_TOKEN=another collect backend)
+[[ $(jq -c '.limits' <<<"$token") == '[]' ]] ||
+  fail "an access token in the environment never shows auth.json's account's limits" "$token"
+pass "an access token in the environment never shows auth.json's account's limits"
+
+printf 'cli_auth_credentials_store = "keyring"\n' >"$HOME/.codex/config.toml"
+keyring=$(collect backend)
+[[ $(jq -c '.limits' <<<"$keyring") == '[]' ]] ||
+  fail "a keyring login, which can't be told apart, keeps no limits" "$keyring"
+rm "$HOME/.codex/config.toml"
+pass "a keyring login, which can't be told apart, keeps no limits"
+
+file=$(collect backend)
+[[ $(jq -c '{limitsStale, used: (.limits[0].percent * 100 | round)}' <<<"$file") == '{"limitsStale":true,"used":40}' ]] ||
+  fail "the file store's own account keeps its limits" "$file"
+pass "the file store's own account keeps its limits"

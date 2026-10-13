@@ -983,16 +983,37 @@ def fetch_codex_rpc(home=None):
   return result
 
 
-# Keyed by the home and the ChatGPT account it is signed in to, so a home
-# signed in to someone else never falls back on the last one's numbers.
-def limits_cache_path(home):
-  codex_home = Path(home or ENV.get("CODEX_HOME") or (Path.home() / ".codex"))
+# Who a home's probe answers for, or "" when only Codex could say: keyring and
+# auto stores keep the login out of auth.json.
+def signed_in_identity(codex_home):
+  token = ENV.get("CODEX_ACCESS_TOKEN")
+  if token:
+    return "token:" + hashlib.sha1(token.encode("utf-8")).hexdigest()
+  try:
+    with (codex_home / "config.toml").open("rb") as handle:
+      config = tomllib.load(handle)
+  except FileNotFoundError:
+    config = {}
+  except Exception:
+    return ""
+  if str(config.get("cli_auth_credentials_store") or "file") != "file":
+    return ""
   try:
     tokens = json.loads((codex_home / "auth.json").read_text(encoding="utf-8")).get("tokens") or {}
-    account = str(tokens.get("account_id") or "")
   except Exception:
-    account = ""
-  digest = hashlib.sha1(f"{codex_home}\n{account}".encode("utf-8")).hexdigest()[:16]
+    return ""
+  return str(tokens.get("account_id") or "")
+
+
+# Keyed by the home and the account it is signed in to, so a home signed in to
+# someone else never falls back on the last one's numbers. None when the
+# account can't be told, since then no numbers can be vouched for.
+def limits_cache_path(home):
+  codex_home = Path(home or ENV.get("CODEX_HOME") or (Path.home() / ".codex"))
+  identity = signed_in_identity(codex_home)
+  if not identity:
+    return None
+  digest = hashlib.sha1(f"{codex_home}\n{identity}".encode("utf-8")).hexdigest()[:16]
   return cache_root() / f"codex-limits-{digest}.json"
 
 
@@ -1009,6 +1030,8 @@ def usable_cached_limits(cached):
       resets = datetime.fromisoformat(str(entry.get("resetsAt") or ""))
     except ValueError:
       resets = None
+    if resets and resets.tzinfo is None:
+      resets = resets.replace(tzinfo=timezone.utc)
     # A window that has reset since is empty now, whatever it read then.
     usable.append(dict(entry, percent=0.0, resetsAt="") if resets and resets <= now else entry)
   return usable
@@ -1021,15 +1044,16 @@ def usable_cached_limits(cached):
 def collect_limits(home=None):
   rpc = fetch_codex_rpc(home)
   rpc["live"] = bool(rpc["limits"])
-  rpc["fetchedAtMs"] = 0
+  rpc["fetchedAtMs"] = round(time.time() * 1000) if rpc["live"] else 0
   try:
     cache = limits_cache_path(home)
   except Exception as exc:
     print(f"omarchy-agent-usage-codex: limits cache unavailable ({exc})", file=sys.stderr)
     return rpc
+  if cache is None:
+    return rpc
 
   if rpc["live"]:
-    rpc["fetchedAtMs"] = round(time.time() * 1000)
     try:
       write_json(cache, {"fetchedAtMs": rpc["fetchedAtMs"], "limits": rpc["limits"], "tierLabel": rpc["tierLabel"]})
     except Exception as exc:
