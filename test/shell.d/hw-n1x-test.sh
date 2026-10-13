@@ -73,7 +73,7 @@ fi
 n1x="$ROOT/install/hardware/n1x.sh"
 assert_succeeds bash -n "$n1x" "n1x.sh parses"
 assert_succeeds grep -Fq 'omarchy-hw-aarch64-n1x || return 0' "$n1x" "n1x.sh is gated on the detector"
-assert_succeeds grep -Fq 'omarchy-pkg-add linux-omarchy linux-omarchy-headers' "$n1x" "N1x runs linux-omarchy"
+assert_fails grep -Eq 'omarchy-pkg-add linux' "$n1x" "the kernel comes from the installer and the package list, not from hardware setup"
 assert_fails grep -Eq 'pacman -R' "$n1x" "kernels are removed through omarchy-pkg-drop"
 assert_succeeds grep -Fq 'MODULES+=(i2c_mt65xx i2c_hid_acpi)' "$n1x" "the internal keyboard works at the LUKS prompt"
 assert_succeeds grep -Fq 'KERNEL_CMDLINE[default]+=" mem_sleep_default=s2idle"' "$n1x" "suspend to idle instead of the firmware's deep sleep"

@@ -7,16 +7,9 @@ omarchy-hw-aarch64-n1x || return 0
 
 echo "Detected NVIDIA N1x platform, applying platform configuration..."
 
-# The ISO installs linux-omarchy through archinstall's kernels list; make
-# sure its headers are present for DKMS and that no other kernel is left for
-# Limine to show.
-omarchy-pkg-add linux-omarchy linux-omarchy-headers
+# The installer puts linux-omarchy and its headers on the machine, and the N1x
+# package list names them. Leave no other kernel for Limine to show.
 omarchy-pkg-drop linux linux-headers linux-aarch64 linux-aarch64-headers
-# NVIDIA's linux-n1x preceded it. A machine still running it keeps it as its
-# way back until it has booted linux-omarchy.
-if [[ $(cat "/usr/lib/modules/$(uname -r)/pkgbase" 2>/dev/null) != "linux-n1x" ]]; then
-  omarchy-pkg-drop linux-n1x linux-n1x-headers
-fi
 
 # The internal keyboard and touchpad are I2C-HID devices behind the MediaTek
 # MT8901 I2C controllers (ACPI NVDA0200). The keyboard hook only pulls in
