@@ -18,7 +18,6 @@ QtObject {
 
   property string language: "en"
   property string formatLocale: "en-US"
-  property string direction: "ltr"
 
   // Merged English + current-language strings. Reassigned whole on every
   // catalog load (never mutated in place) so bindings that called t()
@@ -27,9 +26,13 @@ QtObject {
   property var englishStrings: ({})
   property var languageStrings: ({})
 
-  function t(key) {
+  // The optional fallback is what imperative callers (the JS models) pass
+  // as their English text: before the catalogs load, or for a key the
+  // catalogs do not carry, they keep sensible English instead of a raw key.
+  function t(key, fallback) {
     var value = root.strings[key]
-    return (typeof value === "string" && value.length > 0) ? value : key
+    if (typeof value === "string" && value.length > 0) return value
+    return fallback !== undefined ? fallback : key
   }
 
   function parseCatalog(raw) {
@@ -51,7 +54,6 @@ QtObject {
   function applyRegistry(raw) {
     var entry = parseCatalog(raw)[root.language] || ({})
     root.formatLocale = entry.formatLocale || "en-US"
-    root.direction = entry.direction || "ltr"
   }
 
   function setLanguage(raw) {

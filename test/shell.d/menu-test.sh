@@ -60,6 +60,7 @@ assertDeepEqual(
     action: 'omarchy-theme-set',
     provider: '',
     aliases: ['theme'],
+    searchTerms: [],
     when: '',
     checked: '',
     disabled: ''
@@ -839,7 +840,7 @@ assert(
 // Both menu files load separately at startup; evaluating after the first
 // alone ran the whole guard batch twice.
 assert(
-  /function rebuildItemsFromSources\(\)[\s\S]*?if \(root\.defaultMenuSettled && root\.userMenuSettled\) root\.evaluateGuards\(\)/.test(menuQml)
+  /function rebuildItemsFromSources\(skipGuards\)[\s\S]*?if \(!skipGuards && root\.defaultMenuSettled && root\.userMenuSettled\) root\.evaluateGuards\(\)/.test(menuQml)
     && /onLoaded: \{ root\.defaultMenuItems = [^}]*root\.defaultMenuSettled = true; root\.rebuildItemsFromSources\(\) \}/.test(menuQml)
     && /onLoadFailed: \{ root\.defaultMenuSettled = true; if \(root\.userMenuSettled\) root\.evaluateGuards\(\) \}/.test(menuQml)
     && /onLoaded: \{ root\.userMenuItems = [^}]*root\.userMenuSettled = true; root\.rebuildItemsFromSources\(\) \}/.test(menuQml)

@@ -1,43 +1,54 @@
 #!/bin/bash
 
 # omarchy:summary=Print a user-facing string in the current language
-# omarchy:args=<key> [printf-args...]
+# omarchy:args=<key> [args...]
 # omarchy:hidden=true
 
 set -euo pipefail
 
 # Looks up <key> in default/i18n/<language>/cli.json, falling back to the
-# English catalog and finally to the key itself. Remaining arguments are
-# substituted into the string with printf, so catalog entries use %s-style
-# placeholders. English is the default language.
+# English catalog and finally to the key itself. Catalog entries carry
+# %1-style tokens (the same convention as the shell catalogs), substituted
+# from the remaining arguments, so translations may reorder them freely.
+# The language is read the same way omarchy-language reads it; anything
+# unexpected means English, the default.
 
 key=${1:-}
 if [[ -z $key ]]; then
-  echo "Usage: omarchy-i18n <key> [printf-args...]" >&2
+  echo "Usage: omarchy-i18n <key> [args...]" >&2
   exit 1
 fi
 shift
 
-language=$(omarchy-language)
+language_file=${OMARCHY_LANGUAGE_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/language}
+language=en
+if [[ -f $language_file ]]; then
+  candidate=$(head -n 1 "$language_file" | tr -d '[:space:]')
+  if [[ $candidate =~ ^[a-z]{2,3}(-[A-Za-z]{2})?$ && -f $OMARCHY_PATH/default/i18n/$candidate/cli.json ]]; then
+    language=$candidate
+  fi
+fi
 
 string=""
 for code in "$language" en; do
   catalog=$OMARCHY_PATH/default/i18n/$code/cli.json
-  if [[ -f $catalog ]]; then
-    string=$(jq -r --arg key "$key" '.[$key] // empty' "$catalog")
-    [[ -n $string ]] && break
-  fi
+  [[ -f $catalog ]] || continue
+  string=$(jq -r --arg key "$key" '.[$key] // empty' "$catalog" 2>/dev/null) || string=""
+  [[ -n $string ]] && break
 done
 
-if [[ -z $string ]]; then
-  string=$key
+[[ -n $string ]] || string=$key
+
+# Substitute through sentinels so an argument that itself contains a %N
+# sequence is never substituted twice.
+if (( $# > 0 )); then
+  args=("$@")
+  for (( i = 1; i <= $#; i++ )); do
+    string=${string//%$i/$'\001'"$i"$'\002'}
+  done
+  for (( i = 1; i <= $#; i++ )); do
+    string=${string//$'\001'"$i"$'\002'/${args[i - 1]}}
+  done
 fi
 
-# Only run printf substitution when the caller passed arguments, so plain
-# strings containing % (battery percentages and the like) print untouched.
-if (($# > 0)); then
-  # shellcheck disable=SC2059 # the format comes from our own catalogs
-  printf "$string" "$@"
-else
-  printf '%s' "$string"
-fi
+printf '%s' "$string"

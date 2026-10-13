@@ -978,7 +978,7 @@ Panel {
                   onHovered: root.pointAt("add")
                   readonly property bool adding: root.addStage !== ""
                   glyph: adding ? "󰅖" : "󰐕"
-                  tooltip: adding ? "Back to the limits" : "Add a subscription"
+                  tooltip: adding ? Commons.I18n.t("agents.backToLimits") : Commons.I18n.t("agents.addSubscription")
                   onClicked: adding ? root.cancelAdd() : root.addAccount()
                 }
 
@@ -987,7 +987,7 @@ Panel {
                   hasCursor: root.hasKey("launch")
                   onHovered: root.pointAt("launch")
                   glyph: "󰞷"
-                  tooltip: "Start the default agent"
+                  tooltip: Commons.I18n.t("agents.startDefaultAgent")
                   onClicked: root.launchAgent()
                 }
               }
@@ -1349,7 +1349,7 @@ Panel {
       picked: root.hasKey("providerSignin", section.providerIndex)
       text: Commons.I18n.t("agents.signInRequired")
       idleColor: root.urgent
-      tooltip: "Sign in to " + (section.provider ? section.provider.providerName : "") + " again"
+      tooltip: Commons.I18n.t("agents.signInAgainProvider").arg(section.provider ? section.provider.providerName : "")
       onClicked: root.signInAgain(section.provider, null)
     }
 
@@ -1791,7 +1791,7 @@ Panel {
           picked: head.pickedKind === "signin"
           text: Commons.I18n.t("agents.signInRequired")
           idleColor: root.urgent
-          tooltip: "Sign in to this account again"
+          tooltip: Commons.I18n.t("agents.signInAgainAccount")
           onClicked: root.signInAgain(head.owner, head.account)
         }
       }
@@ -1847,12 +1847,12 @@ Panel {
 
         TextLink {
           visible: head.autoOn || useHover.hovered || head.picked
-          text: head.pickedKind === "autoswitch" ? "Autoswitch ⏎" : "Autoswitch"
+          text: Commons.I18n.t("agents.autoswitch") + (head.pickedKind === "autoswitch" ? " ⏎" : "")
           picked: head.pickedKind === "autoswitch"
           current: head.autoOn
           tooltip: head.autoOn
-            ? "Stop switching automatically"
-            : "Switch here automatically at " + root.switchThreshold(head.owner) + "%"
+            ? Commons.I18n.t("agents.stopAutoSwitch")
+            : Commons.I18n.t("agents.switchAutoAt").arg(root.switchThreshold(head.owner))
           onClicked: root.setSwitchMode(head.owner, head.autoOn ? "manual" : "auto")
         }
 

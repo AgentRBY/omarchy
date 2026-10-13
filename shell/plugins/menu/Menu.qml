@@ -285,7 +285,9 @@ Item {
   // Merge defaults + user extension. Later entries override earlier ones
   // on a per-key basis (so the user can tweak label/icon/action without
   // re-declaring the whole row).
-  function rebuildItemsFromSources() {
+  // Catalog-only rebuilds pass skipGuards: retitling rows cannot change any
+  // when/checked answer, so re-running the guard batch would be pure waste.
+  function rebuildItemsFromSources(skipGuards) {
     var translatedDefaults = MenuModel.applyTranslations(root.defaultMenuItems, root.menuCatalog)
     var mergedMenu = MenuModel.mergeMenuSources(translatedDefaults, root.userMenuItems)
     // The root row is injected by the merge (it has no JSONC entry), so its
@@ -298,7 +300,7 @@ Item {
     root.items = mergedMenu.items
     root.itemOrder = mergedMenu.itemOrder
     root.rowsLoaded = true
-    if (root.defaultMenuSettled && root.userMenuSettled) root.evaluateGuards()
+    if (!skipGuards && root.defaultMenuSettled && root.userMenuSettled) root.evaluateGuards()
     if (root.opened) {
       root.rebuildDisplay()
       if (!root.dmenuActive) {
@@ -371,6 +373,7 @@ Item {
         action: "",
         provider: "",
         aliases: aliases,
+        searchTerms: [],
         when: "",
         checked: "",
         disabled: "",
@@ -436,7 +439,8 @@ Item {
         description: "",
         action: spec.actionFor(value),
         provider: "",
-        aliases: parts[3] ? [parts[3]] : [],
+        aliases: [],
+        searchTerms: parts[3] ? [parts[3]] : [],
         when: "",
         checked: "",
         disabled: "",
@@ -1159,8 +1163,8 @@ Item {
     path: root.omarchyPath + "/default/i18n/" + root.language + "/menu.json"
     watchChanges: true
     printErrors: false
-    onLoaded: { root.menuCatalog = root.parseCatalog(text()); root.rebuildItemsFromSources() }
-    onLoadFailed: { root.menuCatalog = ({}); root.rebuildItemsFromSources() }
+    onLoaded: { root.menuCatalog = root.parseCatalog(text()); root.rebuildItemsFromSources(true) }
+    onLoadFailed: { root.menuCatalog = ({}); root.rebuildItemsFromSources(true) }
     onFileChanged: reload()
   }
 

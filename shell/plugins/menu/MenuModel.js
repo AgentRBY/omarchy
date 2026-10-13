@@ -33,6 +33,10 @@ function normalizeItem(id, raw) {
     action: value.action || "",
     provider: value.provider || "",
     aliases: aliases,
+    // Search-only terms: matched by nameSearchText, never by resolveRoute.
+    // Translations put the English label here so English search keeps
+    // working without making English words routable commands.
+    searchTerms: normalizeAliases(value.searchTerms),
     when: value.when || "",
     checked: value.checked || "",
     disabled: value.disabled || ""
@@ -84,7 +88,7 @@ function mergeMenuSources(defaultItems, userItems) {
   }
 
   if (!nextItems.root) {
-    nextItems.root = { id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], when: "", checked: "", disabled: "", action: "", provider: "" }
+    nextItems.root = { id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], searchTerms: [], when: "", checked: "", disabled: "", action: "", provider: "" }
     nextOrder.unshift("root")
   }
   for (var k3 = 0; k3 < nextOrder.length; k3++) nextItems[nextOrder[k3]].order = k3
@@ -299,7 +303,7 @@ function leafIdFor(id) {
 function nameSearchText(entry) {
   if (!entry) return ""
   var aliases = []
-  var values = Array.isArray(entry.aliases) ? entry.aliases : []
+  var values = (Array.isArray(entry.aliases) ? entry.aliases : []).concat(Array.isArray(entry.searchTerms) ? entry.searchTerms : [])
   for (var i = 0; i < values.length; i++) aliases.push(searchableToken(values[i]))
   return [entry.label, searchableToken(leafIdFor(entry.id)), aliases.join(" ")].join(" ").toLowerCase()
 }
@@ -619,7 +623,9 @@ function toggleDmenuSelection(selected, value) {
 // Returns a copy of items with label/title/description replaced from a
 // translation catalog ({id: {label, title, description}}), as shipped in
 // default/i18n/<code>/menu.json. The English label stays searchable by
-// moving it into aliases when the translation differs. Items without a
+// moving it into searchTerms when the translation differs — searchTerms
+// feed search but never resolveRoute, so English words do not become
+// routable commands in other languages. Items without a
 // catalog entry pass through untouched, so an incomplete (or missing)
 // catalog degrades to English row by row. Applied to the default items
 // before the user extension merges, so user rows and retitles always win.
@@ -638,9 +644,9 @@ function applyTranslations(items, catalog) {
     for (var k in entry) next[k] = entry[k]
     if (translated.label) {
       if (translated.label !== entry.label && entry.label) {
-        var aliases = Array.isArray(entry.aliases) ? entry.aliases.slice() : []
-        if (aliases.indexOf(entry.label) < 0) aliases.push(entry.label)
-        next.aliases = aliases
+        var terms = Array.isArray(entry.searchTerms) ? entry.searchTerms.slice() : []
+        if (terms.indexOf(entry.label) < 0) terms.push(entry.label)
+        next.searchTerms = terms
       }
       next.label = translated.label
     }

@@ -28,7 +28,7 @@ const enMenu = readJson('en/menu.json')
 const menuItems = MenuModel.parseMenuJsonc(fs.readFileSync(path.join(root, 'default/omarchy/omarchy-menu.jsonc'), 'utf8'))
 assertEqual(enMenu.root.label, 'Go', 'English menu catalog carries the injected root label')
 assert(menuItems.some((item) => item.id === 'setup.language' && item.provider === 'languages'), 'Setup > Language row uses the languages provider')
-const staleMenu = menuItems.filter((item) => !enMenu[item.id] || enMenu[item.id].label !== item.label || (item.title && enMenu[item.id].title !== item.title))
+const staleMenu = menuItems.filter((item) => !enMenu[item.id] || enMenu[item.id].label !== item.label || (item.title && enMenu[item.id].title !== item.title) || (item.description && enMenu[item.id].description !== item.description))
 assert(staleMenu.length === 0, 'English menu catalog mirrors the menu definition', JSON.stringify(staleMenu.map((i) => i.id)))
 const orphanMenu = Object.keys(enMenu).filter((id) => id !== 'root' && !menuItems.some((item) => item.id === id))
 assert(orphanMenu.length === 0, 'English menu catalog has no orphan ids', JSON.stringify(orphanMenu))
@@ -95,12 +95,22 @@ const defaults = MenuModel.parseMenuJsonc(JSON.stringify({
 }))
 const translated = MenuModel.applyTranslations(defaults, { setup: { label: 'Opsætning' } })
 assertEqual(translated[0].label, 'Opsætning', 'applyTranslations replaces the label')
-assert(translated[0].aliases.includes('Setup') && translated[0].aliases.includes('settings'), 'applyTranslations keeps English searchable')
+assert(translated[0].searchTerms.includes('Setup') && translated[0].aliases.includes('settings') && !translated[0].aliases.includes('Setup'), 'applyTranslations keeps English searchable but not routable')
 assertEqual(translated[1].label, 'Language', 'applyTranslations leaves untranslated rows in English')
 assertEqual(defaults[0].label, 'Setup', 'applyTranslations does not mutate its input')
 const merged = MenuModel.mergeMenuSources(translated, MenuModel.parseMenuJsonc(JSON.stringify({ setup: { label: 'My Setup' } })))
 assertEqual(merged.items.setup.label, 'My Setup', 'a user retitle wins over the translation')
 assertDeepEqual(MenuModel.applyTranslations(defaults, null), defaults, 'a missing catalog degrades to English')
+
+// Routing must not depend on the display language: English labels live in
+// searchTerms, which resolveRoute never reads, so a word that is inert in
+// English cannot become a command in another language.
+const daMenu = readJson('da/menu.json')
+const enMerged = MenuModel.mergeMenuSources(menuItems, [])
+const daMerged = MenuModel.mergeMenuSources(MenuModel.applyTranslations(menuItems, daMenu), [])
+for (const route of ['reboot', 'shutdown', 'logout', 'hibernate', 'lock', 'clock', 'danish', 'setup', 'settings', 'power-menu', 'language'])
+  assertEqual(MenuModel.resolveRoute(daMerged.items, daMerged.itemOrder, route), MenuModel.resolveRoute(enMerged.items, enMerged.itemOrder, route), `route "${route}" resolves the same in Danish as in English`)
+assert(MenuModel.nameSearchText(daMerged.items.setup).includes('setup'), 'English labels remain searchable in Danish')
 
 // JS models translate through the optional tr argument and stay English
 // without one (the audio/monitor/clipboard tests assert the same English).
@@ -191,8 +201,50 @@ else
   pass "omarchy-language rejects unknown codes"
 fi
 
-da_changed=$(jq -r '."language.changed"' "$ROOT/default/i18n/da/cli.json" | sed 's/%s/Dansk/')
+da_changed=$(jq -r '."language.changed"' "$ROOT/default/i18n/da/cli.json" | sed 's/%1/Dansk/')
 assert_bash_equal "$(omarchy-i18n language.changed Dansk)" "$da_changed" "omarchy-i18n prints the current language with substitution"
 assert_bash_equal "$(omarchy-i18n missing.key)" "missing.key" "omarchy-i18n passes unknown keys through"
 
 grep -q "$da_changed" "$NOTIFY_LOG" && pass "the language-change notification arrives in the new language" || fail "the language-change notification arrives in the new language" "notify log: $(cat "$NOTIFY_LOG")"
+
+da_battery=$(jq -r '."battery.lowBody"' "$ROOT/default/i18n/da/cli.json" | sed 's/%1/12/')
+assert_bash_equal "$(omarchy-i18n battery.lowBody 12)" "$da_battery" "omarchy-i18n substitutes %1 and keeps a literal percent sign"
+
+# With the locale already generated and LANG already set, picking the
+# language needs no privilege at all: no terminal handoff, no locale-gen.
+cat >"$work/stubs/locale" <<'STUB'
+#!/bin/bash
+if [[ $1 == "-a" ]]; then printf 'en_US.utf8\nda_DK.utf8\n'; else echo "LANG=da_DK.UTF-8"; fi
+STUB
+cat >"$work/stubs/omarchy-launch-floating-terminal-with-presentation" <<'STUB'
+#!/bin/bash
+echo "$@" >>"$LAUNCH_LOG"
+STUB
+chmod +x "$work/stubs/locale" "$work/stubs/omarchy-launch-floating-terminal-with-presentation"
+export LAUNCH_LOG=$work/launch.log
+: >"$LOCALE_GEN_LOG"; : >"$LAUNCH_LOG"
+printf 'LANG=da_DK.UTF-8\nLC_TIME=C\n' >"$OMARCHY_LOCALE_CONF"
+rm -f "$OMARCHY_LANGUAGE_FILE"
+omarchy-language da </dev/null
+assert_bash_equal "$(cat "$OMARCHY_LANGUAGE_FILE")" "da" "already-applied locale switches without a terminal"
+assert_bash_equal "$(cat "$LOCALE_GEN_LOG")" "" "already-generated locale is not regenerated"
+assert_bash_equal "$(cat "$LAUNCH_LOG")" "" "no terminal handoff when nothing privileged is needed"
+
+# With LANG still to change, a launch without a terminal must hand off to
+# one instead of running sudo blind — and must not persist the choice yet.
+printf 'LANG=en_US.UTF-8\nLC_TIME=C\n' >"$OMARCHY_LOCALE_CONF"
+rm -f "$OMARCHY_LANGUAGE_FILE"
+omarchy-language da </dev/null
+assert_bash_equal "$(cat "$LAUNCH_LOG")" "omarchy-language da --apply" "privileged locale work hands off to a terminal"
+[[ ! -f $OMARCHY_LANGUAGE_FILE ]] && pass "the choice is not persisted before the locale applies" || fail "the choice is not persisted before the locale applies"
+
+# Every registry locale must be one glibc can actually generate.
+if [[ -f /usr/share/i18n/SUPPORTED ]]; then
+  unsupported=""
+  while read -r loc; do
+    grep -qE "^${loc%.UTF-8}(\.UTF-8)? UTF-8" /usr/share/i18n/SUPPORTED || unsupported="$unsupported $loc"
+  done < <(jq -r '.[].locale' "$ROOT/default/i18n/locales.json")
+  assert_bash_equal "$unsupported" "" "every registry locale exists in glibc SUPPORTED"
+else
+  skip "every registry locale exists in glibc SUPPORTED"
+fi

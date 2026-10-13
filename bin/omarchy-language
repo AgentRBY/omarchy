@@ -1,13 +1,22 @@
 #!/bin/bash
 
 # omarchy:summary=Show or set the Omarchy language and system locale
-# omarchy:args=[<code>|list]
+# omarchy:args=[<code>|list|locale [<code>]]
 # omarchy:examples=omarchy language | omarchy language da | omarchy language list
 
 set -euo pipefail
 
 locales_json=${OMARCHY_LOCALES_JSON:-$OMARCHY_PATH/default/i18n/locales.json}
 language_file=${OMARCHY_LANGUAGE_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/language}
+
+# Root always writes the real files; the overrides are for unprivileged
+# tests (same convention as install/config/locale.sh).
+locale_conf=/etc/locale.conf
+locale_gen=/etc/locale.gen
+if (( EUID != 0 )); then
+  locale_conf=${OMARCHY_LOCALE_CONF:-$locale_conf}
+  locale_gen=${OMARCHY_LOCALE_GEN:-$locale_gen}
+fi
 
 known_language() {
   jq -e --arg code "$1" 'has($code)' "$locales_json" >/dev/null 2>&1
@@ -55,38 +64,50 @@ locale_generated() {
   [[ $available == *" $want "* ]]
 }
 
+current_lang() {
+  sed -n 's/^LANG=//p' "$locale_conf" 2>/dev/null | tail -n 1 | tr -d '"' || true
+}
+
+# Writing /etc needs privilege, and sudo needs a terminal to prompt in, so
+# anything below that changes locale.gen or locale.conf counts.
+needs_privileged_work() {
+  ! locale_generated "$1" || [[ $(current_lang) != "$1" ]]
+}
+
 apply_locale() {
   local locale=$1
-  local locale_conf=${OMARCHY_LOCALE_CONF:-/etc/locale.conf}
-  local locale_gen=${OMARCHY_LOCALE_GEN:-/etc/locale.gen}
-  # The OMARCHY_LOCALE_* overrides point at test files that need no privilege;
-  # the real /etc paths do (same convention as install/config/locale.sh).
+  # The OMARCHY_LOCALE_* overrides point at test files that need no
+  # privilege; the real /etc paths do.
   local -a priv=(sudo)
-  if [[ -n ${OMARCHY_LOCALE_CONF:-} || -n ${OMARCHY_LOCALE_GEN:-} ]]; then
+  if [[ $locale_conf != "/etc/locale.conf" || $locale_gen != "/etc/locale.gen" ]]; then
     priv=()
   fi
 
   if ! locale_generated "$locale"; then
-    if grep -q "^#$locale " "$locale_gen" 2>/dev/null; then
-      "${priv[@]}" sed -i "s/^#$locale /$locale /" "$locale_gen"
-    elif ! grep -q "^$locale " "$locale_gen" 2>/dev/null; then
+    # locale.gen spells some entries without the codeset (hi_IN UTF-8).
+    local base=${locale%.UTF-8}
+    if grep -qE "^#$base(\.UTF-8)? UTF-8" "$locale_gen" 2>/dev/null; then
+      "${priv[@]}" sed -i -E "s/^#($base(\.UTF-8)? UTF-8)/\1/" "$locale_gen"
+    elif ! grep -qE "^$base(\.UTF-8)? UTF-8" "$locale_gen" 2>/dev/null; then
       echo "$locale UTF-8" | "${priv[@]}" tee -a "$locale_gen" >/dev/null
     fi
     "${priv[@]}" locale-gen "$locale" >/dev/null
   fi
 
   # Only LANG changes; LC_* lines somebody set stay.
-  if grep -q '^LANG=' "$locale_conf" 2>/dev/null; then
-    "${priv[@]}" sed -i "s/^LANG=.*/LANG=$locale/" "$locale_conf"
-  else
-    echo "LANG=$locale" | "${priv[@]}" tee -a "$locale_conf" >/dev/null
+  if [[ $(current_lang) != "$locale" ]]; then
+    if grep -q '^LANG=' "$locale_conf" 2>/dev/null; then
+      "${priv[@]}" sed -i "s/^LANG=.*/LANG=$locale/" "$locale_conf"
+    else
+      echo "LANG=$locale" | "${priv[@]}" tee -a "$locale_conf" >/dev/null
+    fi
   fi
 }
 
 set_language() {
   local code=$1
   if ! known_language "$code"; then
-    echo "Usage: omarchy-language [<code>|list]" >&2
+    echo "Usage: omarchy-language [<code>|list|locale [<code>]]" >&2
     echo "Unknown language code: $code" >&2
     echo "Run 'omarchy-language list' to see the available codes." >&2
     exit 1
@@ -96,17 +117,21 @@ set_language() {
   locale=$(locale_for "$code")
   name=$(name_for "$code")
 
-  # Generating a locale needs sudo; when we were launched without a terminal
-  # (from the menu), continue in a floating terminal where sudo can prompt,
-  # the way omarchy-default-browser handles its install step.
-  if [[ ${2:-} != "--apply" ]] && ! locale_generated "$locale" && [[ ! -t 0 ]]; then
+  # Applying a locale can need sudo; when we were launched without a
+  # terminal (from the menu), continue in a floating terminal where sudo
+  # can prompt, the way omarchy-default-browser handles its install step.
+  # When nothing privileged needs doing (locale generated, LANG already
+  # set — picking English again, say), fall through and just switch.
+  if [[ ${2:-} != "--apply" ]] && needs_privileged_work "$locale" && [[ ! -t 0 ]]; then
     exec omarchy-launch-floating-terminal-with-presentation omarchy-language "$code" --apply
   fi
 
+  apply_locale "$locale"
+
+  # The choice is only persisted once the locale applied, so a failed sudo
+  # cannot leave the interface switched with LANG behind it.
   mkdir -p "$(dirname "$language_file")"
   echo "$code" >"$language_file"
-
-  apply_locale "$locale"
 
   omarchy-notification-send "$(omarchy-i18n language.changed "$name")" "$(omarchy-i18n language.relogin)"
 }
@@ -119,7 +144,12 @@ list)
   list_languages
   ;;
 locale)
-  locale_for "${2:-$(current_language)}"
+  code=${2:-$(current_language)}
+  if ! known_language "$code"; then
+    echo "Unknown language code: $code" >&2
+    exit 1
+  fi
+  locale_for "$code"
   ;;
 *)
   set_language "$1" "${2:-}"

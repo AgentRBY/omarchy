@@ -14,7 +14,7 @@ if (( $# == 0 )); then
     exit 1
   fi
 
-  core=$(omarchy-menu-select "RetroArch core" "${cores[@]}") || exit 0
+  core=$(omarchy-menu-select "$(omarchy-i18n games.corePrompt)" "${cores[@]}") || exit 0
   [[ -n $core ]] || exit 0
   core="${core##*(}"
   core="${core%)}"

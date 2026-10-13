@@ -157,6 +157,13 @@ Item {
     })
   }
 
+  // Preview text is composed imperatively, so rebuild it when the
+  // language (and with it the string catalog) changes under an open panel.
+  Connections {
+    target: Commons.I18n
+    function onStringsChanged() { if (root.opened) root.rebuildDisplay() }
+  }
+
   function select(delta) {
     if (displayModel.count === 0) return
     root.disarmPointer()
