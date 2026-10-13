@@ -1014,7 +1014,11 @@ def limits_cache_path(home):
   if not identity:
     return None
   digest = hashlib.sha1(f"{codex_home}\n{identity}".encode("utf-8")).hexdigest()[:16]
-  return cache_root() / f"codex-limits-{digest}.json"
+  try:
+    return cache_root() / f"codex-limits-{digest}.json"
+  except Exception as exc:
+    print(f"omarchy-agent-usage-codex: limits cache unavailable ({exc})", file=sys.stderr)
+    return None
 
 
 def usable_cached_limits(cached):
@@ -1042,15 +1046,12 @@ def usable_cached_limits(cached):
 # reason to blank limits that were right a refresh ago. `live` says the limits
 # came from this probe.
 def collect_limits(home=None):
+  cache = limits_cache_path(home)
   rpc = fetch_codex_rpc(home)
   rpc["live"] = bool(rpc["limits"])
   rpc["fetchedAtMs"] = round(time.time() * 1000) if rpc["live"] else 0
-  try:
-    cache = limits_cache_path(home)
-  except Exception as exc:
-    print(f"omarchy-agent-usage-codex: limits cache unavailable ({exc})", file=sys.stderr)
-    return rpc
-  if cache is None:
+  # A login that changed while the probe ran leaves no telling whose these are.
+  if cache is None or cache != limits_cache_path(home):
     return rpc
 
   if rpc["live"]:

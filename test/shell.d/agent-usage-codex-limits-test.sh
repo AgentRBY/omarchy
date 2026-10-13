@@ -14,7 +14,7 @@ export HOME="$test_tmp/home"
 export XDG_STATE_HOME="$test_tmp/state"
 export XDG_CACHE_HOME="$test_tmp/cache"
 export XDG_DATA_HOME="$test_tmp/data"
-unset CODEX_HOME
+unset CODEX_HOME CODEX_ACCESS_TOKEN
 
 mkdir -p "$HOME/.codex/sessions" "$test_tmp/bin"
 printf '{"tokens":{"account_id":"acct-one"}}\n' >"$HOME/.codex/auth.json"
@@ -39,6 +39,10 @@ for line in sys.stdin:
     if mode == "backend":
       print(json.dumps({"id": message["id"], "error": {"code": -32603, "message": "failed to fetch codex rate limits"}}), flush=True)
       continue
+    if mode == "switch":
+      home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+      with open(os.path.join(home, "auth.json"), "w") as handle:
+        handle.write('{"tokens":{"account_id":"acct-three"}}\n')
     if mode == "auth":
       print(json.dumps({"id": message["id"], "error": {"code": -32603, "message": "not authenticated"}}), flush=True)
       continue
@@ -101,3 +105,12 @@ file=$(collect backend)
 [[ $(jq -c '{limitsStale, used: (.limits[0].percent * 100 | round)}' <<<"$file") == '{"limitsStale":true,"used":40}' ]] ||
   fail "the file store's own account keeps its limits" "$file"
 pass "the file store's own account keeps its limits"
+
+# Signed in to someone else while the probe ran: the answer is shown, but kept
+# for neither login.
+switched=$(collect switch)
+[[ $(jq '.limitsStale' <<<"$switched") == false ]] || fail "a probe across a login change still reports what it got" "$switched"
+after=$(collect backend)
+[[ $(jq -c '.limits' <<<"$after") == '[]' ]] ||
+  fail "limits from a probe across a login change are kept for neither login" "$after"
+pass "limits from a probe across a login change are kept for neither login"
