@@ -142,8 +142,14 @@ ShellRoot {
     watchChanges: true
     atomicWrites: true
     printErrors: false
-    onLoaded: shell.applyShellConfig()
-    onLoadFailed: function(error) { shell.applyShellConfig() }
+    onLoaded: {
+      shell.applyShellConfig()
+      shell.userConfigRead = true
+    }
+    onLoadFailed: function(error) {
+      shell.applyShellConfig()
+      shell.userConfigRead = true
+    }
     onFileChanged: reload()
   }
 
@@ -182,6 +188,11 @@ ShellRoot {
     return shell.defaultBarId
   }
   property string failedBarId: ""
+  property bool userConfigRead: false
+  // Until shell.json is read and a custom bar's plugin is scanned, the built-in bar
+  // would only stand in for one that replaces it moments later.
+  readonly property bool barSelectionSettled: userConfigRead
+    && (selectedBarId === defaultBarId || shell.pluginRegistry.scanned)
   readonly property bool selectedBarAvailable: {
     var revision = shell.pluginRegistry.registryRevision
     return shell.barOptionAvailable(shell.selectedBarId)
@@ -246,7 +257,7 @@ ShellRoot {
   Loader {
     id: defaultBarLoader
 
-    active: shell.activeBarId === shell.defaultBarId
+    active: shell.barSelectionSettled && shell.activeBarId === shell.defaultBarId
     sourceComponent: defaultBarComponent
     onLoaded: shell.configureBar(item, shell.barManifestFor(shell.defaultBarId))
     onActiveChanged: if (!active && shell.activeBarId !== shell.defaultBarId) shell.bar = null
