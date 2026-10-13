@@ -47,7 +47,7 @@ for line in sys.stdin:
       print(json.dumps({"id": message["id"], "error": {"code": -32603, "message": "not authenticated"}}), flush=True)
       continue
     print(json.dumps({"id": message["id"], "result": {"rateLimits": {"planType": "pro",
-      "primary": {"usedPercent": 40, "windowDurationMins": 300, "resetsAt": now + 3600},
+      "primary": {"usedPercent": 55 if mode == "switch" else 40, "windowDurationMins": 300, "resetsAt": now + 3600},
       "secondary": {"usedPercent": 70, "windowDurationMins": 10080, "resetsAt": now + 2}}}}), flush=True)
     continue
   print(json.dumps({"id": message["id"], "result": {}}), flush=True)
@@ -113,4 +113,14 @@ switched=$(collect switch)
 after=$(collect backend)
 [[ $(jq -c '.limits' <<<"$after") == '[]' ]] ||
   fail "limits from a probe across a login change are kept for neither login" "$after"
+printf '{"tokens":{"account_id":"acct-two"}}\n' >"$HOME/.codex/auth.json"
+before=$(collect backend)
+[[ $(jq '.limits[0].percent * 100 | round' <<<"$before") == 40 ]] ||
+  fail "limits from a probe across a login change are kept for neither login" "$before"
 pass "limits from a probe across a login change are kept for neither login"
+
+printf '{"tokens":["unexpected"]}\n' >"$HOME/.codex/auth.json"
+odd=$(collect backend) || fail "an auth.json of another shape still gives a record"
+[[ $(jq -r '.usageStatusText' <<<"$odd") == "Codex limits unavailable" ]] ||
+  fail "an auth.json of another shape still gives a record" "$odd"
+pass "an auth.json of another shape still gives a record"

@@ -999,10 +999,9 @@ def signed_in_identity(codex_home):
   if str(config.get("cli_auth_credentials_store") or "file") != "file":
     return ""
   try:
-    tokens = json.loads((codex_home / "auth.json").read_text(encoding="utf-8")).get("tokens") or {}
+    return str(json.loads((codex_home / "auth.json").read_text(encoding="utf-8"))["tokens"]["account_id"] or "")
   except Exception:
     return ""
-  return str(tokens.get("account_id") or "")
 
 
 # Keyed by the home and the account it is signed in to, so a home signed in to
