@@ -206,15 +206,22 @@ Item {
     if (address.indexOf("0x") !== 0) address = "0x" + address
     var target = "window = \"address:" + address + "\""
     var steps = []
+    var after = []
     if (window.minimized) {
       var monitor = Hyprland.focusedMonitor
       var workspace = monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
       if (!(workspace >= 1)) return
+      // A restored window is simply there again, without animating in.
+      steps.push("hl.dsp.window.set_prop({ prop = \"no_anim\", value = \"1\", " + target + " })")
       steps.push("hl.dsp.window.move({ workspace = \"" + workspace + "\", " + target + " })")
+      after.push("hl.dsp.window.set_prop({ prop = \"no_anim\", value = \"unset\", " + target + " })")
     }
     steps.push("hl.dsp.focus({ " + target + " })")
     steps.push("hl.dsp.window.alter_zorder({ mode = \"top\", " + target + " })")
-    Util.execDetached(steps.map(function(step) { return "hyprctl dispatch " + Util.shellQuote(step) }).join(" && "))
+    var dispatch = function(step) { return "hyprctl dispatch " + Util.shellQuote(step) }
+    var command = steps.map(dispatch).join(" && ")
+    if (after.length > 0) command += "; sleep 0.4; " + after.map(dispatch).join("; ")
+    Util.execDetached(command)
   }
 
   function quit(item) {
