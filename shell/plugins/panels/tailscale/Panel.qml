@@ -539,6 +539,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               anchors.margins: Style.space(12)
               text: Commons.I18n.t("tailscale.notInstalled")
+              textFormat: Text.PlainText
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -657,6 +658,7 @@ Panel {
                   visible: root.filteredMullvadRegions.length === 0
                   width: parent.width
                   text: Commons.I18n.t("tailscale.noRegions")
+                  textFormat: Text.PlainText
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -703,6 +705,7 @@ Panel {
               visible: tailscale.installed && tailscale.active && tailscale.peers.length === 0
               width: parent.width
               text: Commons.I18n.t("tailscale.noMachines")
+              textFormat: Text.PlainText
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -796,6 +799,7 @@ Panel {
         Text {
           Layout.fillWidth: true
           text: Commons.I18n.t("tailscale.authorizeOperator")
+          textFormat: Text.PlainText
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -805,6 +809,7 @@ Panel {
         Text {
           Layout.fillWidth: true
           text: Commons.I18n.t("tailscale.authorizeHelp")
+          textFormat: Text.PlainText
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

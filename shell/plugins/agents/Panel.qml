@@ -1079,6 +1079,7 @@ Panel {
       visible: root.blankSlate && root.picking
       width: parent.width
       text: Commons.I18n.t("agents.signInIntro")
+      textFormat: Text.PlainText
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -1151,6 +1152,7 @@ Panel {
       Text {
         width: parent.width
         text: Commons.I18n.t("agents.nameAccount")
+        textFormat: Text.PlainText
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -1193,6 +1195,7 @@ Panel {
 
         Text {
           text: Commons.I18n.t("agents.confirmCode")
+          textFormat: Text.PlainText
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -1217,6 +1220,7 @@ Panel {
         Text {
           width: parent.width
           text: Commons.I18n.t("agents.pasteCode")
+          textFormat: Text.PlainText
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -1824,6 +1828,7 @@ Panel {
         visible: head.isActive
         anchors.right: parent.right
         text: Commons.I18n.t("agents.active")
+        textFormat: Text.PlainText
         color: Commons.Color.accent
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -1872,6 +1877,7 @@ Panel {
     Text {
       id: unavailableLabel
       text: Commons.I18n.t("agents.usageUnavailable")
+      textFormat: Text.PlainText
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall

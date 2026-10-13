@@ -1350,7 +1350,7 @@ Item {
           opened: root.deleteConfirmOpen
           z: 10
           message: Commons.I18n.t("common.uninstallConfirm").arg((root.deleteTarget && root.deleteTarget.label) || "")
-          confirmText: "Uninstall"
+          confirmText: Commons.I18n.t("common.uninstall")
           background: root.background
           foreground: root.foreground
           scrim: root.scrim

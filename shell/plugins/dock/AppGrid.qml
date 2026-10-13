@@ -213,7 +213,7 @@ Item {
         opened: !!root.uninstallEntry
         z: 10
         message: Commons.I18n.t("common.uninstallConfirm").arg(root.uninstallEntry && root.appLibrary ? root.appLibrary.entryName(root.uninstallEntry) : "")
-        confirmText: "Uninstall"
+        confirmText: Commons.I18n.t("common.uninstall")
         background: Commons.Color.menu.background
         foreground: Commons.Color.menu.text
         scrim: Commons.Color.menu.scrim

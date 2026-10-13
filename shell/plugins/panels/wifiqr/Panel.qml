@@ -306,6 +306,7 @@ Item {
           Text {
             visible: root.loading
             text: I18n.t("wifiqr.generating")
+            textFormat: Text.PlainText
             color: root.onScrimDim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -329,6 +330,7 @@ Item {
           Text {
             visible: root.showingQr
             text: I18n.t("wifiqr.scanToJoin")
+            textFormat: Text.PlainText
             color: root.onScrimDim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall

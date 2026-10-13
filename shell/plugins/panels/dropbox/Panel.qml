@@ -341,6 +341,7 @@ Panel {
               visible: dropbox.files.length === 0
               width: parent.width
               text: Commons.I18n.t("dropbox.noFiles")
+              textFormat: Text.PlainText
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body

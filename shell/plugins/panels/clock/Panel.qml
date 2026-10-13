@@ -386,6 +386,7 @@ Panel {
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
                   text: Commons.I18n.t("clock.born")
+                  textFormat: Text.PlainText
                   color: Qt.darker(root.contentForeground, 1.5)
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -409,6 +410,7 @@ Panel {
                   anchors.verticalCenterOffset: 0
                   leftPadding: Style.space(6)
                   text: Commons.I18n.t("clock.liveTo")
+                  textFormat: Text.PlainText
                   color: Qt.darker(root.contentForeground, 1.5)
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -496,6 +498,7 @@ Panel {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 text: Commons.I18n.t("clock.life")
+                textFormat: Text.PlainText
                 color: Qt.darker(root.contentForeground, 1.5)
                 font.family: root.contentFontFamily
                 font.pixelSize: Style.font.bodySmall

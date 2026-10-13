@@ -400,7 +400,7 @@ Item {
           opened: root.clearConfirmOpen
           z: 10
           message: Commons.I18n.t("clipboard.deleteHistory")
-          confirmText: "Delete"
+          confirmText: Commons.I18n.t("common.delete")
           background: root.background
           foreground: root.foreground
           scrim: root.scrim

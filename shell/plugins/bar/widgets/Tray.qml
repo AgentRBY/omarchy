@@ -412,6 +412,7 @@ BarWidget {
 
       Text {
         text: Commons.I18n.t("tray.title")
+        textFormat: Text.PlainText
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
@@ -420,6 +421,7 @@ BarWidget {
 
       Text {
         text: Commons.I18n.t("tray.help")
+        textFormat: Text.PlainText
         color: Qt.darker(root.foreground, 1.4)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -430,6 +432,7 @@ BarWidget {
       Text {
         visible: root.allItems.length === 0
         text: Commons.I18n.t("tray.empty")
+        textFormat: Text.PlainText
         color: Qt.darker(root.foreground, 1.5)
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall

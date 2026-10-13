@@ -697,6 +697,7 @@ Panel {
               spacing: Style.space(5)
               Text {
                 text: Commons.I18n.t("weather.feels")
+                textFormat: Text.PlainText
                 color: Qt.darker(root.bar.foreground, 1.5)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -715,6 +716,7 @@ Panel {
               spacing: Style.space(5)
               Text {
                 text: Commons.I18n.t("weather.wind")
+                textFormat: Text.PlainText
                 color: Qt.darker(root.bar.foreground, 1.5)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -733,6 +735,7 @@ Panel {
               spacing: Style.space(5)
               Text {
                 text: Commons.I18n.t("weather.humid")
+                textFormat: Text.PlainText
                 color: Qt.darker(root.bar.foreground, 1.5)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -806,6 +809,7 @@ Panel {
       Text {
         visible: !root.current
         text: Commons.I18n.t("weather.fetching")
+        textFormat: Text.PlainText
         color: Qt.darker(root.bar.foreground, 1.5)
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.bodySmall

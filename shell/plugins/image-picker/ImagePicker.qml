@@ -883,7 +883,7 @@ Item {
       opened: root.deleteConfirmOpen
       z: 10
       message: Commons.I18n.t("imagePicker.deleteTheme").arg(root.pendingDeleteTheme ? root.labelForPath(root.pendingDeleteTheme) : "")
-      confirmText: "Delete"
+      confirmText: Commons.I18n.t("common.delete")
       background: root.dimColor
       foreground: root.foreground
       onCanceled: root.cancelDeleteTheme()
