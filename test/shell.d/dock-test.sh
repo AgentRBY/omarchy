@@ -45,6 +45,10 @@ assertDeepEqual(
 )
 
 assert(!dock.isDockWindow(app('foot', 6, { workspaceId: 0 })), 'dock leaves out windows without a regular workspace')
+assert(
+  dock.isDockWindow(app('xeyes', 7, { hasEntry: false, workspaceId: -99, minimized: true })),
+  'dock keeps a minimized window without a desktop entry, so it can come back'
+)
 assertEqual(dock.dropIndex(2, 0, 40, 6), 2, 'dock keeps a barely dragged app in its slot')
 assertEqual(dock.dropIndex(2, 85, 40, 6), 4, 'dock lands a dragged app as many slots on as the pointer went')
 assertEqual(dock.dropIndex(2, -500, 40, 6), 0, 'dock lands an app dragged past the start in the first slot')
@@ -103,10 +107,16 @@ assertDeepEqual(
 )
 assertDeepEqual(dock.orderWithKeyLast(['chromium'], 'obsidian'), ['chromium', 'obsidian'], 'dock adds a newly kept app at the end')
 
-assertEqual(dock.nextWindowIndex([]), -1, 'dock has no window to bring forward for an app that is not running')
-assertEqual(dock.nextWindowIndex([false, false]), 0, 'dock brings forward the first window of an unfocused app')
-assertEqual(dock.nextWindowIndex([false, true, false]), 2, 'dock cycles to the next window of a focused app')
-assertEqual(dock.nextWindowIndex([false, true]), 0, 'dock cycles back around to the first window')
+const foot = [
+  { workspaceId: 2, minimized: false, activated: false },
+  { workspaceId: -99, minimized: true, activated: false },
+  { workspaceId: 4, minimized: false, activated: false }
+]
+assertEqual(dock.pickWindow(foot, 4), 2, 'dock brings forward the window on the workspace in front of the user first')
+assertEqual(dock.pickWindow(foot, 3), 1, 'dock restores a minimized window before leaving for another workspace')
+assertEqual(dock.pickWindow(foot.map((w, i) => Object.assign({}, w, { activated: i === 2 })), 4), 1, 'dock cycles from the window here to the minimized one')
+assertEqual(dock.pickWindow([], 4), -1, 'dock has no window to pick for an app that is not running')
+
 JS
 
 home="$TMPDIR/home"

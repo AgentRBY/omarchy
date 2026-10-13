@@ -30,11 +30,14 @@ function pinnedIds(dockConfig, defaultsConfig) {
   return ids
 }
 
-// Only app windows on regular workspaces, or minimized, belong in the dock. Helpers without a
+// Only app windows on regular workspaces belong in the dock. Helpers without a
 // visible desktop entry, such as the agent window, and anything parked on a
-// special workspace, such as the scratchpad, stay out of it.
+// special workspace, such as the scratchpad, stay out of it. A minimized window
+// always belongs, entry or not, since the dock is the only way back to it.
 function isDockWindow(window) {
-  return !!window && !!window.key && window.hasEntry === true && (window.workspaceId >= 1 || window.minimized === true)
+  if (!window || !window.key) return false
+  if (window.minimized === true) return true
+  return window.hasEntry === true && window.workspaceId >= 1
 }
 
 // Minimizing moves a window to this special workspace, and the dock brings it
@@ -178,16 +181,29 @@ function pinnedAt(items, allPinned, key, index) {
   return movedPins(list, allPinned, from, from < index ? index - 1 : index)
 }
 
-// Clicking an app whose window is focused moves on to its next window, so
-// repeated clicks cycle through them. Otherwise the first window comes forward.
-function nextWindowIndex(activeFlags) {
-  var count = (activeFlags || []).length
-  if (count === 0) return -1
-  for (var i = 0; i < count; i++) {
-    if (activeFlags[i]) return (i + 1) % count
+// The window a click on an app brings forward. Windows on the workspace in
+// front of the user come first, then minimized ones, which come back to it,
+// and only then those on other workspaces. Clicking again while one of them
+// is focused moves on to the next in that order. Windows are
+// { workspaceId, minimized, activated }.
+function pickWindow(windows, workspaceId) {
+  var list = windows || []
+  if (list.length === 0) return -1
+
+  function rank(window) {
+    if (window.minimized) return 1
+    return window.workspaceId === workspaceId ? 0 : 2
   }
-  return 0
+
+  var order = list.map(function(window, index) { return index })
+  order.sort(function(a, b) { return rank(list[a]) - rank(list[b]) || a - b })
+
+  for (var i = 0; i < order.length; i++) {
+    if (list[order[i]].activated) return order[(i + 1) % order.length]
+  }
+  return order[0]
 }
+
 
 if (typeof module !== "undefined") {
   module.exports = {
@@ -205,6 +221,6 @@ if (typeof module !== "undefined") {
     dropIndex: dropIndex,
     movedPins: movedPins,
     pinnedAt: pinnedAt,
-    nextWindowIndex: nextWindowIndex
+    pickWindow: pickWindow
   }
 }

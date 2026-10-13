@@ -191,7 +191,11 @@ Item {
       root.launch(item)
       return
     }
-    var index = DockModel.nextWindowIndex(item.windows.map(function(window) { return window.toplevel.activated }))
+    var monitor = Hyprland.focusedMonitor
+    var workspaceId = monitor && monitor.activeWorkspace ? monitor.activeWorkspace.id : -1
+    var index = DockModel.pickWindow(item.windows.map(function(window) {
+      return { workspaceId: window.workspaceId, minimized: window.minimized, activated: window.toplevel.activated }
+    }), workspaceId)
     root.bringForward(item.windows[index])
   }
 
