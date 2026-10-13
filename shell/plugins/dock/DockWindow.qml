@@ -398,11 +398,10 @@ PanelWindow {
     }
 
     z: lifted ? 1 : 0
-    transform: Translate {
-      x: window.vertical ? 0 : appSlot.displayedShift
-      y: window.vertical ? appSlot.displayedShift : 0
-    }
 
+    // The slot, and the pointer handling in it, stays where it is; only the
+    // icon moves. Reading the pointer through a slot that moves with it would
+    // feed each move back into the next.
     function bodyPoint(event) {
       return appSlot.mapToItem(body, event.x, event.y)
     }
@@ -468,6 +467,10 @@ PanelWindow {
       smooth: true
       mipmap: true
       opacity: appSlot.launching ? appSlot.pulse : (appSlot.windowCount > 0 ? 1 : window.idleOpacity)
+      transform: Translate {
+        x: window.vertical ? 0 : appSlot.displayedShift
+        y: window.vertical ? appSlot.displayedShift : 0
+      }
       scale: appSlot.lifted || appSlot.hovered ? 1.15 : 1
       transformOrigin: window.popOrigin
 
