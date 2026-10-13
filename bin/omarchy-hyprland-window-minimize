@@ -14,6 +14,9 @@ fi
 
 [[ -n $ADDRESS && $WORKSPACE =~ ^[0-9]+$ ]] || exit 1
 
+# Only floating workspaces have the dock to bring a window back from.
+[[ $(omarchy-hyprland-workspace-layout-current "$WORKSPACE") == "floating" ]] || exit 0
+
 hyprctl dispatch "hl.dsp.window.move({ workspace = \"special:minimized\", follow = false, window = \"address:$ADDRESS\" })" >/dev/null
 
 # Focus would otherwise stay with the minimized window, and the next window

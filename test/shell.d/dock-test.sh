@@ -157,8 +157,8 @@ fi
 pass "dock auto-hide is set through omarchy-dock autohide"
 
 # The dock only shows on floating workspaces, and gets out of the way of a
-# fullscreen window.
-grep -qF 'dock.isFloating(workspaceId) && !(workspace && workspace.hasFullscreen)' "$ROOT/shell/plugins/dock/DockWindow.qml" ||
+# fullscreen window; a maximized one only tucks it away.
+grep -qF 'dock.isFloating(workspaceId) && fullscreenMode < 2' "$ROOT/shell/plugins/dock/DockWindow.qml" ||
   fail "dock shows only on floating workspaces without a fullscreen window"
 pass "dock shows only on floating workspaces without a fullscreen window"
 
@@ -174,6 +174,8 @@ case "\$1" in
 esac
 STUB
 chmod +x "$mock_bin/hyprctl"
+printf '#!/bin/bash\n[[ $1 == 9 ]] && echo dwindle || echo floating\n' >"$mock_bin/omarchy-hyprland-workspace-layout-current"
+chmod +x "$mock_bin/omarchy-hyprland-workspace-layout-current"
 minimize() { PATH="$mock_bin:$ROOT/bin:$PATH" omarchy-hyprland-window-minimize "$@"; }
 
 minimize 0xabc
@@ -186,3 +188,17 @@ minimize
 grep -qF 'address:0xdef' "$TMPDIR/hyprctl.log" && [[ $(tail -1 "$TMPDIR/hyprctl.log") == 'hl.dsp.focus({ workspace = "5" })' ]] ||
   fail "minimize takes the active window when given none" "$(cat "$TMPDIR/hyprctl.log")"
 pass "minimize sends a window to the dock and keeps focus on its workspace"
+
+# A tiled workspace has no dock to bring a window back from, so nothing there
+# is minimized.
+cat >"$mock_bin/hyprctl" <<STUB
+#!/bin/bash
+case "\$1" in
+  activewindow) printf '{"address":"0x999","workspace":{"id":9}}\n' ;;
+  dispatch) printf '%s\n' "\$2" >>"$TMPDIR/hyprctl.log" ;;
+esac
+STUB
+: >"$TMPDIR/hyprctl.log"
+minimize
+[[ ! -s $TMPDIR/hyprctl.log ]] || fail "minimize leaves windows on a tiled workspace alone" "$(cat "$TMPDIR/hyprctl.log")"
+pass "minimize leaves windows on a tiled workspace alone"
