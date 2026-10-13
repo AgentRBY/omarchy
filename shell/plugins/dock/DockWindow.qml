@@ -63,8 +63,8 @@ PanelWindow {
     : position === "right" ? Item.Right
     : Item.Bottom
 
-  // With no background behind them, the apps button's tiles carry a thin
-  // outline in the theme's background color so they read on light wallpapers.
+  // With no background behind it, the apps button carries a thin outline in
+  // the theme's background color so it reads on light wallpapers.
   readonly property color dotColor: Commons.Color.bar.text
   readonly property color dotOutline: Util.alpha(Commons.Color.bar.background, 0.7)
 
@@ -335,35 +335,26 @@ PanelWindow {
       if (window.dock) window.dock.openApps()
     }
 
-    // Four app tiles read as "all apps" in any icon theme.
-    Item {
+    // A grid of app squares, the Nerd Font "apps" glyph, reads as "all apps"
+    // in any icon theme.
+    Text {
       x: window.iconX
       y: window.iconY
       width: window.iconSize
       height: window.iconSize
+      horizontalAlignment: Text.AlignHCenter
+      verticalAlignment: Text.AlignVCenter
+      textFormat: Text.PlainText
+      text: "\uDB80\uDC3B"
+      font.family: Style.fontFamily
+      font.pixelSize: Math.round(window.iconSize * 0.9)
+      color: window.dotColor
+      style: Text.Outline
+      styleColor: window.dotOutline
+      scale: appsSlot.pressed ? 0.92 : (appsSlot.hovered ? 1.15 : 1)
+      transformOrigin: window.popOrigin
 
-      Grid {
-        anchors.centerIn: parent
-        columns: 2
-        spacing: Math.round(window.iconSize * 0.12)
-        scale: appsSlot.pressed ? 0.92 : (appsSlot.hovered ? 1.15 : 1)
-        transformOrigin: window.popOrigin
-
-        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-
-        Repeater {
-          model: 4
-
-          delegate: Rectangle {
-            width: Math.round(window.iconSize * 0.36)
-            height: width
-            radius: Math.round(width * 0.3)
-            color: window.dotColor
-            border.width: 1
-            border.color: window.dotOutline
-          }
-        }
-      }
+      Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
     }
   }
 
