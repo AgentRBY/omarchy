@@ -46,29 +46,44 @@ o.bind("SUPER + PRINT", "Color picker", "pkill hyprpicker || hyprpicker -a")
 o.bind("SUPER + CTRL + PRINT", "Extract text (OCR) from screenshot", "omarchy-capture-text")
 
 -- Keyboard control for the slurp region picker (see omarchy-capture-region).
--- The binds live exactly as long as a selection layer is on screen (slurp
+-- The binds are enabled exactly as long as a selection layer is on screen (slurp
 -- opens one per monitor), so they cannot leak or get stuck.
--- Unbinding by key would take a same-key binding out of the user's own config
--- with it, so each handle is kept and removed individually.
+-- They are disabled rather than unbound: Hyprland's unbind removes every binding
+-- on that key, the user's own included, and expires any handle held on it.
+-- No descriptions, since a disabled bind would still be listed in the keybindings menu.
 local selection_layers = 0
 local selection_binds = {}
+local selection_bind_specs = {
+  { "RETURN", "--take-window" },
+  { "CTRL + RETURN", "--take-fullscreen" },
+  { "TAB", "--select-window next" },
+  { "CTRL + TAB", "--select-window prev" },
+  { "LEFT", "--select-window left" },
+  { "RIGHT", "--select-window right" },
+  { "UP", "--select-window up" },
+  { "DOWN", "--select-window down" },
+}
+
+-- Any method on an expired handle aborts Hyprland 0.56.2; tostring is the one safe probe.
+local function keybind_alive(keybind)
+  return keybind ~= nil and tostring(keybind) ~= "HL.Keybind(expired)"
+end
+
+local function set_selection_binds(enabled)
+  for i, spec in ipairs(selection_bind_specs) do
+    if keybind_alive(selection_binds[i]) then
+      selection_binds[i]:set_enabled(enabled)
+    elseif enabled then
+      selection_binds[i] = hl.bind(spec[1], hl.dsp.exec_cmd("omarchy-capture-region " .. spec[2]))
+    end
+  end
+end
 
 hl.on("layer.opened", function(layer)
   if layer.namespace == "selection" then
     selection_layers = selection_layers + 1
     if selection_layers == 1 then
-      selection_binds = {
-        hl.bind("RETURN", hl.dsp.exec_cmd("omarchy-capture-region --take-window"), { description = "Capture highlighted window" }),
-        hl.bind("CTRL + RETURN", hl.dsp.exec_cmd("omarchy-capture-region --take-fullscreen"), { description = "Capture entire screen" }),
-        hl.bind("TAB", hl.dsp.exec_cmd("omarchy-capture-region --select-window next"), { description = "Select next window to capture" }),
-        hl.bind("CTRL + TAB", hl.dsp.exec_cmd("omarchy-capture-region --select-window prev"), { description = "Select previous window to capture" }),
-      }
-      for _, direction in ipairs({ "left", "right", "up", "down" }) do
-        table.insert(
-          selection_binds,
-          hl.bind(direction:upper(), hl.dsp.exec_cmd("omarchy-capture-region --select-window " .. direction), { description = "Select window to capture" })
-        )
-      end
+      set_selection_binds(true)
     end
   end
 end)
@@ -77,10 +92,7 @@ hl.on("layer.closed", function(layer)
   if layer.namespace == "selection" and selection_layers > 0 then
     selection_layers = selection_layers - 1
     if selection_layers == 0 then
-      for _, keybind in ipairs(selection_binds) do
-        keybind:unbind()
-      end
-      selection_binds = {}
+      set_selection_binds(false)
     end
   end
 end)
