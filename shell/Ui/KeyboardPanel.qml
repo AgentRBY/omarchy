@@ -89,9 +89,18 @@ PanelWindow {
   readonly property var anchorWindow: anchorItem ? anchorItem.QsWindow.window : null
   readonly property string barPos: bar ? bar.position : "top"
 
+  // The owner is plugin code. If its close() throws, close here anyway: the
+  // overlay would otherwise stay mapped and swallow every click on the desktop.
   function close() {
-    if (owner && "close" in owner) owner.close()
-    else root.open = false
+    if (owner && "close" in owner) {
+      try {
+        owner.close()
+        return
+      } catch (e) {
+        console.warn("KeyboardPanel owner close() threw:", e)
+      }
+    }
+    root.open = false
   }
 
   function beginFocusPrime() {
