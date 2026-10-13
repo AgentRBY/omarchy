@@ -104,6 +104,21 @@ fi
 pass "an unknown default layout is refused"
 rm -f "$modes_dir"/*.lua
 
+# A new default leaves workspaces with windows on them as they are, saving the
+# layout each one has as its own; empty ones take the new default.
+printf '[{ "id": 2, "name": "2", "tiledLayout": "dwindle", "windows": 3 }, { "id": 4, "name": "4", "tiledLayout": "scrolling", "windows": 0 }, { "id": 6, "name": "6", "tiledLayout": "dwindle", "windows": 1 }]\n' >"$fake/workspaces.json"
+printf 'o.workspace_mode({ workspace = "6", mode = "floating" })\n' >"$modes_dir/6.lua"
+run omarchy-hyprland-workspace-layout-default floating
+grep -qxF 'o.workspace_mode({ workspace = "2", mode = "dwindle" })' "$modes_dir/2.lua" ||
+  fail "a workspace with windows kept the layout it had" "$(cat "$modes_dir/2.lua" 2>&1)"
+[[ ! -e $modes_dir/4.lua && $(run omarchy-hyprland-workspace-layout-current 4) == "floating" ]] ||
+  fail "an empty workspace takes the new default"
+grep -qxF 'o.workspace_mode({ workspace = "6", mode = "floating" })' "$modes_dir/6.lua" ||
+  fail "a workspace with a layout of its own keeps it"
+pass "a new default leaves workspaces with windows as they are"
+rm -f "$modes_dir"/*.lua
+printf '[{ "id": 2, "name": "2", "tiledLayout": "dwindle" }, { "id": 4, "name": "4", "tiledLayout": "scrolling" }]\n' >"$fake/workspaces.json"
+
 # --- The workspace mode in Hyprland --------------------------------------------
 
 mkdir -p "$state_home/omarchy/current/theme"

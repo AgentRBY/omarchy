@@ -36,12 +36,24 @@ case $1 in
     ;;
 esac
 
+mkdir -p "$MODES_DIR"
+
+# A workspace with windows on it keeps the layout it has, so changing the
+# default never rearranges work in progress: it is saved as that workspace's
+# own layout. Empty workspaces, and those not opened yet, take the new default.
+while read -r workspace; do
+  [[ -f $MODES_DIR/$workspace.lua ]] && continue
+  current=$(omarchy-hyprland-workspace-layout-current "$workspace")
+  if [[ $current != "$1" ]]; then
+    printf 'o.workspace_mode({ workspace = "%s", mode = "%s" })\n' "$workspace" "$current" >"$MODES_DIR/$workspace.lua"
+  fi
+done < <(hyprctl workspaces -j | jq -r '.[] | select(.id >= 1 and (.windows // 0) > 0) | .id')
+
 # Saved even for dwindle, so the choice also wins over a layout set in the
 # user's own looknfeel. Workspaces given a layout with Super + L keep theirs.
-mkdir -p "$MODES_DIR"
 printf 'o.workspace_mode({ default = "%s" })\n' "$1" >"$DEFAULT_FILE"
 
 hyprctl reload >/dev/null
 omarchy-shell -q omarchy.workspaces refresh
 omarchy-shell -q omarchy.dock refresh
-notify_layout "New workspaces use the $LABEL layout"
+notify_layout "Empty and new workspaces use the $LABEL layout"
