@@ -5,7 +5,8 @@
     "formatLocale": "en-US",
     "locale": "en_US.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)"
   },
   "da": {
     "name": "Dansk",
@@ -13,7 +14,8 @@
     "formatLocale": "da-DK",
     "locale": "da_DK.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Danish"
   },
   "ar": {
     "name": "العربية",
@@ -22,7 +24,9 @@
     "locale": "ar_AE.UTF-8",
     "direction": "rtl",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)",
+    "console": false
   },
   "fi": {
     "name": "Suomi",
@@ -30,7 +34,8 @@
     "formatLocale": "fi-FI",
     "locale": "fi_FI.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Finnish"
   },
   "fr": {
     "name": "Français",
@@ -38,7 +43,8 @@
     "formatLocale": "fr-FR",
     "locale": "fr_FR.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "French"
   },
   "el": {
     "name": "Ελληνικά",
@@ -46,7 +52,8 @@
     "formatLocale": "el-GR",
     "locale": "el_GR.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Greek"
   },
   "hu": {
     "name": "Magyar",
@@ -54,7 +61,8 @@
     "formatLocale": "hu-HU",
     "locale": "hu_HU.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Hungarian"
   },
   "hi": {
     "name": "हिन्दी",
@@ -62,7 +70,9 @@
     "formatLocale": "hi-IN",
     "locale": "hi_IN.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)",
+    "console": false
   },
   "is": {
     "name": "Íslenska",
@@ -70,7 +80,8 @@
     "formatLocale": "is-IS",
     "locale": "is_IS.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Icelandic"
   },
   "ja": {
     "name": "日本語",
@@ -78,7 +89,9 @@
     "formatLocale": "ja-JP",
     "locale": "ja_JP.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Japanese",
+    "console": false
   },
   "ko": {
     "name": "한국어",
@@ -86,7 +99,9 @@
     "formatLocale": "ko-KR",
     "locale": "ko_KR.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Korean",
+    "console": false
   },
   "es-MX": {
     "name": "Español (México)",
@@ -94,7 +109,8 @@
     "formatLocale": "es-MX",
     "locale": "es_MX.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Spanish (Latin American)"
   },
   "fil": {
     "name": "Filipino",
@@ -102,7 +118,8 @@
     "formatLocale": "fil-PH",
     "locale": "fil_PH.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)"
   },
   "pt": {
     "name": "Português (Portugal)",
@@ -110,7 +127,8 @@
     "formatLocale": "pt-PT",
     "locale": "pt_PT.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Portuguese"
   },
   "sv": {
     "name": "Svenska",
@@ -118,7 +136,8 @@
     "formatLocale": "sv-SE",
     "locale": "sv_SE.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Swedish"
   },
   "tr": {
     "name": "Türkçe",
@@ -126,7 +145,8 @@
     "formatLocale": "tr-TR",
     "locale": "tr_TR.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Turkish"
   },
   "vi": {
     "name": "Tiếng Việt",
@@ -134,7 +154,9 @@
     "formatLocale": "vi-VN",
     "locale": "vi_VN.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)",
+    "console": false
   },
   "ur": {
     "name": "اردو",
@@ -143,7 +165,9 @@
     "locale": "ur_PK.UTF-8",
     "direction": "rtl",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)",
+    "console": false
   },
   "bn": {
     "name": "বাংলা",
@@ -151,7 +175,9 @@
     "formatLocale": "bn-BD",
     "locale": "bn_BD.UTF-8",
     "decimal": ".",
-    "zeroDigit": "০"
+    "zeroDigit": "০",
+    "keyboard": "English (US)",
+    "console": false
   },
   "ca": {
     "name": "Català",
@@ -159,7 +185,8 @@
     "formatLocale": "ca-AD",
     "locale": "ca_AD.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Spanish"
   },
   "si": {
     "name": "සිංහල",
@@ -167,7 +194,9 @@
     "formatLocale": "si-LK",
     "locale": "si_LK.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)",
+    "console": false
   },
   "ta": {
     "name": "தமிழ்",
@@ -175,7 +204,9 @@
     "formatLocale": "ta-LK",
     "locale": "ta_LK.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)",
+    "console": false
   },
   "th": {
     "name": "ไทย",
@@ -183,7 +214,9 @@
     "formatLocale": "th-TH",
     "locale": "th_TH.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)",
+    "console": false
   },
   "uz": {
     "name": "Oʻzbekcha",
@@ -191,7 +224,8 @@
     "formatLocale": "uz-UZ",
     "locale": "uz_UZ.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)"
   },
   "it": {
     "name": "Italiano",
@@ -199,7 +233,8 @@
     "formatLocale": "it-IT",
     "locale": "it_IT.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Italian"
   },
   "zh-CN": {
     "name": "简体中文",
@@ -207,7 +242,9 @@
     "formatLocale": "zh-CN",
     "locale": "zh_CN.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Chinese (Simplified, Pinyin)",
+    "console": false
   },
   "pl": {
     "name": "Polski",
@@ -215,7 +252,8 @@
     "formatLocale": "pl-PL",
     "locale": "pl_PL.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Polish"
   },
   "lt": {
     "name": "Lietuvių",
@@ -223,7 +261,8 @@
     "formatLocale": "lt-LT",
     "locale": "lt_LT.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Lithuanian"
   },
   "ga": {
     "name": "Gaeilge",
@@ -231,7 +270,8 @@
     "formatLocale": "ga-IE",
     "locale": "ga_IE.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Irish"
   },
   "nl": {
     "name": "Nederlands",
@@ -239,7 +279,8 @@
     "formatLocale": "nl-NL",
     "locale": "nl_NL.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)"
   },
   "no": {
     "name": "Norsk",
@@ -247,7 +288,8 @@
     "formatLocale": "nb-NO",
     "locale": "nb_NO.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Norwegian"
   },
   "ru": {
     "name": "Русский",
@@ -255,7 +297,8 @@
     "formatLocale": "ru-RU",
     "locale": "ru_RU.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Russian"
   },
   "id": {
     "name": "Bahasa Indonesia",
@@ -263,7 +306,8 @@
     "formatLocale": "id-ID",
     "locale": "id_ID.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)"
   },
   "de": {
     "name": "Deutsch",
@@ -271,7 +315,8 @@
     "formatLocale": "de-DE",
     "locale": "de_DE.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "German"
   },
   "sw": {
     "name": "Kiswahili",
@@ -279,7 +324,8 @@
     "formatLocale": "sw-TZ",
     "locale": "sw_TZ.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)"
   },
   "fa": {
     "name": "فارسی",
@@ -288,7 +334,9 @@
     "locale": "fa_IR.UTF-8",
     "direction": "rtl",
     "decimal": "٫",
-    "zeroDigit": "۰"
+    "zeroDigit": "۰",
+    "keyboard": "English (US)",
+    "console": false
   },
   "ms": {
     "name": "Bahasa Melayu",
@@ -296,7 +344,8 @@
     "formatLocale": "ms-MY",
     "locale": "ms_MY.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "English (US)"
   },
   "uk": {
     "name": "Українська",
@@ -304,7 +353,8 @@
     "formatLocale": "uk-UA",
     "locale": "uk_UA.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Ukrainian"
   },
   "ro": {
     "name": "Română",
@@ -312,7 +362,8 @@
     "formatLocale": "ro-RO",
     "locale": "ro_RO.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Romanian"
   },
   "cs": {
     "name": "Čeština",
@@ -320,7 +371,8 @@
     "formatLocale": "cs-CZ",
     "locale": "cs_CZ.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Czech"
   },
   "sr": {
     "name": "Српски",
@@ -328,7 +380,8 @@
     "formatLocale": "sr-RS",
     "locale": "sr_RS.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Serbian"
   },
   "he": {
     "name": "עברית",
@@ -337,7 +390,9 @@
     "locale": "he_IL.UTF-8",
     "direction": "rtl",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Hebrew",
+    "console": false
   },
   "bg": {
     "name": "Български",
@@ -345,7 +400,8 @@
     "formatLocale": "bg-BG",
     "locale": "bg_BG.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Bulgarian"
   },
   "sk": {
     "name": "Slovenčina",
@@ -353,7 +409,8 @@
     "formatLocale": "sk-SK",
     "locale": "sk_SK.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Slovak"
   },
   "hr": {
     "name": "Hrvatski",
@@ -361,7 +418,8 @@
     "formatLocale": "hr-HR",
     "locale": "hr_HR.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Croatian"
   },
   "sl": {
     "name": "Slovenščina",
@@ -369,7 +427,8 @@
     "formatLocale": "sl-SI",
     "locale": "sl_SI.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Slovenian"
   },
   "zh-TW": {
     "name": "繁體中文",
@@ -377,7 +436,9 @@
     "formatLocale": "zh-TW",
     "locale": "zh_TW.UTF-8",
     "decimal": ".",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Chinese (Traditional, Zhuyin)",
+    "console": false
   },
   "et": {
     "name": "Eesti",
@@ -385,7 +446,8 @@
     "formatLocale": "et-EE",
     "locale": "et_EE.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Estonian"
   },
   "lv": {
     "name": "Latviešu",
@@ -393,7 +455,8 @@
     "formatLocale": "lv-LV",
     "locale": "lv_LV.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Latvian"
   },
   "pt-BR": {
     "name": "Português (Brasil)",
@@ -401,6 +464,7 @@
     "formatLocale": "pt-BR",
     "locale": "pt_BR.UTF-8",
     "decimal": ",",
-    "zeroDigit": "0"
+    "zeroDigit": "0",
+    "keyboard": "Portuguese (Brazil)"
   }
 }
