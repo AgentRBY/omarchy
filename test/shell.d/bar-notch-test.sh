@@ -157,6 +157,7 @@ assert(
 )
 assert(
   /fixedEdge: sections\.besideRight \? "end" : "center"/.test(centerSections) &&
+    /region: "centerEnd"\s*fixedEdge: sections\.besideRight \? "end" : "start"/.test(centerSections) &&
     /x: root\.vertical \? 0 : \(sections\.besideRight \? beginList\.width : /.test(centerSections),
   'beside the right section the three center sections run on in order, growing leftward'
 )

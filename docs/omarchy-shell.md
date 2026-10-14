@@ -439,3 +439,13 @@ elsewhere). The module is an `Item` and receives `bar`, `moduleName`,
 `requestPopout(o)` / `releasePopout(o)`. To shell-quote arguments for
 `run`, use `Util.shellQuote(v)` from `qs.Commons`.
 
+A module that declares `property string fixedEdge` also receives the edge of itself that stays put when it grows, set by how its section is anchored. Widgets that extend `BarWidget` from `qs.Ui` declare it already.
+
+- `"start"` (left, or top on a vertical bar): the left section and `centerEnd`, and the last widget in the center box when it holds more than one, which grows away from the middle as `centerEnd`'s do
+- `"end"`: the right section and `centerBegin`, the first widget in the center box when it holds more than one, and all three center sections where a display notch has moved them beside the right one
+- `"center"`: the rest of the center box, and a widget alone in it, which grow both ways
+
+Widgets in the tray section grow from the edge the tray keeps its pinned icons against, beside which its drawer opens the section: `"start"` where the tray's own edge is `"start"`, and `"end"` otherwise.
+
+Put content that grows, such as a drawer or a peek, on the side away from that edge so whatever is already showing keeps its place under the pointer.
+

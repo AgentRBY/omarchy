@@ -1740,11 +1740,13 @@ Item {
   component LeftModules: ModuleList {
     entries: root.layoutEntries("left")
     region: "left"
+    fixedEdge: "start"
   }
 
   component RightModules: ModuleList {
     entries: root.layoutEntries("right")
     region: "right"
+    fixedEdge: "end"
   }
 
   // The gesture area under the whole bar, with the center sections drawn over
@@ -1787,6 +1789,7 @@ Item {
       id: beginList
       entries: sections.active ? root.layoutEntries("centerBegin") : []
       region: "centerBegin"
+      fixedEdge: "end"
       x: root.vertical ? Math.round((sections.width - width) / 2) : centerBox.x - width
       y: root.vertical ? centerBox.y - height : Math.round((sections.height - height) / 2)
     }
@@ -1795,6 +1798,7 @@ Item {
       id: endList
       entries: sections.active ? root.layoutEntries("centerEnd") : []
       region: "centerEnd"
+      fixedEdge: sections.besideRight ? "end" : "start"
       x: root.vertical ? Math.round((sections.width - width) / 2) : centerBox.x + centerBox.width
       y: root.vertical ? centerBox.y + centerBox.height : Math.round((sections.height - height) / 2)
     }
@@ -1858,6 +1862,9 @@ Item {
       id: boxList
       entries: box.active ? root.layoutEntries("center") : []
       region: "center"
+      fixedEdge: box.fixedEdge
+      firstEdge: box.fixedEdge === "center" ? "end" : ""
+      lastEdge: box.fixedEdge === "center" ? "start" : ""
       x: Math.round((box.width - width) / 2)
       y: Math.round((box.height - height) / 2)
     }
@@ -1964,6 +1971,15 @@ Item {
 
     property var entries: []
     property string region: ""
+    // The edge of each module that stays put when the module grows: the side
+    // this list is anchored by. The centered box grows both ways.
+    property string fixedEdge: "center"
+    // The edges the first and last of several modules grow from instead, if
+    // not the list's own: the centered box's outer modules grow away from the
+    // middle of the bar, as centerBegin's and centerEnd's do
+    // (BarModel.slotEdge).
+    property string firstEdge: ""
+    property string lastEdge: ""
 
     visible: entries.length > 0
     // A hidden list must not build its modules. Each bar surface declares the
@@ -1987,8 +2003,10 @@ Item {
 
           ModuleSlot {
             required property var modelData
+            required property int index
             entry: modelData
             region: moduleListRoot.region
+            fixedEdge: BarModel.slotEdge(moduleListRoot.entries.length, index, moduleListRoot.fixedEdge, moduleListRoot.firstEdge, moduleListRoot.lastEdge)
           }
         }
       }
@@ -2005,8 +2023,10 @@ Item {
 
           ModuleSlot {
             required property var modelData
+            required property int index
             entry: modelData
             region: moduleListRoot.region
+            fixedEdge: BarModel.slotEdge(moduleListRoot.entries.length, index, moduleListRoot.fixedEdge, moduleListRoot.firstEdge, moduleListRoot.lastEdge)
           }
         }
       }
@@ -2027,6 +2047,7 @@ Item {
 
     required property var entry
     property string region: ""
+    property string fixedEdge: "center"
     readonly property string moduleName: root.entryId(entry)
     readonly property var moduleSettings: root.entrySettings(entry)
     readonly property string customType: root.customModuleType(entry)
@@ -2184,11 +2205,14 @@ Item {
     // Built through a Component outside ModuleSlot: a module list holds
     // module slots, so one declared in here would make the types a cycle.
     Loader {
+      id: traySectionLoader
       readonly property Item host: slot.hostsTraySection ? slot.activeItem.sectionHost : null
       parent: host || slot
       active: !!host
       sourceComponent: traySectionComponent
     }
+    // Its widgets grow from the edge the tray anchors the section by.
+    Binding { target: traySectionLoader.item; property: "fixedEdge"; value: slot.hostsTraySection && slot.activeItem.sectionEdge || "center" }
 
     MouseArea {
       id: modulePointer
@@ -2292,10 +2316,14 @@ Item {
 
     onActiveItemChanged: Qt.callLater(injectProps)
     onModuleSettingsChanged: injectProps()
+    onFixedEdgeChanged: injectProps()
 
     function injectProps() {
       var target = activeItem
       if (!target) return
+      // Ahead of bar: a widget can start laying itself out the moment it has
+      // a bar, as the indicators do by reporting which are already active.
+      if ("fixedEdge" in target) target.fixedEdge = fixedEdge
       if ("bar" in target) target.bar = firstParty
         ? root : root.pluginBarApiFor(pluginApiId, moduleName, registered)
       if ("moduleName" in target) target.moduleName = moduleName

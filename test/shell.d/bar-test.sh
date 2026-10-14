@@ -128,9 +128,19 @@ assert(
   'the whole-bar hover handler is a child of the bar loader, above both orientations'
 )
 
-// The center box grows from its middle.
+// A widget that grows (the indicator peek, a drawer) has to know which of its
+// edges stays put, and that is the side its list is anchored by.
 const centerSections = barSource.slice(barSource.indexOf('component CenterSections'), barSource.indexOf('component CenterBox'))
-assert(/fixedEdge: sections\.besideRight \? "end" : "center"/.test(centerSections), 'the center box grows both ways')
+const centerBox = barSource.slice(barSource.indexOf('component CenterBox'), barSource.indexOf('component CenterGestureArea'))
+const fixedEdges = [
+  [/component LeftModules: ModuleList \{[^}]*?region: "left"\s*fixedEdge: "start"/, barSource, 'the left section grows rightward and downward'],
+  [/component RightModules: ModuleList \{[^}]*?region: "right"\s*fixedEdge: "end"/, barSource, 'the right section grows leftward and upward'],
+  [/region: "centerBegin"\s*fixedEdge: "end"/, centerSections, 'centerBegin grows away from the center box'],
+  [/region: "centerEnd"\s*fixedEdge: sections\.besideRight \? "end" : "start"/, centerSections, 'centerEnd grows away from the center box'],
+  [/fixedEdge: sections\.besideRight \? "end" : "center"/, centerSections, 'the center box grows both ways'],
+  [/region: "center"\s*fixedEdge: box\.fixedEdge/, centerBox, 'the center box hands its edge to the widgets in it']
+]
+for (const [pattern, source, message] of fixedEdges) assert(pattern.test(source), message)
 
 // A widget dropped into the box from outside grows its outline the way the
 // box would grow.
@@ -377,6 +387,12 @@ for (const region of ['centerBegin', 'center', 'centerEnd'])
 assertDeepEqual(bar.navigationRegions('left'), ['left'], 'panel navigation in the left section stays in it')
 assertDeepEqual(bar.navigationRegions('right'), ['right'], 'panel navigation in the right section stays in it')
 assert(/var regions = BarModel\.navigationRegions\(region\)/.test(barSource), 'bar tabs panels across the center sections')
+
+// The first and last of several widgets in the centered box grow away from
+// its middle, as centerBegin's and centerEnd's do; one alone grows both ways.
+assertDeepEqual([0, 1, 2].map(index => bar.slotEdge(3, index, 'center', 'end', 'start')), ['end', 'center', 'start'], 'the outer widgets of several grow away from the middle')
+assertEqual(bar.slotEdge(1, 0, 'center', 'end', 'start'), 'center', 'a widget alone in the box grows both ways')
+assertDeepEqual([0, 1].map(index => bar.slotEdge(2, index, 'end', '', '')), ['end', 'end'], 'a section without outer edges hands every widget its own')
 
 // A settings-only shell.json write must patch the live bar, not rebuild it:
 // the module Repeaters recreate every widget when their array model changes.

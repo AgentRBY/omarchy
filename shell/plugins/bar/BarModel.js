@@ -46,6 +46,17 @@ function navigationRegions(region) {
   return centerSections.indexOf(name) !== -1 ? centerSections.slice() : [name]
 }
 
+// The edge the widget at `index` of the `count` in a section grows from: the
+// section's own, or for the first and last of several, `firstEdge` and
+// `lastEdge` where given. By the layout's order, so a widget hiding itself
+// doesn't turn its neighbour around.
+function slotEdge(count, index, fixedEdge, firstEdge, lastEdge) {
+  if (count < 2) return fixedEdge
+  if (firstEdge && index === 0) return firstEdge
+  if (lastEdge && index === count - 1) return lastEdge
+  return fixedEdge
+}
+
 // A shell.json write that only changes inline widget settings (the battery
 // percentage toggle, a clock format change) must not rebuild the bar.
 // Compare two normalized layouts: when the structure is unchanged — same
@@ -353,6 +364,7 @@ if (typeof module !== "undefined") {
     centerDropTarget: centerDropTarget,
     boxGrowLeadShare: boxGrowLeadShare,
     navigationRegions: navigationRegions,
+    slotEdge: slotEdge,
     sections: sections,
     normalizePosition: normalizePosition,
     entrySettings: entrySettings,
