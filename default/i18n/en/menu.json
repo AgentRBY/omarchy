@@ -50,6 +50,9 @@
   "system.reboot": {
     "label": "Reboot"
   },
+  "system.reboot-boot-menu": {
+    "label": "Reboot to Boot Menu"
+  },
   "system.shutdown": {
     "label": "Shutdown"
   },
@@ -480,6 +483,9 @@
   },
   "setup.default.agent.hermes": {
     "label": "Hermes"
+  },
+  "setup.default.agent.kimi": {
+    "label": "Kimi"
   },
   "setup.default.agent.muse": {
     "label": "Muse Code"
