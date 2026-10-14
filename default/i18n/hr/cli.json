@@ -110,7 +110,7 @@
   "keybindings.title": "Tipkovnički prečaci",
   "keybindings.tmuxTitle": "Tipkovnički prečaci za Tmux",
   "language.changed": "Jezik je sada postavljen na %1",
-  "language.relogin": "Odjavite se i ponovno prijavite za primjenu svuda",
+  "language.newApps": "Aplikacije koje od sada otvorite također će ga koristiti; ponovno pokrenite one koje su već otvorene",
   "layout.defaultFloating": "Zadani raspored postavljen je na plutajući",
   "layout.defaultScrolling": "Zadani raspored postavljen je na klizni",
   "layout.defaultTiling": "Zadani raspored postavljen je na popločani",

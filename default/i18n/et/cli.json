@@ -110,7 +110,7 @@
   "keybindings.title": "Klahvikombinatsioonid",
   "keybindings.tmuxTitle": "Tmux klahvikombinatsioonid",
   "language.changed": "Keeleks on nüüd %1",
-  "language.relogin": "Kõikjal rakendamiseks logi välja ja uuesti sisse",
+  "language.newApps": "Edaspidi avatavad rakendused kasutavad seda samuti; taaskäivita juba avatud rakendused",
   "layout.defaultFloating": "Vaikepaigutuseks määrati ujuv",
   "layout.defaultScrolling": "Vaikepaigutuseks määrati keriv",
   "layout.defaultTiling": "Vaikepaigutuseks määrati plaaditud",

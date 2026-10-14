@@ -110,7 +110,7 @@
   "keybindings.title": "קיצורי מקלדת",
   "keybindings.tmuxTitle": "קיצורי מקלדת של Tmux",
   "language.changed": "השפה מוגדרת כעת ל-%1",
-  "language.relogin": "התנתקו והתחברו שוב כדי להחיל בכל מקום",
+  "language.newApps": "יישומים שייפתחו מעתה ישתמשו גם הם בה; יש להפעיל מחדש יישומים שכבר פתוחים",
   "layout.defaultFloating": "פריסת ברירת המחדל הוגדרה לצפה",
   "layout.defaultScrolling": "פריסת ברירת המחדל הוגדרה לגלילה",
   "layout.defaultTiling": "פריסת ברירת המחדל הוגדרה לאריחים",

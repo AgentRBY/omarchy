@@ -110,7 +110,7 @@
   "keybindings.title": "Mga keybinding",
   "keybindings.tmuxTitle": "Mga keybinding ng Tmux",
   "language.changed": "Nakatakda na ngayon ang wika sa %1",
-  "language.relogin": "Mag-log out at mag-log in muli para ilapat ito kahit saan",
+  "language.newApps": "Mula ngayon, gagamitin din ito ng mga app na bubuksan mo; i-restart ang mga nakabukas na",
   "layout.defaultFloating": "Itinakda sa floating ang default na layout",
   "layout.defaultScrolling": "Itinakda sa scrolling ang default na layout",
   "layout.defaultTiling": "Itinakda sa tiling ang default na layout",

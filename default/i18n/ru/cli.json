@@ -110,7 +110,7 @@
   "keybindings.title": "Сочетания клавиш",
   "keybindings.tmuxTitle": "Сочетания клавиш Tmux",
   "language.changed": "Язык теперь: %1",
-  "language.relogin": "Выйдите и войдите снова, чтобы применить везде",
+  "language.newApps": "Новые приложения тоже будут на нём; перезапустите уже открытые",
   "layout.defaultFloating": "Компоновка по умолчанию: плавающая",
   "layout.defaultScrolling": "Компоновка по умолчанию: прокручиваемая",
   "layout.defaultTiling": "Компоновка по умолчанию: мозаичная",

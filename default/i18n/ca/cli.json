@@ -110,7 +110,7 @@
   "keybindings.title": "Dreceres de teclat",
   "keybindings.tmuxTitle": "Dreceres de teclat de Tmux",
   "language.changed": "L'idioma ara és %1",
-  "language.relogin": "Tanca la sessió i torna a entrar per aplicar-ho a tot arreu",
+  "language.newApps": "Les aplicacions que obris a partir d'ara també l'utilitzaran; reinicia les que ja estiguin obertes",
   "layout.defaultFloating": "Disposició per defecte establerta com a flotant",
   "layout.defaultScrolling": "Disposició per defecte establerta com a desplaçament",
   "layout.defaultTiling": "Disposició per defecte establerta com a mosaic",

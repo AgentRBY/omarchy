@@ -110,7 +110,7 @@
   "keybindings.title": "Tuş atamaları",
   "keybindings.tmuxTitle": "Tmux tuş atamaları",
   "language.changed": "Dil artık %1 olarak ayarlandı",
-  "language.relogin": "Her yere uygulamak için oturumu kapatıp yeniden açın",
+  "language.newApps": "Bundan sonra açtığın uygulamalar da bunu kullanır; zaten açık olanları yeniden başlat",
   "layout.defaultFloating": "Varsayılan düzen yüzen olarak ayarlandı",
   "layout.defaultScrolling": "Varsayılan düzen kaydırmalı olarak ayarlandı",
   "layout.defaultTiling": "Varsayılan düzen döşemeli olarak ayarlandı",

@@ -110,7 +110,7 @@
   "keybindings.title": "কী বাইন্ডিং",
   "keybindings.tmuxTitle": "Tmux কী বাইন্ডিং",
   "language.changed": "ভাষা এখন %1 সেট করা",
-  "language.relogin": "সব জায়গায় প্রয়োগ করতে লগআউট করে আবার লগইন করুন",
+  "language.newApps": "এখন থেকে খোলা অ্যাপগুলোও এটি ব্যবহার করবে; ইতিমধ্যে খোলা অ্যাপগুলো পুনরায় চালু করুন",
   "layout.defaultFloating": "ডিফল্ট লেআউট ফ্লোটিং করা হয়েছে",
   "layout.defaultScrolling": "ডিফল্ট লেআউট স্ক্রলিং করা হয়েছে",
   "layout.defaultTiling": "ডিফল্ট লেআউট টাইলিং করা হয়েছে",

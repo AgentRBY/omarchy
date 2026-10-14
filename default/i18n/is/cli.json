@@ -110,7 +110,7 @@
   "keybindings.title": "Lyklabindingar",
   "keybindings.tmuxTitle": "Lyklabindingar Tmux",
   "language.changed": "Tungumál er nú stillt á %1",
-  "language.relogin": "Skráðu þig út og inn aftur til að nota það alls staðar",
+  "language.newApps": "Forrit sem þú opnar héðan í frá nota það líka; endurræstu þau sem eru þegar opin",
   "layout.defaultFloating": "Sjálfgefið skipulag stillt á fljótandi",
   "layout.defaultScrolling": "Sjálfgefið skipulag stillt á skrun",
   "layout.defaultTiling": "Sjálfgefið skipulag stillt á flísalagt",

@@ -110,7 +110,7 @@
   "keybindings.title": "Combinații de taste",
   "keybindings.tmuxTitle": "Combinații de taste Tmux",
   "language.changed": "Limba este acum setată la %1",
-  "language.relogin": "Deconectează-te și conectează-te din nou pentru a aplica peste tot",
+  "language.newApps": "Aplicațiile pe care le deschizi de acum o folosesc și ele; repornește-le pe cele deja deschise",
   "layout.defaultFloating": "Aranjament implicit setat la plutitor",
   "layout.defaultScrolling": "Aranjament implicit setat la derulare",
   "layout.defaultTiling": "Aranjament implicit setat la mozaic",

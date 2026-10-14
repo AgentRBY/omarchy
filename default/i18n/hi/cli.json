@@ -110,7 +110,7 @@
   "keybindings.title": "कीबाइंडिंग",
   "keybindings.tmuxTitle": "Tmux कीबाइंडिंग",
   "language.changed": "भाषा अब %1 पर सेट है",
-  "language.relogin": "इसे हर जगह लागू करने के लिए लॉग आउट करके फिर लॉग इन करें",
+  "language.newApps": "अब से खोले जाने वाले ऐप भी इसका उपयोग करेंगे; पहले से खुले ऐप फिर से शुरू करें",
   "layout.defaultFloating": "डिफ़ॉल्ट लेआउट फ़्लोटिंग पर सेट",
   "layout.defaultScrolling": "डिफ़ॉल्ट लेआउट स्क्रॉलिंग पर सेट",
   "layout.defaultTiling": "डिफ़ॉल्ट लेआउट टाइलिंग पर सेट",

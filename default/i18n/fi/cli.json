@@ -110,7 +110,7 @@
   "keybindings.title": "Pikanäppäimet",
   "keybindings.tmuxTitle": "Tmux-pikanäppäimet",
   "language.changed": "Kieleksi on nyt asetettu %1",
-  "language.relogin": "Kirjaudu ulos ja takaisin sisään ottaaksesi sen käyttöön kaikkialla",
+  "language.newApps": "Uutena avatut sovellukset käyttävät sitä myös; käynnistä jo auki olevat uudelleen",
   "layout.defaultFloating": "Oletusasettelu asetettu kelluvaksi",
   "layout.defaultScrolling": "Oletusasettelu asetettu vieritettäväksi",
   "layout.defaultTiling": "Oletusasettelu asetettu laatoittavaksi",

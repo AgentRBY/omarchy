@@ -110,7 +110,7 @@
   "keybindings.title": "Raccourcis clavier",
   "keybindings.tmuxTitle": "Raccourcis Tmux",
   "language.changed": "La langue est désormais réglée sur %1",
-  "language.relogin": "Déconnectez-vous puis reconnectez-vous pour l'appliquer partout",
+  "language.newApps": "Les applications que vous ouvrirez désormais l'utiliseront aussi ; redémarrez celles déjà ouvertes",
   "layout.defaultFloating": "Disposition par défaut définie sur flottante",
   "layout.defaultScrolling": "Disposition par défaut définie sur défilante",
   "layout.defaultTiling": "Disposition par défaut définie sur mosaïque",

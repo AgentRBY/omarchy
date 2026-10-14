@@ -110,7 +110,7 @@
   "keybindings.title": "Klávesové zkratky",
   "keybindings.tmuxTitle": "Klávesové zkratky Tmux",
   "language.changed": "Jazyk je nyní nastaven na %1",
-  "language.relogin": "Odhlaste se a znovu přihlaste, aby se změna projevila všude",
+  "language.newApps": "Nově otevřené aplikace jej rovněž použijí; již spuštěné restartujte",
   "layout.defaultFloating": "Výchozí rozložení nastaveno na plovoucí",
   "layout.defaultScrolling": "Výchozí rozložení nastaveno na posuvné",
   "layout.defaultTiling": "Výchozí rozložení nastaveno na dlaždicové",

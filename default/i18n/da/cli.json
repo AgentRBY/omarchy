@@ -110,7 +110,7 @@
   "keybindings.title": "Tastaturgenveje",
   "keybindings.tmuxTitle": "Tmux-tastaturgenveje",
   "language.changed": "Sproget er nu sat til %1",
-  "language.relogin": "Log ud og ind igen for at anvende det overalt",
+  "language.newApps": "Apps, du åbner fremover, bruger det også; genstart dem, der allerede er åbne",
   "layout.defaultFloating": "Standardlayout sat til flydende",
   "layout.defaultScrolling": "Standardlayout sat til rullende",
   "layout.defaultTiling": "Standardlayout sat til fliselagt",

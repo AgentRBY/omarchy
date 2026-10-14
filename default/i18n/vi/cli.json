@@ -110,7 +110,7 @@
   "keybindings.title": "Phím tắt",
   "keybindings.tmuxTitle": "Phím tắt Tmux",
   "language.changed": "Ngôn ngữ giờ được đặt là %1",
-  "language.relogin": "Đăng xuất rồi đăng nhập lại để áp dụng mọi nơi",
+  "language.newApps": "Ứng dụng mở từ nay cũng sẽ dùng ngôn ngữ này; khởi động lại các ứng dụng đang mở",
   "layout.defaultFloating": "Đã đặt bố cục mặc định thành nổi",
   "layout.defaultScrolling": "Đã đặt bố cục mặc định thành cuộn",
   "layout.defaultTiling": "Đã đặt bố cục mặc định thành xếp kề",

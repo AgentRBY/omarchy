@@ -110,7 +110,7 @@
   "keybindings.title": "快捷键",
   "keybindings.tmuxTitle": "Tmux 快捷键",
   "language.changed": "语言现已设置为 %1",
-  "language.relogin": "注销并重新登录以在各处应用",
+  "language.newApps": "今后打开的应用也将使用该语言；请重启已打开的应用",
   "layout.defaultFloating": "默认布局已设为浮动",
   "layout.defaultScrolling": "默认布局已设为滚动",
   "layout.defaultTiling": "默认布局已设为平铺",

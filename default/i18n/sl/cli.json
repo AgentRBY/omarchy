@@ -110,7 +110,7 @@
   "keybindings.title": "Bližnjice",
   "keybindings.tmuxTitle": "Bližnjice Tmux",
   "language.changed": "Jezik je zdaj nastavljen na %1",
-  "language.relogin": "Odjavite se in znova prijavite, da velja povsod",
+  "language.newApps": "Od zdaj naprej ga uporabljajo tudi novo odprte aplikacije; že odprte znova zaženite",
   "layout.defaultFloating": "Privzeta postavitev nastavljena na lebdečo",
   "layout.defaultScrolling": "Privzeta postavitev nastavljena na drsno",
   "layout.defaultTiling": "Privzeta postavitev nastavljena na ploščično",

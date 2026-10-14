@@ -110,7 +110,7 @@
   "keybindings.title": "Tastenbelegungen",
   "keybindings.tmuxTitle": "Tmux-Tastenbelegungen",
   "language.changed": "Sprache ist jetzt auf %1 eingestellt",
-  "language.relogin": "Melde dich ab und wieder an, um es überall anzuwenden",
+  "language.newApps": "Ab jetzt geöffnete Apps verwenden sie ebenfalls; bereits offene neu starten",
   "layout.defaultFloating": "Standardlayout auf floating gesetzt",
   "layout.defaultScrolling": "Standardlayout auf scrolling gesetzt",
   "layout.defaultTiling": "Standardlayout auf tiling gesetzt",

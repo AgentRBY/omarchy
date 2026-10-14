@@ -110,7 +110,7 @@
   "keybindings.title": "Sneltoetsen",
   "keybindings.tmuxTitle": "Tmux-sneltoetsen",
   "language.changed": "Taal is nu ingesteld op %1",
-  "language.relogin": "Log uit en weer in om het overal toe te passen",
+  "language.newApps": "Apps die je vanaf nu opent gebruiken het ook; herstart apps die al open zijn",
   "layout.defaultFloating": "Standaardindeling ingesteld op zwevend",
   "layout.defaultScrolling": "Standaardindeling ingesteld op scrollend",
   "layout.defaultTiling": "Standaardindeling ingesteld op tegelend",

@@ -1,43 +1,43 @@
 # Boshlash
 
-Omarchy ISO yordamida oʻrnatiladi. Siz butun diskni egallaydigan toʻliq disk oʻrnatishini yoki Omarchyni diskdagi ajratilmagan boʻsh joyga joylashtiradigan boʻsh joy oʻrnatishini tanlashingiz mumkin — shu tariqa Windows yoki boshqa OT yonida dual boot qilasiz ([dual-boot oʻrnatish](50-dual-boot-install.md) ga qarang — esda tuting, avval Windowsda BitLockerni oʻchirib qoʻyishingiz kerak boʻladi). Har holda, oʻrnatish standartda toʻliq shifrlash bilan keladi va toʻliq disk varianti tanlangan diskni oʻchirib tashlaydi, shuning uchun mavjud diskni ishlatishdan oldin zaxira nusxa olishni unutmang!
+Omarchy ISO yordamida o‘rnatiladi. Butun diskni egallaydigan to‘liq diskka o‘rnatishni yoki Omarchy ni diskdagi ajratilmagan joyga qo‘yadigan bo‘sh joyga o‘rnatishni tanlashingiz mumkin — Windows yoki boshqa OS bilan yonma-yon ikkita tizimni yuklash shunday amalga oshiriladi (qarang [ikkita tizimni yonma-yon o‘rnatish](50-dual-boot-install.md) — eslatma: avval Windows da BitLocker ni o‘chirishingiz kerak bo‘ladi). Har qanday holatda ham o‘rnatish sukut bo‘yicha to‘liq shifrlash bilan amalga oshiriladi va to‘liq disk varianti tanlangan diskni tozalab tashlaydi, shuning uchun mavjud diskdan foydalanishdan oldin albatta zaxira nusxa oling!
 
-Avval [Omarchy ISO ni yuklab oling](https://omarchy.org/), uni USB fleshkasiga yozing (Mac/Windowsda [balenaEtcher](https://etcher.balena.io/) yoki Linuxda [caligula](https://github.com/ifd3f/caligula) ishlating) va fleshkaning oʻzidan yuklaning.
+Avval [Omarchy ISO sini yuklab oling](https://omarchy.org/), uni USB flesh-kartaga yozing (Mac/Windows da [balenaEtcher](https://etcher.balena.io/) yoki Linux da [caligula](https://github.com/ifd3f/caligula) dan foydalaning) va o‘sha flesh-kartadan yuklaning.
 
-_Siz BIOSda Secure Boot va/yoki TPM ni oʻchirib qoʻyishingiz shart. Omarchy ni oʻrnata olish uchun bularni oʻchirishingiz kerak. Bular Windows va Microsoftga aloqador Linux distributivlari uchun moʻljallangan Microsoft xavfsizlik sxemalaridir._
+_BIOS da Secure Boot va/yoki TPM ni o‘chirishingiz shart. Omarchy ni o‘rnata olish uchun bularni o‘chirishingiz kerak. Bular Windows va Microsoft ga aloqador Linux distributivlari uchun mo‘ljallangan Microsoft xavfsizlik sxemalaridir._
 
-Keyin konfiguratsiya savollariga javob bering va ularni mana bunday tasdiqlang:
+So‘ngra konfiguratsiya savollariga javob bering va ularni mana bunday tasdiqlang:
 
  ![install-config](images/install-config.webp)
 
-Keyin oʻrnatish uchun disk tanlang va oʻrningizga oʻtirib oʻrnatish shousini kuzating. Eng tezkor zamonaviy mashinalarda bu bir daqiqadan kam vaqtda tugashi mumkin, lekin eski kompyuterda ham 5 daqiqadan oshmasligi kerak.
+So‘ngra o‘rnatish uchun disk tanlang, orqaga suyangancha o‘tiring va o‘rnatish shousini tomosha qiling. Eng tezkor zamonaviy mashinalarda bu bir daqiqadan kam vaqtda tugashi mumkin, lekin eskiroq kompyuterda ham 5 daqiqadan ko‘proq vaqt olmasligi kerak.
 
  ![install-done](images/install-done.webp)
 
-Endi siz Omarchyga tayyorsiz!
+Endi siz Omarchy ga tayyorsiz!
 
 ### Simli yoki 2.4ghz klaviaturadan foydalaning!
 
-Toʻliq disk shifrlashi ishga tushganda Bluetooth klaviaturadan parol kiritishga ruxsat bermaydi. Kompyuterda BIOSga kirishda Bluetooth klaviaturani ishlata olmaganingiz kabi. Sizga 2.4ghz dongle yoki kabel ishlatadigan klaviatura kerak boʻladi (bu kechikish uchun baribir ancha yaxshi!). Menga shaxsan [Lofree Flow84](https://www.lofree.co/products/lofree-flow-the-smoothest-mechanical-keyboard) juda yoqadi!
+To‘liq disk shifrlashi ishga tushishda Bluetooth klaviaturadan parolni kiritishingizga ruxsat bermaydi. Xuddi PC da BIOS ga kirish uchun Bluetooth klaviaturadan foydalana olmaganingiz kabi. Sizga yo 2.4ghz dongle ishlatadigan, yo kabel orqali ulanadigan klaviatura kerak bo‘ladi (bu baribir kechikish jihatidan ancha yaxshi!). Men shaxsan [Lofree Flow84](https://www.lofree.co/products/lofree-flow-the-smoothest-mechanical-keyboard) ni juda yaxshi ko‘raman!
 
-### Boshqa egasi uchun oʻrnatish
+### Boshqa egasi uchun o‘rnatish
 
-Agar siz mashinani birov — oila aʼzosi, yangi xodim, xaridor — uchun sozlayotgan boʻlsangiz, shaxsiy savollarga ularning oʻrniga javob bermasligingiz kerak. Oʻrnatuvchining birinchi ekranida (klaviatura tanlovi) `Ctrl + C` ni bosing va Omarchy mashinani boshqa egasi uchun tayyorlashni taklif qiladi. Tizim darhol oʻrnatiladi, lekin barcha shaxsiy sozlashlar — klaviatura tartibi, foydalanuvchi nomi, parol — mashina birinchi marta yuklanguncha qoldiriladi. Disk baribir standartda shifrlangan va yangi egasi oʻsha birinchi yuklanishda tanlagan parol shifrlash paroli ham boʻladi. (Allaqachon ishlatgan mashinangizni qayta oʻrnatmasdan ham topshirishingiz mumkin — [kompyuterni tozalash](48-security.md) ga qarang.)
+Agar mashinani boshqa birov — oila a’zosi, yangi xodim, xaridor — uchun tayyorlayotgan bo‘lsangiz, shaxsiy savollarga uning nomidan javob bermasligingiz kerak. O‘rnatuvchining eng birinchi ekranida (klaviatura tanlash) `Ctrl + C` ni bosing va Omarchy uning o‘rniga mashinani boshqa egasi uchun tayyorlashni taklif qiladi. Tizim darhol o‘rnatiladi, lekin barcha shaxsiy sozlashlar — klaviatura tartibi, foydalanuvchi nomi, parol — mashina birinchi marta yuklanguncha qoldiriladi. Disk baribir sukut bo‘yicha shifrlangan bo‘ladi va yangi egasi o‘sha birinchi yuklanishda tanlagan parol shifrlash paroli ham bo‘lib qoladi. (Siz allaqachon foydalanib kelgan mashinani qayta o‘rnatishsiz ham topshirishingiz mumkin — qarang [kompyuterni asl holatiga qaytarish](48-security.md).)
 
-### Ishtiroksiz oʻrnatishlar
+### Nazoratsiz o‘rnatishlar
 
-ISO ikkinchi diskda konfiguratsiyasi berilganda — klaviaturasiz, sehrgarsiz — mutlaqo oʻz-oʻzidan ham oʻrnatilishi mumkin. Omarchyni VM va park mashinalari uchun baza obraz sifatida ishlatishning yoʻli shu. [Ishtiroksiz oʻrnatishlar](51-unattended-installs.md) ga qarang.
+ISO shuningdek, unga konfiguratsiyasi ikkinchi diskda topshirilsa, butunlay o‘z-o‘zidan — klaviaturasiz, o‘rnatish yordamchisisiz — o‘rnatilishi ham mumkin. Omarchy ni VM lar va mashinalar parki uchun asosiy obraz sifatida ishlatishning yo‘li shu. Qarang [nazoratsiz o‘rnatishlar](51-unattended-installs.md).
 
-### Shifrlashsiz oʻrnatishlar
+### Shifrlashsiz o‘rnatishlar
 
-Omarchy standartda shifrlash bilan oʻrnatiladi. Bu yoʻqolishi yoki oʻgʻirlanishi mumkin boʻlgan har qanday kompyuter uchun xavfsiz, masʼuliyatli tanlov. Uskunangizga kira oladigan birov maʼlumotlaringizga erishishini xohlamaysiz!
+Omarchy sukut bo‘yicha shifrlash bilan o‘rnatiladi. Bu yo‘qolishi yoki o‘g‘irlanishi mumkin bo‘lgan har qanday kompyuter uchun xavfsiz, mas’uliyatli tanlovdir. Uskunangizga kira olgan har kim ma’lumotlaringizni qo‘lga kirita olishini istamaysiz!
 
-Lekin maxsus sharoitlarda, masalan himoyalangan kompyuterlarga masofaviy Omarchy oʻrnatishlari yoki maxfiy maʼlumotlarsiz bir martalik oʻrnatishlar uchun, shifrlashsiz oʻrnatishni xohlashingiz mumkin. Diskni formatlash tasdigʻida shifrlashsiz oʻrnatishga oʻtish uchun `Ctrl + C` ni bosishingiz mumkin.
+Lekin maxsus holatlarda, masalan, himoyalangan kompyuterlarga masofaviy Omarchy o‘rnatishlarda yoki maxfiy ma’lumotlarsiz bir martalik o‘rnatishlarda, shifrlashsiz o‘rnatishni xohlashingiz mumkin. Shifrlashsiz o‘rnatishga o‘tish uchun diskni formatlashni tasdiqlash ekranida `Ctrl + C` ni bosishingiz mumkin.
 
 ### Til
 
-Omarchy 50 tilda gaplashadi — omarchy.org dagi toʻplam bilan bir xil — va ingliz tili standart hisoblanadi. Almashtirish uchun Omarchy menyusini ochib _Sozlash > Til_ ga oʻting yoki terminalda `omarchy language <code>` ni ishga tushiring (`omarchy language list` kodlarni koʻrsatadi). Menyu, ish stoli va Omarchyning oʻz bildirishnomalari darhol tilni almashtiradi va tizim lokali ham moslab oʻrnatiladi, shuning uchun boshqa ilovalaringiz keyingi kirishingizda ergashadi.
+Omarchy 50 tilda gapiradi — omarchy.org dagi bilan bir xil to‘plam — va sukut bo‘yicha ingliz tili ishlatiladi. Almashtirish uchun Omarchy menyusini oching va _Sozlash > Til_ ga o‘ting yoki terminalda `omarchy language <code>` ni ishga tushiring (`omarchy language list` kodlarni ko‘rsatadi). Menyu, ish stoli va Omarchy ning o‘z bildirishnomalari darhol tilni o‘zgartiradi va undan keyin ochadigan har bir ilovangiz ham shunga ergashadi. Allaqachon ochiq bo‘lgan ilovalar ularni qayta ishga tushirganingizda almashadi.
 
-### Qotib qolsangiz yordam
+### Tiqilib qolsangiz yordam
 
-Agar qotib qolsangiz, odatda [hamjamiyat Discord](https://omarchy.org/discord) dagi _#omarchy-help_ kanalida yordam berishga tayyor birovni topishingiz mumkin.
+Agar tiqilib qolsangiz, odatda [hamjamiyat Discord](https://omarchy.org/discord) idagi _#omarchy-help_ kanalida yordam berishga tayyor kimnidir topishingiz mumkin.

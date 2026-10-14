@@ -1,43 +1,43 @@
-# Darba sākums
+# Darba sākšana
 
-Omarchy instalē, izmantojot ISO. Tu vari izvēlēties starp pilna diska instalēšanu, kas pārņem visu disku, vai brīvās vietas instalēšanu, kas ievieto Omarchy nepiešķirtajā vietā diskā — tā tu veic dubultsāknēšanu līdzās Windows vai citai OS (skat. [dubultsāknēšanas instalēšana](50-dual-boot-install.md) — ņem vērā, ka vispirms Windows ir jāizslēdz BitLocker). Jebkurā gadījumā instalēšana pēc noklusējuma izmanto pilnu šifrēšanu, un pilna diska opcija izdzēsīs atlasīto disku, tāpēc pirms esoša diska izmantošanas noteikti izveido dublējumu!
+Omarchy tiek instalēta, izmantojot ISO. Tu vari izvēlēties starp pilna diska instalāciju, kas pārņem visu disku, vai instalāciju brīvajā vietā, kas Omarchy ievieto diska nepiešķirtajā vietā — tā tu veic divkāršu palaišanu līdzās Windows vai citai OS (sk. [divkāršās palaišanas instalāciju](50-dual-boot-install.md) — ņem vērā, ka tev vispirms Windows būs jāizslēdz BitLocker). Jebkurā gadījumā instalācija pēc noklusējuma izmanto pilnu šifrēšanu, un pilna diska opcija izdzēsīs atlasīto disku, tāpēc pirms esoša diska izmantošanas noteikti izveido rezerves kopiju!
 
-[Lejupielādē Omarchy ISO](https://omarchy.org/) vispirms, ieliec to USB atmiņā (izmanto [balenaEtcher](https://etcher.balena.io/) Mac/Windows vai [caligula](https://github.com/ifd3f/caligula) Linux) un sāknē no atmiņas.
+Vispirms [lejupielādē Omarchy ISO](https://omarchy.org/), ieraksti to USB zibatmiņā (izmanto [balenaEtcher](https://etcher.balena.io/) Mac/Windows vai [caligula](https://github.com/ifd3f/caligula) Linux) un palaid datoru no zibatmiņas.
 
-_Tev BIOS ir jāizslēdz Secure Boot un/vai TPM. Tev tie ir jāizslēdz, lai varētu instalēt Omarchy. Tās ir Microsoft drošības shēmas, kas paredzētas Windows un ar Microsoft saistītiem Linux izplatījumiem._
+_Tev BIOS ir jāizslēdz Secure Boot un/vai TPM. Tev tie ir jāizslēdz, lai varētu instalēt Omarchy. Tās ir Microsoft drošības shēmas, kas paredzētas Windows un ar Microsoft saistītām Linux distributīvām._
 
 Pēc tam atbildi uz konfigurācijas jautājumiem un apstiprini tos šādi:
 
  ![install-config](images/install-config.webp)
 
-Pēc tam atlasī disku savai instalēšanai un atslābinies, skatoties instalēšanas izrādi. Ātrākajās mūsdienu iekārtās to var izdarīt mazāk nekā minūtē, bet pat vecākā datorā tam nevajadzētu aizņemt vairāk par 5 minūtēm.
+Pēc tam izvēlies disku instalācijai un atslābinies un skaties, kā norit instalācijas izrāde. Ātrākajos modernajos datoros to var paveikt mazāk nekā minūtē, taču pat vecākā datorā tam nevajadzētu aizņemt vairāk par 5 minūtēm.
 
  ![install-done](images/install-done.webp)
 
 Tagad tu esi gatavs Omarchy!
 
-### Izmanto vadu vai 2.4 GHz tastatūru!
+### Izmanto vadu vai 2.4ghz tastatūru!
 
-Pilnā diska šifrēšana neļaus tev startēšanas laikā ievadīt paroli no Bluetooth tastatūras. Tāpat kā tu nevari izmantot Bluetooth tastatūru, lai iekļūtu datora BIOS. Tev būs nepieciešama tastatūra, kas izmanto vai nu 2.4 GHz spraudni, vai kabeli (kas jebkurā gadījumā ir daudz patīkamāks latentuma ziņā!). Man personīgi ļoti patīk [Lofree Flow84](https://www.lofree.co/products/lofree-flow-the-smoothest-mechanical-keyboard)!
+Pilna diska šifrēšana startēšanas laikā neļaus tev ievadīt paroli no Bluetooth tastatūras. Tieši tāpat kā tu nevari izmantot Bluetooth tastatūru, lai PC ieietu BIOS. Tev būs nepieciešama tastatūra, kas izmanto vai nu 2.4ghz dongli, vai kabeli (kas aiztures ziņā jebkurā gadījumā ir daudz patīkamāk!). Man pašam ļoti patīk [Lofree Flow84](https://www.lofree.co/products/lofree-flow-the-smoothest-mechanical-keyboard)!
 
 ### Instalēšana citam īpašniekam
 
-Ja tu iestati iekārtu kādam citam — ģimenes loceklim, jaunam darbiniekam, pircējam — tev nevajadzētu atbildēt uz personīgajiem jautājumiem viņa vietā. Nospied `Ctrl + C` instalētāja pašā pirmajā ekrānā (tastatūras atlasē), un Omarchy piedāvās tā vietā sagatavot iekārtu citam īpašniekam. Sistēma instalējas uzreiz, bet visa personiskā iestatīšana — tastatūras izkārtojums, lietotājvārds, parole — tiek atlikta līdz iekārtas pirmajai sāknēšanai. Disks joprojām pēc noklusējuma tiek šifrēts, un parole, ko jaunais īpašnieks izvēlas pirmajā sāknēšanas reizē, kļūst arī par šifrēšanas paroli. (Iekārtu, ko tu jau esi lietojis, var nodot arī bez pārinstalēšanas — skat. [datora atiestatīšana](48-security.md).)
+Ja tu iestati datoru kādam citam — ģimenes loceklim, jaunam darbiniekam, pircējam —, tev nevajadzētu atbildēt uz personīgajiem jautājumiem viņu vārdā. Instalatora pašā pirmajā ekrānā (tastatūras izvēlē) nospied `Ctrl + C`, un Omarchy tā vietā piedāvās sagatavot datoru citam īpašniekam. Sistēma tiek instalēta uzreiz, bet visa personīgā iestatīšana — tastatūras izkārtojums, lietotājvārds, parole — tiek atlikta līdz brīdim, kad dators tiek palaists pirmo reizi. Disks joprojām pēc noklusējuma ir šifrēts, un parole, ko jaunais īpašnieks izvēlas šajā pirmajā palaišanā, kļūst arī par šifrēšanas paroli. (Datoru, ko tu jau esi lietojis, arī var nodot citam bez pārinstalēšanas — sk. [datora atiestatīšanu](48-security.md).)
 
-### Bezuzraudzības instalēšana
+### Instalācijas bez uzraudzības
 
-ISO var arī instalēt pilnīgi pats — bez tastatūras, bez vedņa —, kad tam otrajā diskā nodod tā konfigurāciju. Tā Omarchy var izmantot kā bāzes attēlu virtuālajām mašīnām un iekārtu parkam. Skat. [bezuzraudzības instalēšana](51-unattended-installs.md).
+ISO var arī instalēties pilnīgi pats — bez tastatūras, bez vedņa —, kad tam konfigurācija tiek nodota otrajā diskā. Tā Omarchy var izmantot kā bāzes attēlu VM un datoru parka ierīcēm. Sk. [instalācijas bez uzraudzības](51-unattended-installs.md).
 
-### Instalēšana bez šifrēšanas
+### Instalācijas bez šifrēšanas
 
-Omarchy pēc noklusējuma tiek instalēts ar šifrēšanu. Tā ir droša, atbildīga izvēle jebkuram datoram, ko var pazaudēt vai nozagt. Tu nevēlies, lai ikviens, kuram ir piekļuve tavai aparatūrai, varētu tikt pie taviem datiem!
+Omarchy pēc noklusējuma tiek instalēta ar šifrēšanu. Tā ir droša un atbildīga izvēle jebkuram datoram, kuru iespējams pazaudēt vai kurš var tikt nozagts. Tu taču nevēlies, lai ikviens, kurš tiek klāt tavai aparatūrai, varētu tikt arī pie taviem datiem!
 
-Bet īpašos apstākļos, piemēram, attālās Omarchy instalācijās aizsargātos datoros vai vienreizējās instalācijās bez sensitīviem datiem, tu varētu vēlēties instalēt bez šifrēšanas. Diska formatēšanas apstiprinājumā vari nospiest `Ctrl + C`, lai pārslēgtos uz instalēšanu bez šifrēšanas.
+Taču īpašos apstākļos, piemēram, attālinātām Omarchy instalācijām aizsargātos datoros vai vienreizējām instalācijām bez sensitīviem datiem, tu varētu vēlēties instalēt bez šifrēšanas. Tu vari nospiest `Ctrl + C` diska formatēšanas apstiprinājumā, lai pārslēgtos uz instalāciju bez šifrēšanas.
 
 ### Valoda
 
-Omarchy runā 50 valodās — tajā pašā kopā kā omarchy.org — un angļu valoda ir noklusējuma. Lai pārslēgtu, atver Omarchy izvēlni un ej uz _Iestatīšana > Valoda_ vai terminālī palaid `omarchy language <code>` (`omarchy language list` rāda kodus). Izvēlne, darbvirsma un paša Omarchy paziņojumi maina valodu uzreiz, un sistēmas lokāle tiek iestatīta atbilstoši, tāpēc tavas pārējās lietotnes sekos nākamajā pieteikšanās reizē.
+Omarchy runā 50 valodās — tādā pašā kopumā kā omarchy.org —, un noklusējuma valoda ir angļu. Lai pārslēgtos, atver Omarchy izvēlni un ej uz _Setup > Language_ vai terminālī izpildi `omarchy language <code>` (`omarchy language list` parāda kodus). Izvēlne, darbvirsma un paša Omarchy paziņojumi valodu nomaina nekavējoties, un katra lietotne, ko tu atvērs pēc tam, arī tai sekos. Jau atvērtās lietotnes pārslēgsies, tiklīdz tu tās restartēsi.
 
 ### Palīdzība, ja esi iestrēdzis
 
-Ja iestrēgsti, parasti vari atrast kādu, kas vēlas palīdzēt, kanālā _#omarchy-help_ [kopienas Discord](https://omarchy.org/discord).
+Ja esi iestrēdzis, tu parasti vari atrast kādu, kurš ir gatavs palīdzēt, _#omarchy-help_ kanālā [kopienas Discord](https://omarchy.org/discord).

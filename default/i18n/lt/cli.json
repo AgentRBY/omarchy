@@ -111,7 +111,6 @@
   "keybindings.tmuxTitle": "Tmux spartieji klavišai",
   "language.changed": "Kalba dabar nustatyta į %1",
   "language.newApps": "Naujos programos taip pat ją naudos; paleiskite iš naujo jau atidarytas",
-  "language.relogin": "Atsijunkite ir prisijunkite, kad pritaikytumėte visur",
   "layout.defaultFloating": "Numatytasis išdėstymas pakeistas į slankųjį",
   "layout.defaultScrolling": "Numatytasis išdėstymas pakeistas į slenkantįjį",
   "layout.defaultTiling": "Numatytasis išdėstymas pakeistas į plytelinį",

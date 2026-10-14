@@ -1,43 +1,43 @@
-# Začetek dela
+# Prvi koraki
 
-Omarchy se namesti z datoteko ISO. Izberete lahko med namestitvijo na celoten disk, ki prevzame celoten pogon, ali namestitvijo v prosti prostor, ki Omarchy namesti v nedodeljeni prostor na pogonu — tako dvojno zaganjate poleg Windowsov ali drugega operacijskega sistema (glejte [namestitev z dvojnim zagonom](50-dual-boot-install.md) — upoštevajte, da boste morali v Windowsih najprej izklopiti BitLocker). Kakorkoli že, namestitev je privzeto popolnoma šifrirana, možnost za celoten disk pa bo izbrisala izbrani pogon, zato pred uporabo obstoječega poskrbite za varnostno kopijo!
+Omarchy se namesti z ISO. Izberete lahko med namestitvijo na cel disk, ki prevzame celoten pogon, ali namestitvijo v prosti prostor, ki Omarchy namesti v nedodeljeni prostor na pogonu — tako ga lahko poganjate v dvojnem zagonu ob sistemu Windows ali drugem operacijskem sistemu (glejte [namestitev za dvojni zagon](50-dual-boot-install.md) — upoštevajte, da morate v sistemu Windows najprej izklopiti BitLocker). V obeh primerih namestitev privzeto uporabi popolno šifriranje, možnost namestitve na cel disk pa bo izbrisala izbrani pogon, zato pred uporabo obstoječega pogona obvezno naredite varnostno kopijo!
 
-Najprej [prenesite datoteko ISO za Omarchy](https://omarchy.org/), jo dajte na ključ USB (na Macu/Windowsih uporabite [balenaEtcher](https://etcher.balena.io/), na Linuxu pa [caligula](https://github.com/ifd3f/caligula)) in zaženite s ključa.
+Najprej [prenesite ISO za Omarchy](https://omarchy.org/), ga zapišite na USB ključek (uporabite [balenaEtcher](https://etcher.balena.io/) v Macu/Windows ali [caligula](https://github.com/ifd3f/caligula) v Linuxu) in zaženite računalnik s ključka.
 
-_V BIOS-u morate izklopiti Secure Boot in/ali TPM. Izklopiti ju morate, da lahko namestite Omarchy. Gre za Microsoftovi varnostni shemi, namenjeni Windowsom in z Microsoftom povezanim distribucijam Linuxa._
+_V BIOS-u morate izklopiti Secure Boot in/ali TPM. Izklopiti ju morate, da lahko namestite Omarchy. Gre za Microsoftova varnostna mehanizma, namenjena sistemu Windows in z Microsoftom povezanim distribucijam Linuxa._
 
-Nato odgovorite na konfiguracijska vprašanja in jih potrdite takole:
+Nato odgovorite na vprašanja o nastavitvah in jih potrdite takole:
 
  ![install-config](images/install-config.webp)
 
-Nato izberite pogon za namestitev, se usedite in opazujte namestitveno predstavo. Na najhitrejših sodobnih računalnikih je lahko končana v manj kot minuti, niti na starejšem računalniku pa ne bi smela trajati več kot 5 minut.
+Nato izberite pogon za namestitev ter se usedite in si oglejte namestitveno predstavo. Na najhitrejših sodobnih računalnikih je lahko končana v manj kot minuti, a tudi na starejšem računalniku ne bi smela trajati več kot 5 minut.
 
  ![install-done](images/install-done.webp)
 
 Zdaj ste pripravljeni na Omarchy!
 
-### Uporabite žično tipkovnico ali tipkovnico 2,4 GHz!
+### Uporabite žično tipkovnico ali tipkovnico 2.4ghz!
 
-Šifriranje celotnega diska vam ob zagonu ne bo omogočilo vnosa gesla s tipkovnico Bluetooth. Tako kot s tipkovnico Bluetooth na računalniku PC ne morete vstopiti v BIOS. Potrebovali boste tipkovnico, ki uporablja bodisi vtičnik 2,4 GHz bodisi kabel (kar je sicer veliko lepše zaradi zakasnitve!). Osebno obožujem [Lofree Flow84](https://www.lofree.co/products/lofree-flow-the-smoothest-mechanical-keyboard)!
+Zaradi šifriranja celotnega diska ob zagonu ne boste mogli vnesti gesla s tipkovnico Bluetooth. Tako kot s tipkovnico Bluetooth v osebnem računalniku ne morete vstopiti v BIOS. Potrebovali boste tipkovnico, ki uporablja sprejemnik 2.4ghz ali kabel (kar je v vsakem primeru veliko boljše za zakasnitev!). Osebno obožujem [Lofree Flow84](https://www.lofree.co/products/lofree-flow-the-smoothest-mechanical-keyboard)!
 
 ### Namestitev za drugega lastnika
 
-Če računalnik nastavljate za nekoga drugega — družinskega člana, novega zaposlenega, kupca — osebnih vprašanj ne smete odgovarjati namesto njega. Na čisto prvem zaslonu namestitvenega programa (izbira tipkovnice) pritisnite `Ctrl + C`, in Omarchy vam bo namesto tega ponudil pripravo računalnika za drugega lastnika. Sistem se namesti takoj, vsa osebna nastavitev — razpored tipkovnice, uporabniško ime, geslo — pa se odloži, dokler se računalnik prvič ne zažene. Pogon je še vedno privzeto šifriran, geslo, ki ga novi lastnik izbere ob prvem zagonu, pa postane tudi geslo za šifriranje. (Računalnik, ki ste ga že uporabljali, lahko predate tudi brez vnovične namestitve — glejte [ponastavitev računalnika](48-security.md).)
+Če nastavljate računalnik za nekoga drugega — družinskega člana, novega zaposlenega, kupca — ne bi smeli v njegovem imenu odgovarjati na osebna vprašanja. Na prvem zaslonu namestitvenega programa (izbira tipkovnice) pritisnite `Ctrl + C` in Omarchy vam bo ponudil, da namesto tega računalnik pripravi za drugega lastnika. Sistem se namesti takoj, a vsa osebna nastavitev — razporeditev tipkovnice, uporabniško ime, geslo — je odložena do prvega zagona računalnika. Pogon je še vedno privzeto šifriran, geslo, ki ga novi lastnik izbere ob tem prvem zagonu, pa postane tudi geslo za šifriranje. (Računalnik, ki ste ga že uporabljali, lahko predate tudi brez ponovne namestitve — glejte [ponastavitev računalnika](48-security.md).)
 
 ### Nenadzorovane namestitve
 
-Datoteka ISO se lahko namesti tudi povsem samostojno — brez tipkovnice, brez čarovnika — če ji konfiguracijo podate na drugem pogonu. Tako Omarchy obravnavate kot osnovno sliko za navidezne računalnike in stroje v floti. Glejte [nenadzorovane namestitve](51-unattended-installs.md).
+ISO se lahko namesti tudi popolnoma sam — brez tipkovnice, brez čarovnika — kadar svojo konfiguracijo dobi na drugem pogonu. Tako lahko Omarchy obravnavate kot osnovno sliko za VM-je in flote računalnikov. Glejte [nenadzorovane namestitve](51-unattended-installs.md).
 
 ### Namestitve brez šifriranja
 
-Omarchy je privzeto nameščen s šifriranjem. To je varna in odgovorna izbira za vsak računalnik, ki ga lahko izgubite ali vam ga ukradejo. Ne želite, da bi kdorkoli z dostopom do vaše strojne opreme lahko prišel do vaših podatkov!
+Omarchy se privzeto namesti s šifriranjem. To je varna in odgovorna izbira za vsak računalnik, ki ga je mogoče izgubiti ali ukrasti. Ne želite, da bi lahko kdorkoli z dostopom do vaše strojne opreme prišel do vaših podatkov!
 
-V posebnih okoliščinah, kot so oddaljene namestitve Omarchyja na zaščitenih računalnikih ali začasne namestitve brez občutljivih podatkov, pa boste morda želeli namestiti brez šifriranja. Ob potrditvi formatiranja diska lahko pritisnete `Ctrl + C` za preklop na namestitev brez šifriranja.
+V posebnih okoliščinah, na primer pri oddaljenih namestitvah sistema Omarchy na zaščitene računalnike ali pri začasnih namestitvah brez občutljivih podatkov, pa boste morda želeli namestiti brez šifriranja. Pri potrditvi formatiranja diska lahko pritisnete `Ctrl + C`, da preklopite na namestitev brez šifriranja.
 
 ### Jezik
 
-Omarchy govori 50 jezikov — enak nabor kot omarchy.org — privzet je angleški. Za preklop odprite meni Omarchy in pojdite na _Setup > Language_ ali v terminalu zaženite `omarchy language <code>` (`omarchy language list` prikaže kode). Meni, namizje in obvestila Omarchyja jezik zamenjajo takoj, sistemske lokalne nastavitve pa se nastavijo skladno, tako da jim vaše druge aplikacije sledijo ob naslednji prijavi.
+Omarchy govori 50 jezikov — isti nabor kot omarchy.org — privzeta pa je angleščina. Za zamenjavo odprite meni Omarchy in pojdite v _Setup > Language_ ali v terminalu zaženite `omarchy language <code>` (`omarchy language list` pokaže kode). Meni, namizje in obvestila sistema Omarchy zamenjajo jezik takoj, temu pa sledi tudi vsaka aplikacija, ki jo odprete pozneje. Aplikacije, ki so bile že odprte, se zamenjajo, ko jih znova zaženete.
 
-### Pomoč, če obtrknete
+### Pomoč, če se zataknete
 
-Če obtrknete, v kanalu _#omarchy-help_ na [skupnostnem Discordu](https://omarchy.org/discord) običajno najdete nekoga, ki je pripravljen pomagati.
+Če se zataknete, lahko v kanalu _#omarchy-help_ na [skupnostnem Discordu](https://omarchy.org/discord) običajno najdete nekoga, ki vam je pripravljen pomagati.

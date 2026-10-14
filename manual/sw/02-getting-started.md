@@ -1,43 +1,43 @@
 # Kuanza
 
-Omarchy husakinishwa kwa kutumia ISO. Unaweza kuchagua kati ya usakinishaji wa diski yote, unaotwaa kiendeshaji chote, au usakinishaji wa nafasi tupu, unaoweka Omarchy katika nafasi ambayo haijatengwa kwenye kiendeshaji — hiyo ndiyo njia ya kuwasha pamoja na Windows au OS nyingine (tazama [usakinishaji wa kuwasha mara mbili](50-dual-boot-install.md) — kumbuka kwamba utahitaji kuzima BitLocker katika Windows kwanza). Kwa njia yoyote, usakinishaji huwa na usimbaji kamili kwa chaguomsingi, na chaguo la diski yote litafuta kiendeshaji kilichochaguliwa, kwa hiyo hakikisha unachukua hifadhi rudufu kabla ya kutumia kilichopo!
+Omarchy husakinishwa kwa kutumia ISO. Unaweza kuchagua kati ya usakinishaji wa diski kamili, ambao huchukua hifadhi nzima, au usakinishaji wa nafasi iliyokuwa wazi, ambao huweka Omarchy katika nafasi ambayo haijagawiwa kwenye hifadhi — hivyo ndivyo unavyowasha mara mbili pamoja na Windows au OS nyingine (tazama [usakinishaji wa kuwasha mara mbili](50-dual-boot-install.md) — kumbuka kwamba utahitaji kuzima BitLocker katika Windows kwanza). Vyovyote vile, usakinishaji huwa na usimbaji fiche kamili kwa chaguo-msingi, na chaguo la diski kamili litafuta hifadhi iliyochaguliwa, kwa hiyo hakikisha unachukua nakala rudufu kabla ya kutumia iliyopo!
 
-[Pakua ISO ya Omarchy](https://omarchy.org/) kwanza, iweke kwenye kifimbo cha USB (tumia [balenaEtcher](https://etcher.balena.io/) kwenye Mac/Windows au [caligula](https://github.com/ifd3f/caligula) kwenye Linux), na uwashe kutoka kifimboni.
+[Pakua ISO ya Omarchy](https://omarchy.org/) kwanza, iweke kwenye kifimbo cha USB (tumia [balenaEtcher](https://etcher.balena.io/) kwenye Mac/Windows au [caligula](https://github.com/ifd3f/caligula) kwenye Linux), na anza kuwasha kutoka kwenye kifimbo.
 
-_Lazima uzime Secure Boot na/au TPM katika BIOS. Lazima uzime hivi ili uweze kusakinisha Omarchy. Ni mipango ya usalama ya Microsoft iliyokusudiwa kwa Windows na usambazaji wa Linux unaoshirikiana na Microsoft._
+_Lazima uzime Secure Boot na/au TPM katika BIOS. Lazima uzime hivi ili uweze kusakinisha Omarchy. Ni mipango ya usalama ya Microsoft iliyokusudiwa kwa ajili ya Windows na usambazaji wa Linux unaoshirikiana na Microsoft._
 
 Kisha jibu maswali ya usanidi, na uyathibitishe kama hivi:
 
  ![install-config](images/install-config.webp)
 
-Kisha chagua kiendeshaji cha usakinishaji wako, na ukae utazame onyesho la usakinishaji likiendelea. Unaweza kukamilika kwa chini ya dakika moja kwenye mashine za kisasa zenye kasi zaidi, lakini haupaswi kuchukua zaidi ya dakika 5 hata kwenye kompyuta ya zamani.
+Kisha chagua hifadhi kwa ajili ya usakinishaji wako, na ukae utulie na uangalie onyesho la usakinishaji likiendelea. Linaweza kukamilika kwa chini ya dakika moja kwenye mashine za kisasa zenye kasi zaidi, lakini halipaswi kuchukua zaidi ya dakika 5 hata kwenye kompyuta ya zamani.
 
  ![install-done](images/install-done.webp)
 
 Sasa uko tayari kwa Omarchy!
 
-### Tumia kibodi ya waya au 2.4ghz!
+### Tumia kibodi yenye waya au ya 2.4ghz!
 
-Usimbaji wa diski yote hautakuruhusu kuingiza nenosiri kutoka kibodi ya Bluetooth wakati wa kuwasha. Kama vile huwezi kutumia kibodi ya Bluetooth kuingia BIOS kwenye PC. Utahitaji kibodi inayotumia dongle ya 2.4ghz au kebo (ambayo ni nzuri zaidi kwa kuchelewa hata hivyo!). Binafsi ninaipenda sana [Lofree Flow84](https://www.lofree.co/products/lofree-flow-the-smoothest-mechanical-keyboard)!
+Usimbaji fiche wa diski kamili hautakuruhusu kuingiza nenosiri kutoka kwenye kibodi ya Bluetooth wakati wa kuanza. Kama tu huwezi kutumia kibodi ya Bluetooth kuingia BIOS kwenye PC. Utahitaji kibodi ambayo ama hutumia dongle ya 2.4ghz au kebo (ambayo ni bora zaidi kwa ucheleweshaji hata hivyo!). Mimi binafsi naipenda sana [Lofree Flow84](https://www.lofree.co/products/lofree-flow-the-smoothest-mechanical-keyboard)!
 
-### Kusakinisha kwa mmiliki mwingine
+### Kusakinisha kwa ajili ya mmiliki mwingine
 
-Ikiwa unaandaa mashine kwa mtu mwingine — mwanafamilia, mfanyakazi mpya, mnunuzi — hupaswi kujibu maswali ya kibinafsi kwa niaba yake. Bonyeza `Ctrl + C` kwenye skrini ya kwanza kabisa ya kisakinishi (uteuzi wa kibodi), na Omarchy itatoa kuandaa mashine kwa mmiliki mwingine badala yake. Mfumo husakinishwa mara moja, lakini usanidi wote wa kibinafsi — umbo la kibodi, jina la mtumiaji, nenosiri — huahirishwa hadi mashine iwashe kwa mara ya kwanza. Kiendeshaji bado kimesimbwa kwa chaguomsingi, na nenosiri ambalo mmiliki mpya huchagua wakati huo wa kuwasha wa kwanza huwa nenosiri la usimbaji pia. (Mashine ambayo tayari umekuwa ukiitumia inaweza kukabidhiwa bila kusakinisha upya pia — tazama [kuweka upya kompyuta](48-security.md).)
+Ikiwa unatayarisha mashine kwa ajili ya mtu mwingine — mwanafamilia, mfanyakazi mpya, mnunuzi — hupaswi kujibu maswali ya kibinafsi kwa niaba yao. Bonyeza `Ctrl + C` kwenye skrini ya kwanza kabisa ya kisakinishi (uteuzi wa kibodi), na Omarchy itaomba kutayarisha mashine kwa ajili ya mmiliki mwingine badala yake. Mfumo husakinishwa mara moja, lakini maandalizi yote ya kibinafsi — mpangilio wa kibodi, jina la mtumiaji, nenosiri — huahirishwa hadi mashine itakapowashwa kwa mara ya kwanza. Hifadhi bado imesimbwa kwa njia fiche kwa chaguo-msingi, na nenosiri ambalo mmiliki mpya hulichagua kwenye uwasishaji huo wa kwanza pia huwa nenosiri la usimbaji fiche. (Mashine ambayo tayari umekuwa ukiitumia inaweza pia kukabidhiwa bila kusakinisha upya — tazama [kuweka upya kompyuta](48-security.md).)
 
-### Usakinishaji usio na uangalizi
+### Usakinishaji usiosimamiwa
 
-ISO inaweza pia kusakinisha kabisa peke yake — bila kibodi, bila mchawi — inapopewa usanidi wake kwenye kiendeshaji cha pili. Hiyo ndiyo njia ya kutumia Omarchy kama picha ya msingi kwa VMs na mashine za kundi. Tazama [usakinishaji usio na uangalizi](51-unattended-installs.md).
+ISO inaweza pia kujisakinisha kabisa yenyewe — bila kibodi, bila mwongozo wa usakinishaji — inapopewa usanidi wake kwenye hifadhi ya pili. Hiyo ndiyo njia ya kuchukulia Omarchy kama picha ya msingi kwa ajili ya VM na mashine za kundi. Tazama [usakinishaji usiosimamiwa](51-unattended-installs.md).
 
-### Usakinishaji bila usimbaji
+### Usakinishaji bila usimbaji fiche
 
-Omarchy husakinishwa na usimbaji kwa chaguomsingi. Ni chaguo salama na la kuwajibika kwa kompyuta yoyote ambayo inaweza kupotea au kuibiwa. Hutaki mtu yeyote mwenye ufikiaji wa vifaa vyako aweze kupata data yako!
+Omarchy husakinishwa na usimbaji fiche kwa chaguo-msingi. Ni chaguo salama na la kuwajibika kwa kompyuta yoyote ambayo inaweza kupotea au kuibiwa. Hutaki mtu yeyote mwenye ufikiaji wa maunzi yako aweze kupata data yako!
 
-Lakini katika hali maalumu, kama usakinishaji wa Omarchy wa mbali kwenye kompyuta zilizolindwa au kwa usakinishaji wa kutupa bila data nyeti, unaweza kutaka kusakinisha bila usimbaji. Unaweza kubonyeza `Ctrl + C` kwenye uthibitisho wa umbizo la diski ili kubadili hadi usakinishaji usio na usimbaji.
+Lakini katika mazingira maalumu, kama vile usakinishaji wa Omarchy wa mbali kwenye kompyuta zilizolindwa au kwa usakinishaji wa kutupa mara moja bila data nyeti, unaweza kutaka kusakinisha bila usimbaji fiche. Unaweza kubonyeza `Ctrl + C` kwenye uthibitisho wa uumbizaji wa diski ili kubadili hadi usakinishaji usio na usimbaji fiche.
 
 ### Lugha
 
-Omarchy huzungumza lugha 50 — seti sawa na omarchy.org — na Kiingereza ndicho chaguomsingi. Ili kubadili, fungua menyu ya Omarchy na uende _Sanidi > Lugha_, au endesha `omarchy language <code>` kwenye terminali (`omarchy language list` huonyesha misimbo). Menyu, eneo-kazi, na arifa za Omarchy yenyewe hubadilika lugha mara moja, na eneo la mfumo huwekwa kulingana, hivyo programu zako nyingine hufuata wakati mwingine unapoingia.
+Omarchy huzungumza lugha 50 — seti ileile kama omarchy.org — na Kiingereza ndicho chaguo-msingi. Ili kubadili, fungua menyu ya Omarchy na uende _Setup > Language_, au endesha `omarchy language <code>` katika terminal (`omarchy language list` huonyesha misimbo). Menyu, eneo-kazi, na arifa za Omarchy yenyewe hubadilisha lugha mara moja, na kila programu unayoifungua baada ya hapo pia hufuata. Programu ambazo tayari zilikuwa zimefunguliwa hubadilika mara unapoziwashia upya.
 
-### Msaada kama umekwama
+### Usaidizi ikiwa umekwama
 
-Ikiwa umekwama, kwa kawaida unaweza kumpata mtu anayetaka kusaidia katika kituo cha _#omarchy-help_ kwenye [Discord ya jumuiya](https://omarchy.org/discord).
+Ikiwa utakwama, kwa kawaida unaweza kupata mtu aliye tayari kusaidia katika kituo cha _#omarchy-help_ kwenye [Discord ya jumuiya](https://omarchy.org/discord).

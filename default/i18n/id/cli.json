@@ -110,7 +110,7 @@
   "keybindings.title": "Pintasan Keyboard",
   "keybindings.tmuxTitle": "Pintasan keyboard Tmux",
   "language.changed": "Bahasa kini disetel ke %1",
-  "language.relogin": "Keluar lalu masuk lagi untuk menerapkannya di semua tempat",
+  "language.newApps": "Aplikasi yang dibuka mulai sekarang juga menggunakannya; mulai ulang yang sudah terbuka",
   "layout.defaultFloating": "Tata letak default diatur ke floating",
   "layout.defaultScrolling": "Tata letak default diatur ke scrolling",
   "layout.defaultTiling": "Tata letak default diatur ke tiling",

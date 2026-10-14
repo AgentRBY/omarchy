@@ -110,7 +110,7 @@
   "keybindings.title": "اختصارات المفاتيح",
   "keybindings.tmuxTitle": "اختصارات مفاتيح Tmux",
   "language.changed": "عُيّنت اللغة الآن إلى %1",
-  "language.relogin": "سجّل الخروج ثم الدخول مجددًا لتطبيقه في كل مكان",
+  "language.newApps": "ستستخدم التطبيقات التي تفتحها من الآن هذه اللغة أيضًا؛ أعد تشغيل أي تطبيق مفتوح بالفعل",
   "layout.defaultFloating": "عُيّن التخطيط الافتراضي إلى العائم",
   "layout.defaultScrolling": "عُيّن التخطيط الافتراضي إلى التمرير",
   "layout.defaultTiling": "عُيّن التخطيط الافتراضي إلى التجانب",

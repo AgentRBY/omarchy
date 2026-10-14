@@ -110,7 +110,7 @@
   "keybindings.title": "Ikatan kekunci",
   "keybindings.tmuxTitle": "Ikatan kekunci Tmux",
   "language.changed": "Bahasa kini ditetapkan kepada %1",
-  "language.relogin": "Log keluar dan log masuk semula untuk menggunakannya di mana-mana",
+  "language.newApps": "Aplikasi yang anda buka mulai sekarang turut menggunakannya; mulakan semula aplikasi yang sudah terbuka",
   "layout.defaultFloating": "Susun atur lalai ditetapkan kepada mod terapung",
   "layout.defaultScrolling": "Susun atur lalai ditetapkan kepada mod tatal",
   "layout.defaultTiling": "Susun atur lalai ditetapkan kepada mod jubin",

@@ -110,7 +110,7 @@
   "keybindings.title": "Atajos de teclado",
   "keybindings.tmuxTitle": "Atajos de Tmux",
   "language.changed": "El idioma ahora es %1",
-  "language.relogin": "Cierra sesión y vuelve a entrar para aplicarlo en todas partes",
+  "language.newApps": "Las apps que abras de ahora en adelante también lo usarán; reinicia las que ya estén abiertas",
   "layout.defaultFloating": "Distribución predeterminada establecida como flotante",
   "layout.defaultScrolling": "Distribución predeterminada establecida como desplazamiento",
   "layout.defaultTiling": "Distribución predeterminada establecida como mosaico",

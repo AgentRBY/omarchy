@@ -1207,5 +1207,11 @@
   },
   "update.password.user": {
     "label": "Користувач"
+  },
+  "system.reboot-boot-menu": {
+    "label": "Перезавантажити в меню завантаження"
+  },
+  "setup.default.agent.kimi": {
+    "label": "Kimi"
   }
 }

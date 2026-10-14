@@ -1207,5 +1207,11 @@
   },
   "update.password.user": {
     "label": "Lietotājs"
+  },
+  "system.reboot-boot-menu": {
+    "label": "Restartēt uz sāknēšanas izvēlni"
+  },
+  "setup.default.agent.kimi": {
+    "label": "Kimi"
   }
 }

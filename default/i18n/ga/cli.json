@@ -110,7 +110,7 @@
   "keybindings.title": "Aicearraí méarchláir",
   "keybindings.tmuxTitle": "Aicearraí méarchláir Tmux",
   "language.changed": "Tá an teanga socraithe anois go %1",
-  "language.relogin": "Logáil amach agus isteach arís chun é a chur i bhfeidhm i ngach áit",
+  "language.newApps": "Úsáidfidh aipeanna a osclaíonn tú feasta í freisin; atosaigh aon cheann atá oscailte cheana",
   "layout.defaultFloating": "Leagan amach réamhshocraithe socraithe ar snámh",
   "layout.defaultScrolling": "Leagan amach réamhshocraithe socraithe ar scrolláil",
   "layout.defaultTiling": "Leagan amach réamhshocraithe socraithe ar tíliú",

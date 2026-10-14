@@ -1207,5 +1207,11 @@
   },
   "update.password.user": {
     "label": "Používateľ"
+  },
+  "system.reboot-boot-menu": {
+    "label": "Reštartovať do ponuky zavádzania"
+  },
+  "setup.default.agent.kimi": {
+    "label": "Kimi"
   }
 }

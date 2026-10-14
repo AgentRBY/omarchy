@@ -110,7 +110,7 @@
   "keybindings.title": "Tugmalar birikmalari",
   "keybindings.tmuxTitle": "Tmux tugmalar birikmalari",
   "language.changed": "Til endi %1 ga oʻrnatildi",
-  "language.relogin": "Hamma joyda qoʻllash uchun chiqib, qayta kiring",
+  "language.newApps": "Bundan buyon ochiladigan ilovalar ham shu tilda boʻladi; allaqachon ochiqlarini qayta ishga tushiring",
   "layout.defaultFloating": "Standart tartib suzuvchi qilib o‘rnatildi",
   "layout.defaultScrolling": "Standart tartib suriluvchi qilib o‘rnatildi",
   "layout.defaultTiling": "Standart tartib plitkali qilib o‘rnatildi",

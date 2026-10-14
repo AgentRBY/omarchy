@@ -110,7 +110,7 @@
   "keybindings.title": "Scorciatoie",
   "keybindings.tmuxTitle": "Scorciatoie Tmux",
   "language.changed": "La lingua è ora impostata su %1",
-  "language.relogin": "Esci e rientra per applicarla ovunque",
+  "language.newApps": "Le app che apri d'ora in avanti la useranno già; riavvia quelle già aperte",
   "layout.defaultFloating": "Layout predefinito impostato su floating",
   "layout.defaultScrolling": "Layout predefinito impostato su scrolling",
   "layout.defaultTiling": "Layout predefinito impostato su tiling",

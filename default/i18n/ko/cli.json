@@ -110,7 +110,7 @@
   "keybindings.title": "단축키",
   "keybindings.tmuxTitle": "Tmux 단축키",
   "language.changed": "언어가 이제 %1(으)로 설정되었습니다",
-  "language.relogin": "모든 곳에 적용하려면 로그아웃했다가 다시 로그인하세요",
+  "language.newApps": "지금부터 여는 앱에도 적용됩니다. 이미 열린 앱은 다시 시작하세요",
   "layout.defaultFloating": "기본 레이아웃이 플로팅으로 설정됨",
   "layout.defaultScrolling": "기본 레이아웃이 스크롤링으로 설정됨",
   "layout.defaultTiling": "기본 레이아웃이 타일링으로 설정됨",

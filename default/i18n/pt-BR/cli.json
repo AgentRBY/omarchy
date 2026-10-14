@@ -110,7 +110,7 @@
   "keybindings.title": "Atalhos de teclado",
   "keybindings.tmuxTitle": "Atalhos do Tmux",
   "language.changed": "O idioma agora é %1",
-  "language.relogin": "Saia e entre novamente para aplicar em tudo",
+  "language.newApps": "Apps abertos daqui em diante também usarão; reinicie os já abertos",
   "layout.defaultFloating": "Layout padrão definido como flutuante",
   "layout.defaultScrolling": "Layout padrão definido como rolagem",
   "layout.defaultTiling": "Layout padrão definido como mosaico",

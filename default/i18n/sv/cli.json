@@ -110,7 +110,7 @@
   "keybindings.title": "Kortkommandon",
   "keybindings.tmuxTitle": "Tmux-kortkommandon",
   "language.changed": "Språket är nu %1",
-  "language.relogin": "Logga ut och in igen för att tillämpa överallt",
+  "language.newApps": "Appar du öppnar från nu använder det också; starta om redan öppna appar",
   "layout.defaultFloating": "Standardlayout inställd på floating",
   "layout.defaultScrolling": "Standardlayout inställd på scrolling",
   "layout.defaultTiling": "Standardlayout inställd på tiling",

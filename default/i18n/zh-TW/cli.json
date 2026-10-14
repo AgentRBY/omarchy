@@ -110,7 +110,7 @@
   "keybindings.title": "快捷鍵",
   "keybindings.tmuxTitle": "Tmux 快捷鍵",
   "language.changed": "語言已設為 %1",
-  "language.relogin": "登出後重新登入以套用至各處",
+  "language.newApps": "之後開啟的應用程式也會套用；已開啟的請重新啟動",
   "layout.defaultFloating": "預設版面已設為浮動",
   "layout.defaultScrolling": "預設版面已設為捲動",
   "layout.defaultTiling": "預設版面已設為平鋪",

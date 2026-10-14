@@ -110,7 +110,7 @@
   "keybindings.title": "کی بورڈ شارٹ کٹس",
   "keybindings.tmuxTitle": "Tmux کی بورڈ شارٹ کٹس",
   "language.changed": "زبان اب %1 مقرر ہے",
-  "language.relogin": "ہر جگہ لاگو کرنے کے لیے لاگ آؤٹ کر کے دوبارہ لاگ ان کریں",
+  "language.newApps": "اب سے کھولنے والی ایپس بھی یہی استعمال کریں گی؛ جو پہلے سے کھلی ہیں انہیں دوبارہ چلائیں",
   "layout.defaultFloating": "ڈیفالٹ لے آؤٹ فلوٹنگ پر سیٹ کر دیا گیا",
   "layout.defaultScrolling": "ڈیفالٹ لے آؤٹ اسکرولنگ پر سیٹ کر دیا گیا",
   "layout.defaultTiling": "ڈیفالٹ لے آؤٹ ٹائلنگ پر سیٹ کر دیا گیا",
