@@ -62,37 +62,14 @@ export GUM_CONFIRM_UNSELECTED_BACKGROUND="0"
 
 # Match the first-boot console font to the ISO installer's apparent text size.
 # The installer renders on GRUB's low-resolution console (gfxpayload=keep, on
-# the ~768-row EFI GOP mode) where the default 8x16 font fills the screen. The
-# installed system reaches native KMS resolution, where 8x16 is tiny — so
-# first-boot provisioning looked far smaller than the installer it continues.
-#
-# Pick the kbd console font whose row count lands closest to that installer feel
-# (~48 rows), but never one wide enough to wrap the 81-column logo. On a console
-# that is already installer-sized (low resolution) this lands on the default
-# font, i.e. a no-op. All three fonts ship with kbd, so there's no dependency.
+# the ~768-row EFI GOP mode) where an 8x16 font fills the screen. The installed
+# system reaches native KMS resolution, where 8x16 is tiny — so first-boot
+# provisioning looked far smaller than the installer it continues. The setup
+# form's omarchy_console_font picks the Terminus size nearest the installer's
+# ~48 rows that still clears the logo, and Terminus draws the languages the
+# form offers where the kernel's font can't.
 scale_console_font() {
-  [[ $(tty 2>/dev/null) == /dev/tty* ]] || return 0
-
-  # Pick the console font empirically: apply each candidate, read the columns
-  # fbcon actually hands back, and keep the one whose row count lands nearest a
-  # ~48-row target while still leaving room for the 81-column logo. Measuring
-  # the real result beats computing from /sys/class/graphics/fb0/virtual_size,
-  # which under virgl can report a size the text console never actually reaches —
-  # that mismatch is what wrapped the logo into the top-left corner.
-  local target_rows=48
-  local fonts=("default8x16" "sun12x22" "latarcyrheb-sun32")
-  local best="" best_diff=999999 name rows cols diff
-  for name in "${fonts[@]}"; do
-    setfont "$name" 2>/dev/null || continue
-    read -r rows cols < <(stty size </dev/tty 2>/dev/null || printf '0 0\n')
-    [[ $rows =~ ^[0-9]+$ && $cols =~ ^[0-9]+$ ]] || continue
-    (( cols > LOGO_WIDTH )) || continue      # must clear the 81-col logo
-    diff=$(( rows > target_rows ? rows - target_rows : target_rows - rows ))
-    (( diff < best_diff )) && { best_diff=$diff; best="$name"; }
-  done
-  # Fall back to the narrowest font if nothing cleared the logo width, so the
-  # form stays usable even on an unexpectedly tiny console.
-  setfont "${best:-default8x16}" 2>/dev/null || true
+  omarchy_console_font "$((LOGO_WIDTH + 1))"
 }
 
 # Same Tokyo Night VT palette the ISO configurator sets, so the first-boot
@@ -183,26 +160,36 @@ SETUP_TOP_ROW=1
 DYNAMIC_ROW=$((LOGO_HEIGHT + 3))
 LAST_SETUP_SIZE=""
 
-tips=(
-  "Super + Space opens the Omarchy menu for apps, settings, and more"
-  "Super + K shows all the key bindings"
-  "Super is the Windows or command key on your keyboard"
-  "Sign PDFs and fill them in with Signed"
-  "Share files with phones and laptops using LocalSend"
-  "Turn any website into an app with Install > Web App in the menu"
-  "Super + Return opens a terminal, Super + Shift + Return the browser"
-  "Edit images with Pinta, trim videos with Omacut, docs with LibreOffice"
-  "Super + Ctrl + Print grabs text off the screen with OCR"
-  "Print takes a screenshot, Alt + Print records the screen"
-  "Set a reminder with Super + Ctrl + R"
-  "Switch themes from Style > Theme in the Omarchy menu"
-  "Double-click the menu bar to make it transparent"
-  "Run a full Windows VM via Install > Windows in the menu"
-  "Super + Ctrl + V opens the clipboard manager"
-  "Super + 1 through 0 switches workspaces, add Shift to bring the window"
-  "Super + Print picks a color from anywhere on screen"
-  "Keep the system fresh with Update in the Omarchy menu"
-)
+# The tips, the title and the "Tip:" label speak the language the owner picked,
+# so they load once that is known (load_setup_text), not when the script starts.
+tips=()
+setup_title=""
+tip_label=""
+
+load_setup_text() {
+  setup_title=$(omarchy-i18n provision.settingUp)
+  tip_label=$(omarchy-i18n provision.tip)
+  tips=(
+    "$(omarchy-i18n provision.tipMenu)"
+    "$(omarchy-i18n provision.tipKeyBindings)"
+    "$(omarchy-i18n provision.tipSuperKey)"
+    "$(omarchy-i18n provision.tipSigned)"
+    "$(omarchy-i18n provision.tipLocalSend)"
+    "$(omarchy-i18n provision.tipWebApp)"
+    "$(omarchy-i18n provision.tipTerminalBrowser)"
+    "$(omarchy-i18n provision.tipEditors)"
+    "$(omarchy-i18n provision.tipOcr)"
+    "$(omarchy-i18n provision.tipScreenshot)"
+    "$(omarchy-i18n provision.tipReminder)"
+    "$(omarchy-i18n provision.tipTheme)"
+    "$(omarchy-i18n provision.tipTransparentBar)"
+    "$(omarchy-i18n provision.tipWindowsVm)"
+    "$(omarchy-i18n provision.tipClipboard)"
+    "$(omarchy-i18n provision.tipWorkspaces)"
+    "$(omarchy-i18n provision.tipColorPicker)"
+    "$(omarchy-i18n provision.tipUpdate)"
+  )
+}
 
 term_cols() {
   local cols
@@ -423,17 +410,17 @@ render_setup_dynamic() {
   set_now
   setup_progress
   printf '%s%d;1H' "$CSI" "$DYNAMIC_ROW"
-  center "Setting up your machine" "$LOGO_WIDTH"
+  center "$setup_title" "$LOGO_WIDTH"
   blank_line
   line_at "$LOGO_WIDTH" $(((LOGO_WIDTH - 34) / 2)) ""
   progress_bar "$SETUP_POS" 34
   printf '\n'
   blank_line
-  center "${DIM}Tip:${RESET} ${GREEN}$(current_tip)${RESET}" "$LOGO_WIDTH"
+  center "${DIM}${tip_label}${RESET} ${GREEN}$(current_tip)${RESET}" "$LOGO_WIDTH"
   printf '%s' "$CLEAR_TO_END"
 }
 
-# The first thing a new owner sees, shown once before the keyboard step:
+# The first thing a new owner sees, shown once before the language step:
 # the logo (vertically centered like the boot logo) running a looping ColorShift,
 # the Omarchy tagline, and a hint. Return skips ahead into setup at any time.
 greeter_screen() {
@@ -454,6 +441,7 @@ greeter_screen() {
     rows=$(stty size 2>/dev/null </dev/tty | awk '{print $1}')
     [[ $rows =~ ^[0-9]+$ ]] || rows=${LINES:-24}
 
+    # English: nobody has picked a language yet.
     tagline="Beautiful, Fun & Agentic Linux by DHH"
     hint="Press Return to Start Setup"
 
@@ -581,32 +569,53 @@ greeter_screen() {
   printf '%s%s%s' "$RESET" "$CLEAR" "$SHOW_CURSOR"
 }
 
-# The keyboard step the ISO configurator runs — deferred to first boot for OEM
-# installs, so the machine's owner picks their own layout. Applied immediately
-# (live VT + persisted) so the password typed next, and the LUKS re-key below,
-# use the chosen layout. A layout that did not take is asked for again: the
-# password form must never be typed in a layout the disk unlock won't use.
-# Three failures in a row mean the machine can't set a layout at all (a
-# missing or broken localectl, say), so the attempt fails and setup's own
-# retry-or-console screen takes over instead of asking forever.
+# The language and keyboard step the ISO configurator runs — deferred to first
+# boot for OEM installs, so the machine's owner picks their own. Language first,
+# then the keyboard, on the same screen: the keyboard picker preselects the
+# layout that fits the language, and every later screen (this one included,
+# once redrawn) speaks it. Esc on the keyboard goes back to the language. The
+# keyboard is applied immediately (live VT + persisted) so the password typed
+# next, and the LUKS re-key below, use the chosen layout. A layout that did not
+# take is asked for again: the password form must never be typed in a layout
+# the disk unlock won't use. Three failures in a row mean the machine can't set
+# a layout at all (a missing or broken localectl, say), so the attempt fails and
+# setup's own retry-or-console screen takes over instead of asking forever.
 keyboard_form() {
-  local status failures=0
+  local status failures=0 stage=language previous_language
 
   while true; do
-    step "Let's setup your keyboard..."
-    omarchy_prompt_keyboard && status=0 || status=$?
-    if ((status == 0)); then
-      apply_keyboard "$keyboard" && break
-      if ((++failures >= 3)); then
-        log_step "no keyboard layout could be set after $failures attempts"
-        notice "Setup could not set a keyboard layout on this machine." 4
-        return 1
+    step "$(omarchy-i18n provision.languageKeyboardStep)"
+
+    if [[ $stage == "language" ]]; then
+      previous_language=${language:-}
+      omarchy_prompt_language && status=0 || status=$?
+      if ((status == 0)); then
+        # A different language brings its own keyboard default, so forget a
+        # layout picked for the previous one.
+        [[ $language == "$previous_language" ]] || keyboard_label=""
+        stage=keyboard
+        continue
       fi
-      notice "Could not set the ${keyboard_label:-$keyboard} keyboard layout. Choose it again." 4
-      continue
+    else
+      omarchy_prompt_keyboard && status=0 || status=$?
+      if ((status == 0)); then
+        apply_keyboard "$keyboard" && break
+        if ((++failures >= 3)); then
+          log_step "no keyboard layout could be set after $failures attempts"
+          notice "$(omarchy-i18n provision.keyboardFailed)" 4
+          return 1
+        fi
+        notice "$(omarchy-i18n provision.keyboardRetry "${keyboard_label:-$keyboard}")" 4
+        continue
+      fi
+      # Esc on the keyboard goes back to the language.
+      if ((status == OMARCHY_FORM_BACK)); then
+        stage=language
+        continue
+      fi
     fi
 
-    # Esc means "back", and nothing precedes the first screen, so re-ask.
+    # Esc means "back", and nothing precedes the first prompt, so re-ask.
     ((status == OMARCHY_FORM_BACK)) && continue
 
     # Ctrl+C is the way out of a screen the owner cannot get past. Rebooting is
@@ -622,9 +631,10 @@ keyboard_form() {
 confirm_reboot() {
   clear_logo
   echo
-  say "Setup starts again after the reboot."
+  say "$(omarchy-i18n provision.rebootNotice)"
   echo
-  gum confirm --affirmative "Yes, reboot" --negative "No, keep setting up" "Reboot this machine?"
+  gum confirm --affirmative "$(omarchy-i18n provision.rebootYes)" --negative "$(omarchy-i18n provision.rebootNo)" \
+    "$(omarchy-i18n provision.rebootConfirm)"
 }
 
 # XKB settings for the form's keymaps that kbd-model-map lacks, as its rows for
@@ -699,13 +709,13 @@ apply_keyboard() {
 
 # The same username/password/name/email form as the ISO configurator's Step 2.
 user_form() {
-  step "Let's setup your user account..."
+  step "$(omarchy-i18n provision.accountStep)"
 
   # A prior attempt that already created the account pins the username, so a
   # retry cannot strand that account by choosing a different name.
   if [[ -f $PROVISIONING_DIR/setup-user ]]; then
     username=$(<"$PROVISIONING_DIR/setup-user")
-    say "Continuing setup for user: $username"
+    say "$(omarchy-i18n provision.continuingUser "$username")"
     echo
   else
     omarchy_prompt_username || return $?
@@ -719,25 +729,31 @@ user_form() {
   # owner overwrites them here.
   omarchy_prompt_hostname || return $?
 
-  step "Let's set your timezone..."
+  step "$(omarchy-i18n provision.timezoneStep)"
   omarchy_prompt_timezone || return $?
 }
 
+# Tab-separated, since a translated field name may hold a comma.
 confirm_form() {
+  local skipped
+  skipped=$(omarchy-i18n provision.summarySkipped)
   clear_logo
   echo
-  echo -e "Field,Value
-Keyboard,${keyboard_label:-English (US)}
-Username,$username
-Password,$(printf "%${#password}s" | tr ' ' '*')
-Full name,${full_name:-[Skipped]}
-Email address,${email_address:-[Skipped]}
-Hostname,${hostname:-omarchy}
-Timezone,${timezone:-UTC}" |
-    gum table -s "," -p | sed "s/^/${PADDING_LEFT_SPACES}/"
+  {
+    printf '%s\t%s\n' "$(omarchy-i18n provision.summaryField)" "$(omarchy-i18n provision.summaryValue)"
+    printf '%s\t%s\n' "$(omarchy-i18n provision.summaryLanguage)" "$(omarchy_language_label "${language:-en}")"
+    printf '%s\t%s\n' "$(omarchy-i18n provision.summaryKeyboard)" "${keyboard_label:-English (US)}"
+    printf '%s\t%s\n' "$(omarchy-i18n provision.summaryUsername)" "$username"
+    printf '%s\t%s\n' "$(omarchy-i18n provision.summaryPassword)" "$(printf "%${#password}s" | tr ' ' '*')"
+    printf '%s\t%s\n' "$(omarchy-i18n provision.summaryFullName)" "${full_name:-$skipped}"
+    printf '%s\t%s\n' "$(omarchy-i18n provision.summaryEmail)" "${email_address:-$skipped}"
+    printf '%s\t%s\n' "$(omarchy-i18n provision.summaryHostname)" "${hostname:-omarchy}"
+    printf '%s\t%s\n' "$(omarchy-i18n provision.summaryTimezone)" "${timezone:-UTC}"
+  } | gum table -s $'\t' -p | sed "s/^/${PADDING_LEFT_SPACES}/"
 
   echo
-  gum confirm --negative "No, change it" "Does this look right?"
+  gum confirm --affirmative "$(omarchy-i18n provision.summaryYes)" --negative "$(omarchy-i18n provision.summaryChange)" \
+    "$(omarchy-i18n provision.summaryConfirm)"
 }
 
 # Groups recorded by omarchy-apply-system's scripts at install time
@@ -880,6 +896,41 @@ UNIT
   ln -sf "../$unit" "/etc/systemd/system/graphical.target.wants/$unit"
 }
 
+# The owner's language for the whole machine: the console and login screen
+# through LANG in /etc/locale.conf (with its locale generated), and the owner's
+# own session through /etc/omarchy/language, which user finalization applies
+# (install/user/language.sh). This machine is fresh, so the owner's choice
+# replaces whatever LANG the install or a previous owner left.
+configure_language() {
+  [[ -n ${language:-} ]] || return 0
+  if ! omarchy_persist_language; then
+    log_step "unknown language $language; keeping the system locale"
+    return 0
+  fi
+
+  local locale base
+  locale=$(jq -r --arg code "$language" '.[$code].locale // empty' "$OMARCHY_PATH/default/i18n/locales.json")
+  [[ -n $locale ]] || return 0
+  # locale.gen spells some entries without the codeset (hi_IN UTF-8).
+  base=${locale%.UTF-8}
+  if grep -qE "^#$base(\.UTF-8)? UTF-8" /etc/locale.gen 2>/dev/null; then
+    sed -i -E "s/^#($base(\.UTF-8)? UTF-8)/\1/" /etc/locale.gen
+  elif ! grep -qE "^$base(\.UTF-8)? UTF-8" /etc/locale.gen 2>/dev/null; then
+    echo "$locale UTF-8" >>/etc/locale.gen
+  fi
+  if ! locale-gen >/dev/null 2>&1; then
+    log_step "locale-gen failed for $locale; keeping the system locale"
+    return 0
+  fi
+
+  # Only LANG changes; LC_* lines somebody set stay.
+  if grep -q '^LANG=' /etc/locale.conf 2>/dev/null; then
+    sed -i "s/^LANG=.*/LANG=$locale/" /etc/locale.conf
+  else
+    echo "LANG=$locale" >>/etc/locale.conf
+  fi
+}
+
 # Apply the owner's hostname, deferred to first boot with the rest of the user
 # step, overwriting the placeholder the deferred install seeded.
 configure_hostname() {
@@ -917,7 +968,8 @@ finalize_user() {
   home=$(getent passwd "$username" | cut -d: -f6)
   shell=$(getent passwd "$username" | cut -d: -f7)
 
-  runuser -u "$username" -- env \
+  # The setup form's language file is root's; the user's own lives in $HOME.
+  runuser -u "$username" -- env -u OMARCHY_LANGUAGE_FILE -u OMARCHY_SETUP_LANGUAGE_FILE \
     HOME="$home" \
     USER="$username" \
     LOGNAME="$username" \
@@ -1139,6 +1191,9 @@ run_provisioning() {
   install_authorized_keys
   configure_login
 
+  log_step "setting language to ${language:-en}"
+  configure_language
+
   log_step "setting hostname to ${hostname:-omarchy}"
   configure_hostname
 
@@ -1214,7 +1269,7 @@ run_setup() {
     fi
     confirm_form || continue
     if ! rekey_accepts_password; then
-      notice "Setup already set the disk password. Enter that same password." 4
+      notice "$(omarchy-i18n provision.diskPasswordSet)" 4
       continue
     fi
     break
@@ -1229,6 +1284,7 @@ run_setup() {
   run_provisioning >>"$LOG_FILE" 2>&1 &
   local worker=$!
 
+  load_setup_text
   set_now
   SETUP_T0=$NOW
   SETUP_PHASE_T0=$NOW
@@ -1257,7 +1313,7 @@ run_setup() {
     rm -f "$FINALIZE_WARNING_FLAG"
     clear_logo
     echo
-    say --foreground 1 "User finalization reported errors (see $LOG_FILE)."
+    say --foreground 1 "$(omarchy-i18n provision.finalizeErrors "$LOG_FILE")"
     sleep 3
   fi
 
@@ -1285,17 +1341,24 @@ main() {
   set_tokyo_night_colors
   greeter_screen
 
+  # The language the owner picks in an attempt is written here and read by
+  # every omarchy-i18n call after it, so a retry, and this loop's own screens,
+  # keep speaking it. Empty until then, which means English.
+  OMARCHY_SETUP_LANGUAGE_FILE=$(mktemp "${TMPDIR:-/tmp}/omarchy-setup-language.XXXXXX")
+  export OMARCHY_SETUP_LANGUAGE_FILE OMARCHY_LANGUAGE_FILE=$OMARCHY_SETUP_LANGUAGE_FILE
+
   while ! "$0" --attempt; do
     clear_logo
     echo
-    say --foreground 1 "Setup hit an error (details in $LOG_FILE)."
+    say --foreground 1 "$(omarchy-i18n provision.setupError "$LOG_FILE")"
     echo
-    if ! gum confirm --affirmative "Try again" --negative "Drop to console" "Retry first-boot setup?"; then
+    if ! gum confirm --affirmative "$(omarchy-i18n provision.retryYes)" --negative "$(omarchy-i18n provision.retryNo)" \
+      "$(omarchy-i18n provision.retryConfirm)"; then
       # Give an actual usable console: this service owns tty1 (and Conflicts the
       # getty), and on a failed deferred setup there's no user account and root
       # is locked — so exiting would strand the machine with no way in. Exec a
       # root shell on tty1; SDDM starts once it exits.
-      say "Dropping to a root shell. Run 'omarchy-provision-owner' to retry setup."
+      say "$(omarchy-i18n provision.rootShell)"
       exec /bin/bash
     fi
   done

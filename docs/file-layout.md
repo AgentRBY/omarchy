@@ -51,8 +51,10 @@ Deferred-provisioning installs (`omarchy-apply-system --defer-provisioning`)
 create no user at all: the ISO leaves `/var/lib/omarchy/provisioning/pending`
 behind, which arms `omarchy-provision-owner.service` (shipped from
 `install/provisioning/`, alongside the factory-reset finish unit and
-`setup-form.sh`). On first boot `bin/omarchy-provision-owner` creates the
-user on tty1 and runs the finalize step itself.
+`setup-form.sh`). On first boot `bin/omarchy-provision-owner` asks the owner's
+language and keyboard, creates the user on tty1 and runs the finalize step
+itself. The language reaches the system and the user through
+`/etc/omarchy/language`; see [i18n.md](i18n.md#the-installer).
 
 On an encrypted install `omarchy-provision-owner` then re-keys LUKS from the staged install key to the owner's password through `install/provisioning/luks-rekey.sh`, which journals each step (phase and slot numbers, never keys) in `/var/lib/omarchy/provisioning/luks-rekey.state` so an interrupted first boot resumes. Setup finishes only once the staged key opens nothing, and removes the journal with `pending`, so a retry after the staged key is retired must use the password the disk holds. On a platform whose boot package owns the boot chain, the check before the owner form, the boot-time unlock and the record of the kept key slot go through `omarchy-lifecycle-dispatch`. See [lifecycle-dispatch.md](lifecycle-dispatch.md).
 

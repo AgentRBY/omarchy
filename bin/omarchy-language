@@ -1,10 +1,25 @@
 #!/bin/bash
 
 # omarchy:summary=Show or set the Omarchy language and the session's locale
-# omarchy:args=[<code>|list|locale [<code>]]
+# omarchy:args=[[--no-session] <code>|list|locale [<code>]]
 # omarchy:examples=omarchy language | omarchy language da | omarchy language list
 
 set -euo pipefail
+
+# --no-session sets the language for a user who has no session yet: the user
+# being set up during install, in the target chroot or at first boot. It writes
+# the language file and the session's LANG for the first login, but sends no
+# notification, leaves the systemd user environment alone, and never asks for a
+# password: the install generated the locale already, so a missing one fails.
+no_session=0
+if [[ ${1:-} == "--no-session" ]]; then
+  no_session=1
+  shift
+  if [[ -z ${1:-} || $1 == "list" || $1 == "locale" ]]; then
+    echo "Usage: omarchy-language --no-session <code>" >&2
+    exit 1
+  fi
+fi
 
 locales_json=${OMARCHY_LOCALES_JSON:-$OMARCHY_PATH/default/i18n/locales.json}
 language_file=${OMARCHY_LANGUAGE_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/language}
@@ -86,6 +101,11 @@ generate_locale() {
   local locale=$1
   locale_generated "$locale" && return
 
+  if (( no_session && EUID != 0 )); then
+    echo "The $locale locale is not generated on this system." >&2
+    return 1
+  fi
+
   # sudo where a terminal can carry its prompt; picked from the menu there is
   # none, so polkit puts the prompt on screen instead.
   local -a priv
@@ -107,13 +127,13 @@ apply_session_locale() {
   local locale=$1
   mkdir -p "$(dirname "$session_env")"
   printf '# The session language, set by omarchy-language (Setup > Language).\nexport LANG=%s\n' "$locale" >"$session_env"
-  dbus-update-activation-environment --systemd "LANG=$locale" >/dev/null 2>&1 || true
+  (( no_session )) || dbus-update-activation-environment --systemd "LANG=$locale" >/dev/null 2>&1 || true
 }
 
 set_language() {
   local code=$1
   if ! known_language "$code"; then
-    echo "Usage: omarchy-language [<code>|list|locale [<code>]]" >&2
+    echo "Usage: omarchy-language [[--no-session] <code>|list|locale [<code>]]" >&2
     echo "Unknown language code: $code" >&2
     echo "Run 'omarchy-language list' to see the available codes." >&2
     exit 1
@@ -131,6 +151,7 @@ set_language() {
   mkdir -p "$(dirname "$language_file")"
   echo "$code" >"$language_file"
 
+  (( no_session )) && return
   omarchy-notification-send "$(omarchy-i18n language.changed "$name")" "$(omarchy-i18n language.newApps)"
 }
 

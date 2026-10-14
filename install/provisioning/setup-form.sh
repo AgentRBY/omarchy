@@ -1,5 +1,5 @@
 # The setup form: every question Omarchy asks a human to describe their machine
-# — keyboard, account, hostname, timezone — plus the rules those answers are
+# — language, keyboard, account, hostname, timezone — plus the rules those answers are
 # checked against. Shared by the two places that ask them: the ISO
 # configurator's user step and this package's first-boot owner setup
 # (omarchy-provision-owner). Sourced by both, so the copies cannot drift the way
@@ -18,9 +18,17 @@
 # so it never reaches the shell as SIGINT. Act on the status, never on a trap.
 #
 # Callers supply `notice <message> <seconds>` for validation feedback, and set
-# the variables these prompts write: keyboard, keyboard_label,
-# keyboard_input_method, keyboard_xkb_layout, username,
+# the variables these prompts write: language, language_locale, keyboard,
+# keyboard_label, keyboard_input_method, keyboard_xkb_layout, username,
 # password, password_confirmation, full_name, email_address, hostname, timezone.
+#
+# `language` is a code from default/i18n/locales.json and `language_locale` its
+# glibc locale. The form speaks the language picked first: every string goes
+# through omarchy-i18n, and the language prompt points OMARCHY_LANGUAGE_FILE at
+# its choice (a file under ${TMPDIR:-/tmp}, or OMARCHY_SETUP_LANGUAGE_FILE when
+# the caller names one), so the caller's own omarchy-i18n calls follow too.
+# A language the console font can't draw ("console": false in the registry)
+# keeps the form in English; the installed system still gets the language.
 
 OMARCHY_FORM_BACK=1
 OMARCHY_FORM_SIGNAL=130
@@ -95,10 +103,114 @@ omarchy_username_taken() { return 1; }
 # by `status=$?`: one caller runs under `set -e`, where a cancelled prompt is a
 # failing assignment that would kill the script before the status is read.
 
+# The registry rows the language prompt offers, one "label<TAB>code" per
+# language: English first, then the rest by English name, as `omarchy-language
+# list` orders them. A language the console can draw reads "Native (English)"
+# where the two differ (Dansk (Danish)); one it can't is offered by its English
+# name alone, since the native name would draw as boxes.
+omarchy_language_rows() {
+  jq -r '
+    to_entries
+    | sort_by(if .key == "en" then "" else .value.englishName end)
+    | .[]
+    | [(if .value.console == false or .value.name == .value.englishName then .value.englishName
+        else "\(.value.name) (\(.value.englishName))" end), .key]
+    | @tsv
+  ' "$OMARCHY_PATH/default/i18n/locales.json"
+}
+
+# The label the language prompt shows for a code, for callers' summaries.
+omarchy_language_label() {
+  omarchy_language_rows | awk -F'\t' -v c="${1:-en}" '$2==c{print $1; exit}'
+}
+
+omarchy_prompt_language() {
+  local rows selected choice code status registry="$OMARCHY_PATH/default/i18n/locales.json"
+  rows=$(omarchy_language_rows) || return 1
+  selected=$(awk -F'\t' -v c="${language:-en}" '$2==c{print $1; exit}' <<<"$rows")
+  [[ -n $selected ]] || selected=English
+
+  choice=$(cut -f1 <<<"$rows" |
+    gum choose --height 10 --selected "$selected" --header "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.languageHeader)") && status=0 || status=$?
+  ((status == 0)) || return $status
+
+  code=$(awk -F'\t' -v c="$choice" '$1==c{print $2; exit}' <<<"$rows")
+  [[ -n $code ]] || return 1
+  language=$code
+  language_locale=$(jq -r --arg code "$code" '.[$code].locale' "$registry")
+
+  # Everything after this speaks the language, or English where the console
+  # font can't draw it.
+  if [[ -z ${OMARCHY_SETUP_LANGUAGE_FILE:-} ]]; then
+    OMARCHY_SETUP_LANGUAGE_FILE=$(mktemp "${TMPDIR:-/tmp}/omarchy-setup-language.XXXXXX") || return 1
+  fi
+  if jq -e --arg code "$code" '.[$code].console == false' "$registry" >/dev/null; then
+    printf 'en\n' >"$OMARCHY_SETUP_LANGUAGE_FILE"
+  else
+    printf '%s\n' "$code" >"$OMARCHY_SETUP_LANGUAGE_FILE"
+  fi
+  export OMARCHY_LANGUAGE_FILE=$OMARCHY_SETUP_LANGUAGE_FILE
+}
+
+# Root-side persistence of the language for the installed system, which
+# applies it to the user being set up (install/user/language.sh).
+omarchy_persist_language() {
+  local target_root=${1:-} code=${language:-}
+  [[ $code =~ ^[a-z]{2,3}(-[A-Za-z]{2})?$ ]] || return 1
+  jq -e --arg code "$code" 'has($code)' "$OMARCHY_PATH/default/i18n/locales.json" >/dev/null 2>&1 || return 1
+  mkdir -p "$target_root/etc/omarchy"
+  printf '%s\n' "$code" >"$target_root/etc/omarchy/language"
+}
+
+# The kernel's console font can't draw most of the languages offered (not even
+# "ø"), so load Terminus, which covers Latin, Cyrillic and Greek. Pick the size
+# empirically: apply each candidate, read the size fbcon actually hands back,
+# and keep the one whose row count lands nearest a ~48-row target (the ISO
+# installer's feel on its low-resolution console) while still leaving at least
+# <min_columns> columns (default 82, enough for the 81-column logo). Measuring
+# the real result beats computing from /sys/class/graphics/fb0/virtual_size,
+# which under virgl can report a size the text console never reaches. Without
+# Terminus, kbd's own fonts are sized the same way. A no-op off a real VT, so a
+# dry run in a terminal emulator is untouched.
+omarchy_console_font() {
+  [[ $(tty 2>/dev/null) == /dev/tty* ]] || return 0
+
+  local min_columns=${1:-82} target_rows=48
+  local best="" best_diff=999999 name rows cols diff fonts
+  for fonts in "ter-v16n ter-v20n ter-v24n ter-v28n ter-v32n" "default8x16 sun12x22 latarcyrheb-sun32"; do
+    for name in $fonts; do
+      setfont "$name" 2>/dev/null || continue
+      read -r rows cols < <(stty size </dev/tty 2>/dev/null || printf '0 0\n')
+      [[ $rows =~ ^[0-9]+$ && $cols =~ ^[0-9]+$ ]] || continue
+      [[ -n $best ]] || best=$name
+      (( cols >= min_columns )) || continue
+      diff=$(( rows > target_rows ? rows - target_rows : target_rows - rows ))
+      (( diff < best_diff )) && { best_diff=$diff; best=$name; }
+    done
+    [[ -z $best ]] || break
+  done
+  # Nothing cleared the width: the first (smallest) font that loaded keeps
+  # the form usable on an unexpectedly tiny console.
+  [[ -z $best ]] || setfont "$best" 2>/dev/null || true
+}
+
+# The keyboard the language suggests (its registry "keyboard", always a label
+# of OMARCHY_KEYBOARD_LAYOUTS), unless one was already picked.
+omarchy_suggested_keyboard() {
+  local label=${keyboard_label:-}
+  if [[ -z $label && -n ${language:-} ]]; then
+    label=$(jq -r --arg code "$language" '.[$code].keyboard // empty' "$OMARCHY_PATH/default/i18n/locales.json" 2>/dev/null) || label=""
+  fi
+  if [[ -z $label ]] || ! cut -d'|' -f1 <<<"$OMARCHY_KEYBOARD_LAYOUTS" | grep -qxF -- "$label"; then
+    label="English (US)"
+  fi
+  printf '%s\n' "$label"
+}
+
 omarchy_prompt_keyboard() {
   local choice status
   choice=$(printf '%s\n' "$OMARCHY_KEYBOARD_LAYOUTS" | cut -d'|' -f1 |
-    gum choose --height 10 --selected "English (US)" --header "Select keyboard layout") && status=0 || status=$?
+    gum choose --height 10 --selected "$(omarchy_suggested_keyboard)" --header "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.keyboardHeader)") && status=0 || status=$?
   ((status == 0)) || return $status
 
   local selection
@@ -122,19 +234,19 @@ omarchy_persist_input_selection() {
 omarchy_prompt_username() {
   local status
   while true; do
-    username=$(gum input --placeholder "Alphanumeric without spaces (like dhh)" --prompt.foreground="#845DF9" --prompt "Username> ") && status=0 || status=$?
+    username=$(gum input --placeholder "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.usernamePlaceholder)" --prompt.foreground="#845DF9" --prompt "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.usernamePrompt)> ") && status=0 || status=$?
     ((status == 0)) || return $status
 
     if [[ "$username" =~ $OMARCHY_USERNAME_PATTERN ]]; then
       if [[ "$username" =~ $OMARCHY_RESERVED_USERNAMES ]]; then
-        notice "Username is reserved for system" 1
+        notice "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.usernameReserved)" 1
       elif omarchy_username_taken "$username"; then
-        notice "That username already exists on this machine" 1
+        notice "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.usernameTaken)" 1
       else
         return 0
       fi
     else
-      notice "Username must be alphanumeric with no spaces" 1
+      notice "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.usernameInvalid)" 1
     fi
   done
 }
@@ -142,17 +254,17 @@ omarchy_prompt_username() {
 omarchy_prompt_password() {
   local status
   while true; do
-    password=$(gum input --placeholder "Used for user + root, and disk encryption when enabled" --prompt.foreground="#845DF9" --password --prompt "Password> ") && status=0 || status=$?
+    password=$(gum input --placeholder "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.passwordPlaceholder)" --prompt.foreground="#845DF9" --password --prompt "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.passwordPrompt)> ") && status=0 || status=$?
     ((status == 0)) || return $status
-    password_confirmation=$(gum input --placeholder "Must match the password you just typed" --prompt.foreground="#845DF9" --password --prompt "Confirm> ") && status=0 || status=$?
+    password_confirmation=$(gum input --placeholder "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.passwordConfirmPlaceholder)" --prompt.foreground="#845DF9" --password --prompt "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.passwordConfirmPrompt)> ") && status=0 || status=$?
     ((status == 0)) || return $status
 
     if [[ -n "$password" && "$password" == "$password_confirmation" ]]; then
       return 0
     elif [[ -z "$password" ]]; then
-      notice "Your password can't be blank!" 1
+      notice "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.passwordBlank)" 1
     else
-      notice "Passwords didn't match!" 1
+      notice "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.passwordMismatch)" 1
     fi
   done
 }
@@ -161,16 +273,16 @@ omarchy_prompt_password() {
 # only Esc/Ctrl+C end the prompt early.
 omarchy_prompt_identity() {
   local status
-  full_name=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="#845DF9" --prompt "Full name> ") && status=0 || status=$?
+  full_name=$(gum input --placeholder "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.identityPlaceholder)" --prompt.foreground="#845DF9" --prompt "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.fullNamePrompt)> ") && status=0 || status=$?
   ((status == 0)) || return $status
-  email_address=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="#845DF9" --prompt "Email address> ") && status=0 || status=$?
+  email_address=$(gum input --placeholder "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.identityPlaceholder)" --prompt.foreground="#845DF9" --prompt "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.emailPrompt)> ") && status=0 || status=$?
   return $status
 }
 
 omarchy_prompt_hostname() {
   local status
   while true; do
-    hostname=$(gum input --placeholder "Letters, digits, and dashes (or return for 'omarchy')" --prompt.foreground="#845DF9" --prompt "Hostname> ") && status=0 || status=$?
+    hostname=$(gum input --placeholder "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.hostnamePlaceholder "$OMARCHY_HOSTNAME_DEFAULT")" --prompt.foreground="#845DF9" --prompt "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.hostnamePrompt)> ") && status=0 || status=$?
     ((status == 0)) || return $status
 
     if [[ -z $hostname ]]; then
@@ -179,7 +291,7 @@ omarchy_prompt_hostname() {
     elif [[ "$hostname" =~ $OMARCHY_HOSTNAME_PATTERN ]]; then
       return 0
     else
-      notice "Hostname must be 1-63 letters, digits, or dashes, and cannot start or end with a dash" 1
+      notice "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.hostnameInvalid)" 1
     fi
   done
 }
@@ -191,9 +303,9 @@ omarchy_prompt_timezone() {
   guess=$(tzupdate -p 2>/dev/null) || guess=""
 
   if [[ -n $guess ]]; then
-    timezone=$(timedatectl list-timezones | gum choose --height 10 --selected "$guess" --header "Timezone") && status=0 || status=$?
+    timezone=$(timedatectl list-timezones | gum choose --height 10 --selected "$guess" --header "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.timezoneHeader)") && status=0 || status=$?
   else
-    timezone=$(timedatectl list-timezones | gum filter --height 10 --header "Timezone") && status=0 || status=$?
+    timezone=$(timedatectl list-timezones | gum filter --height 10 --header "$("$OMARCHY_PATH/bin/omarchy-i18n" setup.timezoneHeader)") && status=0 || status=$?
   fi
   ((status == 0)) || return $status
 

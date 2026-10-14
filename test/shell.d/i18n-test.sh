@@ -117,8 +117,15 @@ assert(unreferencedShell.length === 0, 'every shell catalog key is referenced', 
 const unknownShell = [...shellKeys].filter((key) => !Object.hasOwn(enShell, key))
 assert(unknownShell.length === 0, 'every referenced shell key exists in the English catalog', JSON.stringify(unknownShell))
 
-const cliKeys = collectKeys(path.join(root, 'bin'), [''], /omarchy-i18n (?:--count \S+ )?([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)/g)
-const unreferencedCli = Object.keys(enCli).filter((key) => !cliKeys.has(key))
+// Commands in bin/ and the installer scripts in install/ (the setup form the
+// ISO shares with first-boot setup) call omarchy-i18n by name or by its
+// "$OMARCHY_PATH/bin/omarchy-i18n" path. installer.* keys are the ISO's own
+// screens: the omarchy-iso repo references them, but their English lives here
+// because the ISO reads the catalogs from the omarchy package it bundles.
+const cliPattern = /omarchy-i18n"? (?:--count \S+ )?([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)/g
+const cliKeys = new Set([...collectKeys(path.join(root, 'bin'), [''], cliPattern), ...collectKeys(path.join(root, 'install'), ['.sh'], cliPattern)])
+const referencedElsewhere = (key) => key.startsWith('installer.')
+const unreferencedCli = Object.keys(enCli).filter((key) => !cliKeys.has(key) && !referencedElsewhere(key))
 assert(unreferencedCli.length === 0, 'every cli catalog key is referenced', JSON.stringify(unreferencedCli))
 const unknownCli = [...cliKeys].filter((key) => !Object.hasOwn(enCli, key))
 assert(unknownCli.length === 0, 'every referenced cli key exists in the English catalog', JSON.stringify(unknownCli))

@@ -4,7 +4,7 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
-# First-boot setup's keyboard step. The owner types the disk password at boot in
+# First-boot setup's language and keyboard step. The owner types the disk password at boot in
 # the layout /etc/vconsole.conf names, so a layout that did not load, did not
 # persist, or does not read back must be asked for again before the password
 # form. keyboard_form and apply_keyboard run as omarchy-provision-owner defines
@@ -68,7 +68,7 @@ case \$("$stub_bin/next-mode" "$tmp/firstboot-modes") in
 esac
 SH
 chmod +x "$stub_bin"/*
-export PATH="$stub_bin:$PATH"
+export PATH="$stub_bin:$ROOT/bin:$PATH" OMARCHY_PATH="$ROOT"
 
 {
   sed -n '/^keyboard_form() {/,/^}/p; /^keyboard_xkb_settings() {/,/^}/p; /^apply_keyboard() {/,/^}/p' "$ROOT/bin/omarchy-provision-owner"
@@ -77,31 +77,46 @@ export PATH="$stub_bin:$PATH"
 grep -q '^keyboard_form() {' "$tmp/keyboard.sh" && grep -q '^apply_keyboard() {' "$tmp/keyboard.sh" ||
   fail "omarchy-provision-owner defines the keyboard step"
 
-# The owner's answers, one "label|keymap" per prompt. Running out means the step
-# asked once more than the test answered.
+# The owner's answers, one "label|keymap" per keyboard prompt. Running out
+# means the step asked once more than the test answered. The language prompt
+# answers Danish unless the language queue says otherwise: a code, or "esc".
+# An "esc" keyboard answer goes back to the language. Every prompt notes what
+# it was asked with on the screen log.
 cat >"$tmp/form.sh" <<SH
 set -euo pipefail
 source "$tmp/keyboard.sh"
 LOG_FILE=$tmp/log
 OMARCHY_FORM_BACK=2
-step() { echo "prompt" >>"$tmp/screen"; }
+step() { :; }
 notice() { echo "notice: \$1" >>"$tmp/screen"; }
 log_step() { echo "\$1" >>"\$LOG_FILE"; }
 confirm_reboot() { exit 5; }
+omarchy_prompt_language() {
+  local answer
+  answer=\$("$stub_bin/next-mode" "$tmp/languages")
+  [[ \$answer != normal ]] || answer=da
+  echo "language \${language:-}" >>"$tmp/screen"
+  [[ \$answer != esc ]] || return "\$OMARCHY_FORM_BACK"
+  language=\$answer
+}
 omarchy_prompt_keyboard() {
   local answer
   answer=\$("$stub_bin/next-mode" "$tmp/answers")
   [[ \$answer != normal ]] || { echo "asked again" >>"$tmp/screen"; exit 9; }
+  echo "prompt \${keyboard_label:-}" >>"$tmp/screen"
+  [[ \$answer != esc ]] || return "\$OMARCHY_FORM_BACK"
   keyboard_label=\${answer%%|*}
   keyboard=\${answer#*|}
 }
+language=\${LANGUAGE:-}
+keyboard_label=\${KEYBOARD_LABEL:-}
 keyboard_form
 echo "password form" >>"$tmp/screen"
 SH
 
 # A fresh deferred install: the placeholder US layout from the image build.
 fresh_root() {
-  rm -rf "$root" "$tmp"/*-modes "$tmp/answers" "$tmp/calls" "$tmp/screen" "$tmp/log" "$tmp/no-tty"
+  rm -rf "$root" "$tmp"/*-modes "$tmp/answers" "$tmp/languages" "$tmp/calls" "$tmp/screen" "$tmp/log" "$tmp/no-tty"
   mkdir -p "$root/etc"
   printf 'KEYMAP=us\nXKBLAYOUT=us\n' >"$conf"
   : >"$tmp/calls"
@@ -119,7 +134,7 @@ form() {
 }
 
 prompts() {
-  grep -cx prompt "$tmp/screen" || true
+  grep -c '^prompt' "$tmp/screen" || true
 }
 
 assert_layout() {
@@ -131,7 +146,7 @@ assert_layout() {
 assert_asked_again() {
   local context=$1 log_line=$2
   [[ $(prompts) == 2 ]] || fail "$context: the keyboard is asked for again" "$(cat "$tmp/screen")"
-  [[ $(sed -n 2p "$tmp/screen") == "notice: Could not set the Danish keyboard layout. Choose it again." ]] ||
+  [[ $(grep -v '^language' "$tmp/screen" | sed -n 2p) == "notice: Could not set the Danish keyboard layout. Choose it again." ]] ||
     fail "$context: the owner is told the layout did not take" "$(cat "$tmp/screen")"
   [[ $(tail -n1 "$tmp/screen") == "password form" && $(grep -c 'password form' "$tmp/screen") == 1 ]] ||
     fail "$context: the password form comes only after a layout took" "$(cat "$tmp/screen")"
@@ -148,6 +163,30 @@ assert_layout dk "a known layout"
 [[ $(<"$root/etc/omarchy/input-method") == $'INPUT_METHOD=none\nXKB_LAYOUT=' ]] ||
   fail "a known layout records no input method" "$(cat "$root/etc/omarchy/input-method" 2>&1)"
 pass "a layout that loads, persists and reads back goes straight to the password form"
+
+# The language comes first on the same screen, then the keyboard. Esc on the
+# keyboard goes back to the language, and Esc on the language (nothing before
+# it) asks it again.
+fresh_root
+answers esc 'Danish|dk'
+printf '%s\n' esc da da >"$tmp/languages"
+form || fail "Esc between the language and keyboard prompts" "$(cat "$tmp/screen" "$tmp/log")"
+[[ $(<"$tmp/screen") == $'language \nlanguage \nprompt \nlanguage da\nprompt \npassword form' ]] ||
+  fail "the language is asked first, and Esc steps back from the keyboard to it" "$(cat "$tmp/screen")"
+pass "the language is asked before the keyboard, and Esc on the keyboard goes back to it"
+
+# Coming back to the step (Esc from the account form) keeps the layout picked
+# for the same language, and forgets one picked for another.
+fresh_root
+answers 'Danish|dk'
+LANGUAGE=da KEYBOARD_LABEL=Danish form || fail "the same language again" "$(cat "$tmp/screen")"
+grep -qx 'prompt Danish' "$tmp/screen" || fail "the same language keeps the picked layout" "$(cat "$tmp/screen")"
+fresh_root
+answers 'German|de-latin1'
+echo de >"$tmp/languages"
+LANGUAGE=da KEYBOARD_LABEL=Danish form || fail "another language" "$(cat "$tmp/screen")"
+grep -qx 'prompt ' "$tmp/screen" || fail "another language forgets the layout picked for the previous one" "$(cat "$tmp/screen")"
+pass "a changed language clears the layout picked for the previous one"
 
 # systemd-firstboot writes only KEYMAP= for a keymap kbd-model-map lacks, as it
 # does for Polish, Ukrainian and Colemak. Setup supplies the XKB layout.
