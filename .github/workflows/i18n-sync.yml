@@ -21,6 +21,7 @@ on:
     paths:
       - 'default/i18n/en/**'
       - 'default/omarchy/omarchy-menu.jsonc'
+      - 'default/hypr/bindings/**'
       - 'manual/*.md'
       - 'shell/**'
       - 'bin/**'
