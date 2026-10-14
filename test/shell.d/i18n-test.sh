@@ -271,9 +271,9 @@ trap 'rm -rf "$work"' EXIT
 export OMARCHY_PATH=$ROOT
 export PATH="$ROOT/bin:$PATH"
 export OMARCHY_LANGUAGE_FILE=$work/language
-export OMARCHY_LOCALE_CONF=$work/locale.conf
 export OMARCHY_LOCALE_GEN=$work/locale.gen
-printf 'LANG=en_US.UTF-8\nLC_TIME=C\n' >"$OMARCHY_LOCALE_CONF"
+export XDG_CONFIG_HOME=$work/config
+session_env=$XDG_CONFIG_HOME/uwsm/env.d/50-omarchy-language
 printf '#da_DK.UTF-8 UTF-8\n' >"$OMARCHY_LOCALE_GEN"
 
 # Stub the outside world: locale-gen records its argument, notifications
@@ -286,6 +286,10 @@ STUB
 cat >"$work/stubs/omarchy-notification-send" <<'STUB'
 #!/bin/bash
 echo "$@" >>"$NOTIFY_LOG"
+STUB
+cat >"$work/stubs/dbus-update-activation-environment" <<'STUB'
+#!/bin/bash
+echo "$@" >>"$SESSION_ENV_LOG"
 STUB
 cat >"$work/stubs/locale" <<'STUB'
 #!/bin/bash
@@ -301,8 +305,8 @@ STUB
 done
 chmod +x "$work/stubs/"*
 export PATH="$work/stubs:$PATH"
-export LOCALE_GEN_LOG=$work/locale-gen.log NOTIFY_LOG=$work/notify.log ELEVATE_LOG=$work/elevate.log
-: >"$LOCALE_GEN_LOG"; : >"$NOTIFY_LOG"; : >"$ELEVATE_LOG"
+export LOCALE_GEN_LOG=$work/locale-gen.log NOTIFY_LOG=$work/notify.log ELEVATE_LOG=$work/elevate.log SESSION_ENV_LOG=$work/session-env.log
+: >"$LOCALE_GEN_LOG"; : >"$NOTIFY_LOG"; : >"$ELEVATE_LOG"; : >"$SESSION_ENV_LOG"
 
 assert_bash_equal() {
   if [[ $1 != "$2" ]]; then
@@ -327,8 +331,8 @@ omarchy-language da </dev/null
 assert_bash_equal "$(cat "$ELEVATE_LOG")" "pkexec /bin/bash" "omarchy-language elevates through pkexec without a terminal"
 assert_bash_equal "$(cat "$OMARCHY_LANGUAGE_FILE")" "da" "omarchy-language persists the choice"
 assert_bash_equal "$(omarchy-language)" "da" "omarchy-language reads the persisted choice"
-assert_bash_equal "$(grep '^LANG=' "$OMARCHY_LOCALE_CONF")" "LANG=da_DK.UTF-8" "omarchy-language sets LANG in locale.conf"
-assert_bash_equal "$(grep '^LC_TIME=' "$OMARCHY_LOCALE_CONF")" "LC_TIME=C" "omarchy-language leaves LC_* lines alone"
+assert_bash_equal "$(grep '^export LANG=' "$session_env")" "export LANG=da_DK.UTF-8" "omarchy-language sets the session LANG through uwsm for the next login"
+assert_bash_equal "$(cat "$SESSION_ENV_LOG")" "--systemd LANG=da_DK.UTF-8" "omarchy-language hands the new LANG to apps launched from now on"
 assert_bash_equal "$(grep '^da_DK.UTF-8' "$OMARCHY_LOCALE_GEN")" "da_DK.UTF-8 UTF-8" "omarchy-language enables the locale in locale.gen"
 assert_bash_equal "$(cat "$LOCALE_GEN_LOG")" "da_DK.UTF-8" "omarchy-language generates the locale"
 
@@ -373,26 +377,24 @@ fi
 da_changed_raw=$(jq -r '."language.changed"' "$ROOT/default/i18n/da/cli.json")
 assert_bash_equal "$(omarchy-i18n language.changed 'Research & Development')" "${da_changed_raw//%1/"Research & Development"}" "omarchy-i18n keeps ampersands in arguments literal"
 
-# With the locale already generated and LANG already set, picking the
-# language needs no privilege at all: no password prompt, no locale-gen.
+# With the locale already generated, picking the language needs no
+# privilege at all: no password prompt, no locale-gen.
 cat >"$work/stubs/locale" <<'STUB'
 #!/bin/bash
 if [[ $1 == "-a" ]]; then printf 'en_US.utf8\nda_DK.utf8\n'; else echo "LANG=da_DK.UTF-8"; fi
 STUB
 chmod +x "$work/stubs/locale"
-: >"$LOCALE_GEN_LOG"; : >"$ELEVATE_LOG"
-printf 'LANG=da_DK.UTF-8\nLC_TIME=C\n' >"$OMARCHY_LOCALE_CONF"
+: >"$LOCALE_GEN_LOG"; : >"$ELEVATE_LOG"; : >"$SESSION_ENV_LOG"
 rm -f "$OMARCHY_LANGUAGE_FILE"
 omarchy-language da </dev/null
 assert_bash_equal "$(cat "$OMARCHY_LANGUAGE_FILE")" "da" "already-applied locale switches without elevating"
 assert_bash_equal "$(cat "$LOCALE_GEN_LOG")" "" "already-generated locale is not regenerated"
 assert_bash_equal "$(cat "$ELEVATE_LOG")" "" "no password prompt when nothing privileged is needed"
+assert_bash_equal "$(cat "$SESSION_ENV_LOG")" "--systemd LANG=da_DK.UTF-8" "an already-generated locale still reaches the session"
 
-# A generated locale with LANG still to change elevates once, only to set LANG.
-printf 'LANG=en_US.UTF-8\nLC_TIME=C\n' >"$OMARCHY_LOCALE_CONF"
-omarchy-language da </dev/null
-assert_bash_equal "$(grep '^LANG=' "$OMARCHY_LOCALE_CONF")" "LANG=da_DK.UTF-8" "a generated locale still gets LANG set"
-assert_bash_equal "$(cat "$LOCALE_GEN_LOG")" "" "setting LANG alone does not run locale-gen"
+# Switching back writes the new LANG over the old one rather than adding to it.
+omarchy-language en </dev/null
+assert_bash_equal "$(grep -c '^export LANG=' "$session_env") $(grep '^export LANG=' "$session_env")" "1 export LANG=en_US.UTF-8" "switching language replaces the session LANG"
 
 # A cancelled polkit prompt must not persist the choice, or the interface
 # would switch with LANG left behind.
@@ -400,14 +402,17 @@ cat >"$work/stubs/pkexec" <<'STUB'
 #!/bin/bash
 exit 126
 STUB
-printf 'LANG=en_US.UTF-8\nLC_TIME=C\n' >"$OMARCHY_LOCALE_CONF"
-rm -f "$OMARCHY_LANGUAGE_FILE"
+cat >"$work/stubs/locale" <<'STUB'
+#!/bin/bash
+if [[ $1 == "-a" ]]; then echo "en_US.utf8"; else echo "LANG=en_US.UTF-8"; fi
+STUB
+rm -f "$OMARCHY_LANGUAGE_FILE" "$session_env"
 if omarchy-language da </dev/null 2>/dev/null; then
   fail "a cancelled password prompt fails the switch"
 else
   pass "a cancelled password prompt fails the switch"
 fi
-[[ ! -f $OMARCHY_LANGUAGE_FILE ]] && pass "the choice is not persisted before the locale applies" || fail "the choice is not persisted before the locale applies"
+[[ ! -f $OMARCHY_LANGUAGE_FILE && ! -f $session_env ]] && pass "the choice is not persisted before the locale exists" || fail "the choice is not persisted before the locale exists"
 
 # --- Translation sync tooling (scripts/i18n-sync.py) ---
 
