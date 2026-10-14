@@ -1207,5 +1207,11 @@
   },
   "update.password.user": {
     "label": "ユーザー"
+  },
+  "system.reboot-boot-menu": {
+    "label": "ブートメニューで再起動"
+  },
+  "setup.default.agent.kimi": {
+    "label": "Kimi"
   }
 }

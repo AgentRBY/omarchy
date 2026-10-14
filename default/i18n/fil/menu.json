@@ -1207,5 +1207,11 @@
   },
   "update.password.user": {
     "label": "Gumagamit"
+  },
+  "system.reboot-boot-menu": {
+    "label": "I-reboot sa Boot Menu"
+  },
+  "setup.default.agent.kimi": {
+    "label": "Kimi"
   }
 }

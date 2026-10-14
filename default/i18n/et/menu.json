@@ -1207,5 +1207,11 @@
   },
   "update.password.user": {
     "label": "Kasutaja"
+  },
+  "system.reboot-boot-menu": {
+    "label": "Taaskäivita alglaadimismenüüsse"
+  },
+  "setup.default.agent.kimi": {
+    "label": "Kimi"
   }
 }

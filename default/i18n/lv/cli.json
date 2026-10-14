@@ -110,6 +110,7 @@
   "keybindings.title": "Īsinājumtaustiņi",
   "keybindings.tmuxTitle": "Tmux īsinājumtaustiņi",
   "language.changed": "Valoda tagad ir iestatīta uz %1",
+  "language.newApps": "Turpmāk atvērtās lietotnes to izmantos arī; jau atvērtās pārstartē",
   "language.relogin": "Izraksties un pieraksties atkal, lai lietotu to visur",
   "layout.defaultFloating": "Noklusējuma izkārtojums iestatīts kā peldošais",
   "layout.defaultScrolling": "Noklusējuma izkārtojums iestatīts kā ritināmais",

@@ -1207,5 +1207,11 @@
   },
   "update.password.user": {
     "label": "Korisnik"
+  },
+  "system.reboot-boot-menu": {
+    "label": "Ponovno pokreni u izbornik pokretanja"
+  },
+  "setup.default.agent.kimi": {
+    "label": "Kimi"
   }
 }

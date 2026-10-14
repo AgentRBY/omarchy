@@ -1207,5 +1207,11 @@
   },
   "update.password.user": {
     "label": "Χρήστης"
+  },
+  "system.reboot-boot-menu": {
+    "label": "Επανεκκίνηση στο μενού εκκίνησης"
+  },
+  "setup.default.agent.kimi": {
+    "label": "Kimi"
   }
 }
