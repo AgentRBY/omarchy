@@ -67,7 +67,11 @@ function parseMenuJsonc(raw) {
   return out
 }
 
-function mergeMenuSources(defaultItems, userItems) {
+// The root row has no JSONC entry, so the merge injects it when neither
+// source supplies one; only then does rootLabel (the catalog's translation
+// of "Go") apply. A root row from either source keeps its own label, so a
+// user-supplied heading is never overwritten by the catalog.
+function mergeMenuSources(defaultItems, userItems, rootLabel) {
   var nextItems = ({})
   var nextOrder = []
   var sources = [defaultItems || [], userItems || []]
@@ -88,7 +92,7 @@ function mergeMenuSources(defaultItems, userItems) {
   }
 
   if (!nextItems.root) {
-    nextItems.root = { id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], searchTerms: [], when: "", checked: "", disabled: "", action: "", provider: "" }
+    nextItems.root = { id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: (typeof rootLabel === "string" && rootLabel) ? rootLabel : "Go", title: "", target: "", description: "", aliases: [], searchTerms: [], when: "", checked: "", disabled: "", action: "", provider: "" }
     nextOrder.unshift("root")
   }
   for (var k3 = 0; k3 < nextOrder.length; k3++) nextItems[nextOrder[k3]].order = k3

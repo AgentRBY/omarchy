@@ -117,6 +117,11 @@ assertEqual(translated[1].label, 'Language', 'applyTranslations leaves untransla
 assertEqual(defaults[0].label, 'Setup', 'applyTranslations does not mutate its input')
 const merged = MenuModel.mergeMenuSources(translated, MenuModel.parseMenuJsonc(JSON.stringify({ setup: { label: 'My Setup' } })))
 assertEqual(merged.items.setup.label, 'My Setup', 'a user retitle wins over the translation')
+const customRoot = MenuModel.mergeMenuSources(translated, MenuModel.parseMenuJsonc(JSON.stringify({ root: { label: 'My Menu' } })), 'Gå')
+assertEqual(customRoot.items.root.label, 'My Menu', 'a user-supplied root heading wins over the catalog label')
+const injectedRoot = MenuModel.mergeMenuSources(translated, [], 'Gå')
+assertEqual(injectedRoot.items.root.label, 'Gå', 'the injected root heading uses the catalog label')
+assertEqual(MenuModel.mergeMenuSources(translated, []).items.root.label, 'Go', 'the injected root heading defaults to Go without a catalog')
 assertDeepEqual(MenuModel.applyTranslations(defaults, null), defaults, 'a missing catalog degrades to English')
 
 // Routing must not depend on the display language: English labels live in
@@ -139,10 +144,37 @@ const clipboard = requireFromRoot('shell/plugins/clipboard/ClipboardHistory.js')
 const daRow = clipboard.displayRows([{ type: 'image', path: '/tmp/a.png', mime: 'image/png', capturedAt: 'Friday 14:42' }], '', 50, tr)[0]
 assertEqual(daRow.previewText, daShell['clipboard.screenshotFrom'].replace('%1', 'Friday 14:42'), 'clipboard previews translate through tr')
 
-// The manual ships whole per language: same files as English, none empty.
+// The manual ships whole per language: same files as English, none empty,
+// and the machine-significant parts of every chapter preserved — code block
+// contents, URLs, relative link destinations, and commands or paths in
+// inline code. Prose, link text, and synopsis placeholders in <...> or
+// [...] may be localized. In structural mode, chapters the manifest marks
+// stale are exempt: their repair is pending sync work, not corruption.
 const manualDir = path.join(root, 'manual')
 const englishManual = fs.readdirSync(manualDir).filter((name) => name.endsWith('.md')).sort()
 assert(englishManual.length > 0, 'English manual exists')
+const englishTexts = {}
+for (const file of englishManual) englishTexts[file] = fs.readFileSync(path.join(manualDir, file), 'utf8')
+const bagOf = (items) => JSON.stringify([...items].sort())
+const fencesOf = (text) => [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1])
+const urlsOf = (text) => text.match(/https?:\/\/[^\s)]+/g) || []
+const relDestsOf = (text) => [...text.matchAll(/\]\((?!<?https?:\/\/)([^)\s]+)/g)].map((m) => m[1])
+const protectedInlineOf = (text) => [...text.matchAll(/`([^`\n]+)`/g)].map((m) => m[1])
+  .filter((span) => /[/~$]/.test(span) || span.startsWith('omarchy ') || span.startsWith('omarchy-'))
+  .map((span) => span.replace(/<[^>]+>/g, '<>').replace(/\[[^\]]+\]/g, '[]'))
+function manualProblems(english, translatedText) {
+  const problems = []
+  if ((english.match(/^#{1,6} /gm) || []).length !== (translatedText.match(/^#{1,6} /gm) || []).length) problems.push('heading count changed')
+  if (bagOf(urlsOf(english)) !== bagOf(urlsOf(translatedText))) problems.push('URLs changed')
+  if (bagOf(fencesOf(english)) !== bagOf(fencesOf(translatedText))) problems.push('code block contents changed')
+  if (bagOf(relDestsOf(english)) !== bagOf(relDestsOf(translatedText))) problems.push('relative link destinations changed')
+  if (bagOf(protectedInlineOf(english)) !== bagOf(protectedInlineOf(translatedText))) problems.push('commands or paths in inline code changed')
+  return problems
+}
+const fencedChapter = englishManual.find((file) => englishTexts[file].includes('```'))
+assert(manualProblems(englishTexts[fencedChapter], englishTexts[fencedChapter].replace(/```[^\n]*\n/, '$&echo tampered\n')).length > 0, 'the manual integrity check catches a changed code block')
+const linkedChapter = englishManual.find((file) => /\]\(\d\d-[a-z0-9-]+\.md\)/.test(englishTexts[file]))
+assert(manualProblems(englishTexts[linkedChapter], englishTexts[linkedChapter].replace(/\]\(\d\d-[a-z0-9-]+\.md\)/, '](99-missing.md)')).length > 0, 'the manual integrity check catches a broken chapter link')
 for (const code of codes) {
   if (code === 'en') continue
   const dir = path.join(manualDir, code)
@@ -151,8 +183,18 @@ for (const code of codes) {
     continue
   }
   const chapters = fs.readdirSync(dir).filter((name) => name.endsWith('.md')).sort()
+  const texts = {}
+  for (const file of chapters) texts[file] = fs.readFileSync(path.join(dir, file), 'utf8')
   const extra = chapters.filter((file) => !englishManual.includes(file))
-  const empty = chapters.filter((file) => fs.readFileSync(path.join(dir, file), 'utf8').trim().length === 0)
+  const empty = chapters.filter((file) => texts[file].trim().length === 0)
+  const broken = []
+  for (const file of chapters) {
+    if (!Object.hasOwn(englishTexts, file)) continue
+    if (structural && isStale(code, `manual:${file}`, englishTexts[file])) continue
+    for (const problem of manualProblems(englishTexts[file], texts[file])) broken.push(`${file}: ${problem}`)
+    if (broken.length > 5) break
+  }
+  assert(broken.length === 0, `manual/${code} preserves commands, links, and code blocks`, JSON.stringify(broken.slice(0, 5)))
   if (structural) {
     // Extra chapters are prune-pending (their English was deleted or renamed).
     assert(empty.length === 0, `manual/${code} chapters present are translated`, JSON.stringify(empty))
@@ -236,6 +278,9 @@ grep -q "$da_changed" "$NOTIFY_LOG" && pass "the language-change notification ar
 
 da_battery=$(jq -r '."battery.lowBody"' "$ROOT/default/i18n/da/cli.json" | sed 's/%1/12/')
 assert_bash_equal "$(omarchy-i18n battery.lowBody 12)" "$da_battery" "omarchy-i18n substitutes %1 and keeps a literal percent sign"
+
+da_changed_raw=$(jq -r '."language.changed"' "$ROOT/default/i18n/da/cli.json")
+assert_bash_equal "$(omarchy-i18n language.changed 'Research & Development')" "${da_changed_raw//%1/"Research & Development"}" "omarchy-i18n keeps ampersands in arguments literal"
 
 # With the locale already generated and LANG already set, picking the
 # language needs no privilege at all: no terminal handoff, no locale-gen.
