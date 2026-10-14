@@ -1209,7 +1209,7 @@
     "label": "使用者"
   },
   "system.reboot-boot-menu": {
-    "label": "重啟進入開機選單"
+    "label": "重新開機至開機選單"
   },
   "setup.default.agent.kimi": {
     "label": "Kimi"
