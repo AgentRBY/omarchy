@@ -232,10 +232,18 @@ cat >"$work/stubs/locale" <<'STUB'
 #!/bin/bash
 if [[ $1 == "-a" ]]; then echo "en_US.utf8"; else echo "LANG=en_US.UTF-8"; fi
 STUB
+# sudo and pkexec record which one elevated, then run the command as-is.
+for elevator in sudo pkexec; do
+  cat >"$work/stubs/$elevator" <<STUB
+#!/bin/bash
+echo "$elevator \$1" >>"\$ELEVATE_LOG"
+exec "\$@"
+STUB
+done
 chmod +x "$work/stubs/"*
 export PATH="$work/stubs:$PATH"
-export LOCALE_GEN_LOG=$work/locale-gen.log NOTIFY_LOG=$work/notify.log
-: >"$LOCALE_GEN_LOG"; : >"$NOTIFY_LOG"
+export LOCALE_GEN_LOG=$work/locale-gen.log NOTIFY_LOG=$work/notify.log ELEVATE_LOG=$work/elevate.log
+: >"$LOCALE_GEN_LOG"; : >"$NOTIFY_LOG"; : >"$ELEVATE_LOG"
 
 assert_bash_equal() {
   if [[ $1 != "$2" ]]; then
@@ -254,9 +262,10 @@ assert_bash_equal "$(printf '%s\n' "$list" | wc -l)" "50" "omarchy-language list
 assert_bash_equal "$(printf '%s\n' "$list" | head -n 1 | cut -f2)" "en" "omarchy-language list puts English first"
 assert_bash_equal "$(omarchy-language locale da)" "da_DK.UTF-8" "omarchy-language locale maps da to its glibc locale"
 
-# stdin is not a tty here, but --apply is the in-terminal continuation, so
-# exercise the full set path through it.
-omarchy-language da --apply </dev/null
+# stdin is not a tty here, as when picked from the menu, so the privileged
+# half goes through polkit rather than a terminal sudo prompt.
+omarchy-language da </dev/null
+assert_bash_equal "$(cat "$ELEVATE_LOG")" "pkexec /bin/bash" "omarchy-language elevates through pkexec without a terminal"
 assert_bash_equal "$(cat "$OMARCHY_LANGUAGE_FILE")" "da" "omarchy-language persists the choice"
 assert_bash_equal "$(omarchy-language)" "da" "omarchy-language reads the persisted choice"
 assert_bash_equal "$(grep '^LANG=' "$OMARCHY_LOCALE_CONF")" "LANG=da_DK.UTF-8" "omarchy-language sets LANG in locale.conf"
@@ -283,31 +292,39 @@ da_changed_raw=$(jq -r '."language.changed"' "$ROOT/default/i18n/da/cli.json")
 assert_bash_equal "$(omarchy-i18n language.changed 'Research & Development')" "${da_changed_raw//%1/"Research & Development"}" "omarchy-i18n keeps ampersands in arguments literal"
 
 # With the locale already generated and LANG already set, picking the
-# language needs no privilege at all: no terminal handoff, no locale-gen.
+# language needs no privilege at all: no password prompt, no locale-gen.
 cat >"$work/stubs/locale" <<'STUB'
 #!/bin/bash
 if [[ $1 == "-a" ]]; then printf 'en_US.utf8\nda_DK.utf8\n'; else echo "LANG=da_DK.UTF-8"; fi
 STUB
-cat >"$work/stubs/omarchy-launch-floating-terminal-with-presentation" <<'STUB'
-#!/bin/bash
-echo "$@" >>"$LAUNCH_LOG"
-STUB
-chmod +x "$work/stubs/locale" "$work/stubs/omarchy-launch-floating-terminal-with-presentation"
-export LAUNCH_LOG=$work/launch.log
-: >"$LOCALE_GEN_LOG"; : >"$LAUNCH_LOG"
+chmod +x "$work/stubs/locale"
+: >"$LOCALE_GEN_LOG"; : >"$ELEVATE_LOG"
 printf 'LANG=da_DK.UTF-8\nLC_TIME=C\n' >"$OMARCHY_LOCALE_CONF"
 rm -f "$OMARCHY_LANGUAGE_FILE"
 omarchy-language da </dev/null
-assert_bash_equal "$(cat "$OMARCHY_LANGUAGE_FILE")" "da" "already-applied locale switches without a terminal"
+assert_bash_equal "$(cat "$OMARCHY_LANGUAGE_FILE")" "da" "already-applied locale switches without elevating"
 assert_bash_equal "$(cat "$LOCALE_GEN_LOG")" "" "already-generated locale is not regenerated"
-assert_bash_equal "$(cat "$LAUNCH_LOG")" "" "no terminal handoff when nothing privileged is needed"
+assert_bash_equal "$(cat "$ELEVATE_LOG")" "" "no password prompt when nothing privileged is needed"
 
-# With LANG still to change, a launch without a terminal must hand off to
-# one instead of running sudo blind — and must not persist the choice yet.
+# A generated locale with LANG still to change elevates once, only to set LANG.
+printf 'LANG=en_US.UTF-8\nLC_TIME=C\n' >"$OMARCHY_LOCALE_CONF"
+omarchy-language da </dev/null
+assert_bash_equal "$(grep '^LANG=' "$OMARCHY_LOCALE_CONF")" "LANG=da_DK.UTF-8" "a generated locale still gets LANG set"
+assert_bash_equal "$(cat "$LOCALE_GEN_LOG")" "" "setting LANG alone does not run locale-gen"
+
+# A cancelled polkit prompt must not persist the choice, or the interface
+# would switch with LANG left behind.
+cat >"$work/stubs/pkexec" <<'STUB'
+#!/bin/bash
+exit 126
+STUB
 printf 'LANG=en_US.UTF-8\nLC_TIME=C\n' >"$OMARCHY_LOCALE_CONF"
 rm -f "$OMARCHY_LANGUAGE_FILE"
-omarchy-language da </dev/null
-assert_bash_equal "$(cat "$LAUNCH_LOG")" "omarchy-language da --apply" "privileged locale work hands off to a terminal"
+if omarchy-language da </dev/null 2>/dev/null; then
+  fail "a cancelled password prompt fails the switch"
+else
+  pass "a cancelled password prompt fails the switch"
+fi
 [[ ! -f $OMARCHY_LANGUAGE_FILE ]] && pass "the choice is not persisted before the locale applies" || fail "the choice is not persisted before the locale applies"
 
 # --- Translation sync tooling (scripts/i18n-sync.py) ---

@@ -68,40 +68,50 @@ current_lang() {
   sed -n 's/^LANG=//p' "$locale_conf" 2>/dev/null | tail -n 1 | tr -d '"' || true
 }
 
-# Writing /etc needs privilege, and sudo needs a terminal to prompt in, so
-# anything below that changes locale.gen or locale.conf counts.
-needs_privileged_work() {
-  ! locale_generated "$1" || [[ $(current_lang) != "$1" ]]
-}
+# The privileged half of a language switch, run as one elevated bash so it
+# asks for a password once. It reads only its arguments: the locale (from the
+# registry), the two files, and whether the locale still needs generating.
+# Only LANG changes; LC_* lines somebody set stay.
+read -r -d '' APPLY_LOCALE_SCRIPT <<'SH' || true
+set -euo pipefail
+locale=$1 locale_gen=$2 locale_conf=$3 generate=$4
+if [[ $generate == "yes" ]]; then
+  # locale.gen spells some entries without the codeset (hi_IN UTF-8).
+  base=${locale%.UTF-8}
+  if grep -qE "^#$base(\.UTF-8)? UTF-8" "$locale_gen" 2>/dev/null; then
+    sed -i -E "s/^#($base(\.UTF-8)? UTF-8)/\1/" "$locale_gen"
+  elif ! grep -qE "^$base(\.UTF-8)? UTF-8" "$locale_gen" 2>/dev/null; then
+    echo "$locale UTF-8" >>"$locale_gen"
+  fi
+  locale-gen "$locale" >/dev/null
+fi
+if grep -q '^LANG=' "$locale_conf" 2>/dev/null; then
+  sed -i "s/^LANG=.*/LANG=$locale/" "$locale_conf"
+else
+  echo "LANG=$locale" >>"$locale_conf"
+fi
+SH
 
 apply_locale() {
-  local locale=$1
-  # The OMARCHY_LOCALE_* overrides point at test files that need no
-  # privilege; the real /etc paths do.
-  local -a priv=(sudo)
-  if [[ $locale_conf != "/etc/locale.conf" || $locale_gen != "/etc/locale.gen" ]]; then
-    priv=()
-  fi
-
+  local locale=$1 generate=no
   if ! locale_generated "$locale"; then
-    # locale.gen spells some entries without the codeset (hi_IN UTF-8).
-    local base=${locale%.UTF-8}
-    if grep -qE "^#$base(\.UTF-8)? UTF-8" "$locale_gen" 2>/dev/null; then
-      "${priv[@]}" sed -i -E "s/^#($base(\.UTF-8)? UTF-8)/\1/" "$locale_gen"
-    elif ! grep -qE "^$base(\.UTF-8)? UTF-8" "$locale_gen" 2>/dev/null; then
-      echo "$locale UTF-8" | "${priv[@]}" tee -a "$locale_gen" >/dev/null
-    fi
-    "${priv[@]}" locale-gen "$locale" >/dev/null
+    generate=yes
+  elif [[ $(current_lang) == "$locale" ]]; then
+    return
   fi
 
-  # Only LANG changes; LC_* lines somebody set stay.
-  if [[ $(current_lang) != "$locale" ]]; then
-    if grep -q '^LANG=' "$locale_conf" 2>/dev/null; then
-      "${priv[@]}" sed -i "s/^LANG=.*/LANG=$locale/" "$locale_conf"
-    else
-      echo "LANG=$locale" | "${priv[@]}" tee -a "$locale_conf" >/dev/null
-    fi
+  # sudo where a terminal can carry its prompt; picked from the menu there is
+  # none, so polkit puts the prompt on screen instead.
+  local -a priv
+  if (( EUID == 0 )); then
+    priv=()
+  elif [[ -t 0 ]]; then
+    priv=(sudo)
+  else
+    priv=(pkexec)
   fi
+
+  "${priv[@]}" /bin/bash -c "$APPLY_LOCALE_SCRIPT" omarchy-language "$locale" "$locale_gen" "$locale_conf" "$generate"
 }
 
 set_language() {
@@ -117,19 +127,10 @@ set_language() {
   locale=$(locale_for "$code")
   name=$(name_for "$code")
 
-  # Applying a locale can need sudo; when we were launched without a
-  # terminal (from the menu), continue in a floating terminal where sudo
-  # can prompt, the way omarchy-default-browser handles its install step.
-  # When nothing privileged needs doing (locale generated, LANG already
-  # set — picking English again, say), fall through and just switch.
-  if [[ ${2:-} != "--apply" ]] && needs_privileged_work "$locale" && [[ ! -t 0 ]]; then
-    exec omarchy-launch-floating-terminal-with-presentation omarchy-language "$code" --apply
-  fi
-
   apply_locale "$locale"
 
-  # The choice is only persisted once the locale applied, so a failed sudo
-  # cannot leave the interface switched with LANG behind it.
+  # The choice is only persisted once the locale applied, so a cancelled
+  # password prompt cannot leave the interface switched with LANG behind it.
   mkdir -p "$(dirname "$language_file")"
   echo "$code" >"$language_file"
 
@@ -152,6 +153,6 @@ locale)
   locale_for "$code"
   ;;
 *)
-  set_language "$1" "${2:-}"
+  set_language "$1"
   ;;
 esac
