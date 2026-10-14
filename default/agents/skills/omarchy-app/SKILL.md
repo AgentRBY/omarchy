@@ -85,13 +85,18 @@ files committed.
   follows the one picked under Setup > Language, live, like the theme. Write
   every visible string as `qsTr("Save")` in QML or `tr("Save")` in C++, with
   `%1` placeholders filled by `.arg()` rather than sentences glued together,
-  and ship translations as `src/i18n/<code>.json` (English text to
-  translation) compiled into the binary. The `Translator` in `templates.md`
-  reads `~/.config/omarchy/language`, falls back from `pt-BR` to `pt` to
-  English per string, and sets the default `QLocale`, so `Qt.locale()` gives
-  day and month names in the same language. A binding that formats a date
-  should read `translator.language` so it re-renders on a switch. Translate
-  the `.desktop` file's `Name` and `Comment` too (`Name[da]=…`). Keep brand
+  and a counted string as `qsTr("%n clips", "", count)` so each language gets
+  its own plural forms. Ship translations as `src/i18n/<code>.json` (English
+  text to translation) compiled into the binary. The `Translator` in
+  `templates.md` reads `~/.config/omarchy/language`, falls back from `pt-BR`
+  to `pt` to English per string, and sets the default `QLocale` and layout
+  direction from Omarchy's registry: write numbers and dates through
+  `Qt.locale()` (`value.toLocaleString(Qt.locale(), 'f', 1)`) so they take
+  the language's separators and digits, and keep the window's content under
+  the template's mirrored root so Arabic, Hebrew, Persian, and Urdu read
+  right to left. A binding that formats a date or number should read
+  `translator.language` so it re-renders on a switch. Translate the
+  `.desktop` file's `Name` and `Comment` too (`Name[da]=…`). Keep brand
   names, units, and keyboard keys as they are.
 - **Keyboard first.** `?` shows every shortcut in an overlay, `Q` quits (and
   asks first when there's unsaved or unexported work), Space is the main
