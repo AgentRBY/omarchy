@@ -26,17 +26,19 @@ Example `shell.json` (bar subtree only shown):
   "bar": {
     "position": "top",
     "background": "opaque",
-    "centerAnchor": "omarchy.clock",
     "layout": {
       "left": [
         { "id": "omarchy.menu" },
         { "id": "omarchy.spacer", "size": 12 },
         { "id": "omarchy.workspaces" }
       ],
+      "centerBegin": [
+        { "id": "omarchy.media" }
+      ],
       "center": [
-        { "id": "omarchy.media" },
         { "id": "omarchy.clock", "format": "HH:mm" }
       ],
+      "centerEnd": [],
       "right": [
         { "id": "omarchy.audio" },
         { "id": "omarchy.power" }
@@ -46,7 +48,7 @@ Example `shell.json` (bar subtree only shown):
 }
 ```
 
-`centerAnchor` pins one center module to the exact horizontal/vertical center and flanks others around it. Set to an empty string to disable anchoring (the center list is centered as a group).
+`center` is a box in the middle of the bar whose modules are centered as one group on the exact horizontal/vertical center. `centerBegin` and `centerEnd` hang off the box's two edges and move out as it grows; with the box empty they meet in the middle of the bar.
 
 ## Module catalogue
 

@@ -4,7 +4,9 @@ echo "Write the bar's tray where the bar drew it"
 # layout said: first in the right section, last in the left and center ones,
 # and only the last tray a section listed. It now draws every widget in the
 # order the layout lists them, so the tray moves there in the layout, any
-# other trays in the section go, and the bar looks as it did.
+# other trays in the section go, and the bar looks as it did. This runs
+# before the center section is split around its anchor (1791969355), as the
+# bar pinned the tray before splitting it.
 #
 # A replacement bar (a clone of the built-in one, or a third party's) reads the
 # layout the way it was written for, so its config is left as it is.

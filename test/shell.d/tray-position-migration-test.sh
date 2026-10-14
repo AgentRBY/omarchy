@@ -6,6 +6,7 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 require_command jq
 
 migration="$ROOT/migrations/1791968925.sh"
+split="$ROOT/migrations/1791969355.sh"
 test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT
 config="$test_dir/home/.config/omarchy/shell.json"
@@ -52,6 +53,16 @@ check '{"bar":{"layout":{"right":["a",{"id":"omarchy.tray","pinned":["x"]},"b","
 check '{"bar":{"id":"omarchy.bar","layout":{"right":["a","omarchy.tray"]}}}' \
   '{"id":"omarchy.bar","layout":{"right":["omarchy.tray","a"]}}' \
   "the built-in bar named by id is pinned like the default"
+
+# The old bar pinned the tray and then split the center around its anchor, so
+# a tray before the clock was drawn at the far end of what followed it.
+# omarchy-migrate runs migrations in filename order.
+[[ ${migration##*/} < ${split##*/} ]] || fail "the tray moves before the center is split"
+pass "the tray moves before the center is split"
+check '{"bar":{"centerAnchor":"omarchy.clock","layout":{"center":["omarchy.tray","omarchy.indicators","omarchy.clock","omarchy.weather"]}}}' \
+  '{"layout":{"centerBegin":["omarchy.indicators"],"center":["omarchy.clock"],"centerEnd":["omarchy.weather","omarchy.tray"]}}' \
+  "run before the center split, a tray before the anchor ends up where the bar drew it" \
+  "$migration" "$split"
 
 for given in \
   '{"version":1,"bar":{"layout":{"left":["omarchy.menu"],"right":["omarchy.tray","omarchy.audio"]}},"plugins":[]}' \

@@ -86,8 +86,9 @@ for (const edge of ['top', 'bottom', 'left', 'right']) {
   )
 }
 
-// The center section declares two arrangements and shows one; the hidden one
-// must not build its modules or every center widget exists twice.
+// Each bar surface declares the center sections twice, in the middle of the
+// bar and beside the right section, and draws one; the other must not build
+// its modules or every center widget exists twice.
 const moduleList = barSource.slice(barSource.indexOf('component ModuleList'), barSource.indexOf('component ModuleSlot'))
 assert(
   /active: visible && entries\.length > 0/.test(moduleList),
@@ -113,16 +114,8 @@ assertEqual(bar.pickDrawnSlot(null), null, 'bar tolerates a missing slot list')
 const revealTimer = barSource.slice(barSource.indexOf('id: centerSectionRevealTimer'))
 const revealTimerBody = revealTimer.slice(0, revealTimer.indexOf('\n  }'))
 assert(
-  /!root\.centerSectionHovered && !root\.barHovered/.test(revealTimerBody),
+  /onTriggered: if \(!root\.barHovered\) root\.centerSectionRevealHeld = false/.test(revealTimerBody),
   'the indicator peek stays held while the pointer is anywhere on the bar'
-)
-
-// The timer runs on a delay, so it can fire for a pointer that has already come
-// back. Letting it assign the held state outright would then reveal indicators
-// from bar hover alone; it may only close what the center section opened.
-assert(
-  !/centerSectionRevealHeld = (?!false)/.test(revealTimerBody),
-  'the delayed collapse can only close the peek, never open it'
 )
 
 // The whole-bar hover has to come from an ancestor of the sections. A sibling
@@ -134,6 +127,19 @@ assert(
   /setBarHovered\(hovered\)/.test(barLoaderBody),
   'the whole-bar hover handler is a child of the bar loader, above both orientations'
 )
+
+// The center box grows from its middle.
+const centerSections = barSource.slice(barSource.indexOf('component CenterSections'), barSource.indexOf('component CenterBox'))
+assert(/fixedEdge: sections\.besideRight \? "end" : "center"/.test(centerSections), 'the center box grows both ways')
+
+// A widget dropped into the box from outside grows its outline the way the
+// box would grow.
+assertEqual(bar.boxGrowLeadShare('center', 'left'), 0.5, 'a centered box grows both ways')
+assertEqual(bar.boxGrowLeadShare('center', 'centerEnd'), 0.5, 'a centered box grows both ways whichever side the widget comes from')
+for (const region of ['left', 'centerBegin'])
+  assertEqual(bar.boxGrowLeadShare('end', region), 1, `beside the right section, a widget from ${region} grows the box toward its start`)
+for (const region of ['centerEnd', 'right'])
+  assertEqual(bar.boxGrowLeadShare('end', region), 0, `beside the right section, a widget leaving ${region} gives the box its room and it grows toward its end`)
 
 // Unplugging a monitor tears its bar down mid-hover with no leave event, which
 // would leave that surface counted forever and the peek stuck open.
@@ -153,20 +159,15 @@ assert(
   'each bar surface adds to a hover tally instead of overwriting a shared flag'
 )
 assert(
-  /if \(barHoverCount === 0\) centerSectionRevealTimer\.restart\(\)/.test(setBarHoveredBody),
-  'the peek collapse re-runs once the pointer has left the last bar'
+  /if \(barHoverCount > 0\) \{\s*centerSectionRevealTimer\.stop\(\)\s*centerSectionRevealHeld = true\s*\} else \{\s*centerSectionRevealTimer\.restart\(\)/.test(setBarHoveredBody),
+  'the pointer coming onto any bar opens the peek, and leaving the last one re-runs the collapse'
 )
 
-// Opening the peek stays the center section's own gesture: pointing straight at
-// a widget reveals nothing. Checking that only inside setBarHovered proves
-// nothing, since the shared reveal timer is the path a bar hover leaks through.
+// The peek opens from anywhere on the bar, widgets included, so no narrower
+// hover area opens it as well.
 const opensPeek = barSource.split('\n').filter(line => /centerSectionRevealHeld = true/.test(line))
 assertEqual(opensPeek.length, 1, 'exactly one line in the bar opens the indicator peek')
-const setCenterSectionHovered = barSource.slice(barSource.indexOf('function setCenterSectionHovered'))
-assert(
-  setCenterSectionHovered.slice(0, setCenterSectionHovered.indexOf('\n  }')).includes(opensPeek[0].trim()),
-  'hovering the bar never opens the peek on its own'
-)
+assert(setBarHoveredBody.includes(opensPeek[0].trim()), 'only the whole-bar hover opens the peek')
 
 // A bar surface is built per monitor, so a panel hotkey has one live copy of
 // the widget per screen to choose between.
@@ -278,9 +279,51 @@ assert(
   'bar rejects free-space drops after the pointer leaves the bar'
 )
 assert(
-  /BarModel\.nearestDropTarget\(candidates, scenePoint, root\.vertical\)/.test(barSource),
-  'bar uses nearest insertion targeting for widget and free-space drops'
+  /BarModel\.centerDropTarget\(candidates, root\.centerBoxDropRect\(box\), scenePoint, root\.vertical\)/.test(barSource) &&
+    /region: slot\.region,/.test(barSource),
+  'bar uses nearest insertion targeting, aware of the center box, for widget and free-space drops'
 )
+
+// Horizontal bar: indicators in centerBegin, the clock alone in the center box
+// at 340-400, weather in centerEnd, the menu far off in the left section.
+const menuSlot = { id: 'menu' }
+const indicatorsSlot = { id: 'indicators' }
+const boxClock = { id: 'clock' }
+const weatherSlot = { id: 'weather' }
+const dropRow = (slot, region, x, width) => ({ slot, region, x, y: 0, width, height: 26 })
+const menu = dropRow(menuSlot, 'left', 0, 30)
+const indicators = dropRow(indicatorsSlot, 'centerBegin', 300, 40)
+const clock = dropRow(boxClock, 'center', 340, 60)
+const weather = dropRow(weatherSlot, 'centerEnd', 400, 40)
+const box = { x: 340, y: 0, width: 60, height: 26 }
+const full = [menu, indicators, clock, weather]
+assertDeepEqual(bar.centerDropTarget(full, box, { x: 345 }, false), { slot: boxClock, after: false }, 'a drop over the box lands among its widgets')
+assertDeepEqual(bar.centerDropTarget(full, box, { x: 395 }, false), { slot: boxClock, after: true }, 'a drop over the end of the box lands after its last widget')
+assertDeepEqual(bar.centerDropTarget(full, box, { x: 338 }, false), { slot: indicatorsSlot, after: true }, 'a drop just before the box lands at the end of centerBegin')
+assertDeepEqual(bar.centerDropTarget(full, box, { x: 402 }, false), { slot: weatherSlot, after: false }, 'a drop just after the box lands at the start of centerEnd')
+assertDeepEqual(bar.centerDropTarget([menu, clock], box, { x: 330 }, false), { region: 'centerBegin', after: true }, 'beside the box with centerBegin empty, a drop starts centerBegin')
+assertDeepEqual(bar.centerDropTarget([menu, clock], box, { x: 410 }, false), { region: 'centerEnd', after: false }, 'beside the box with centerEnd empty, a drop starts centerEnd')
+// The outline grows to take in a widget dropped from outside; over the grown
+// part, the drop still lands in the box.
+const grown = { x: 320, y: 0, width: 100, height: 26 }
+assertDeepEqual(bar.centerDropTarget(full, grown, { x: 325 }, false), { slot: boxClock, after: false }, 'a drop over the grown outline still lands in the box')
+assertDeepEqual(bar.centerDropTarget([menu, clock], grown, { x: 430 }, false), { region: 'centerEnd', after: false }, 'off the outline, the box widgets are out of reach')
+
+// An empty box is a sliver in the middle of the bar during a drag.
+const sliver = { x: 498, y: 0, width: 4, height: 26 }
+assertDeepEqual(bar.centerDropTarget([menu], sliver, { x: 500 }, false), { region: 'center', after: true }, 'a drop on the empty box puts the widget in it')
+assertDeepEqual(bar.centerDropTarget([menu], sliver, { x: 490 }, false), { region: 'centerBegin', after: true }, 'a drop just before the empty box lands in centerBegin')
+assertDeepEqual(bar.centerDropTarget([menu], sliver, { x: 510 }, false), { region: 'centerEnd', after: false }, 'a drop just after the empty box lands in centerEnd')
+assertDeepEqual(bar.centerDropTarget([menu], sliver, { x: 20 }, false), { slot: menuSlot, after: true }, 'a drop far from the box still lands by the nearest widget')
+
+// Vertical bars measure along y.
+const vbox = { x: 0, y: 400, width: 26, height: 50 }
+const vclock = { slot: boxClock, region: 'center', x: 0, y: 400, width: 26, height: 50 }
+assertDeepEqual(bar.centerDropTarget([vclock], vbox, { x: 13, y: 440 }, true), { slot: boxClock, after: true }, 'vertical bars drop into the box along y')
+assertDeepEqual(bar.centerDropTarget([vclock], vbox, { x: 13, y: 380 }, true), { region: 'centerBegin', after: true }, 'vertical bars drop above the box into centerBegin')
+assertDeepEqual(bar.centerDropTarget([vclock], vbox, { x: 13, y: 470 }, true), { region: 'centerEnd', after: false }, 'vertical bars drop below the box into centerEnd')
+assertDeepEqual(bar.centerDropTarget(full, null, { x: 345 }, false), bar.nearestDropTarget(full, { x: 345 }, false), 'a bar without a center box resolves drops as before')
+assertEqual(bar.centerDropTarget(full, box, {}, false), null, 'an unreadable pointer resolves to no drop')
 assert(
   /component DragGhostPanel:[\s\S]*?readonly property var targetRect: root\.barDragTargetGeometry[\s\S]*?color: Commons\.Color\.accent/.test(barSource),
   'bar draws the insertion marker above the bar in the drag overlay'
@@ -313,11 +356,27 @@ assertDeepEqual(bar.entrySettings({ id: 'omarchy.clock', format: 'HH:mm' }), { f
 assertEqual(bar.entryId({ id: 'omarchy.clock' }), 'omarchy.clock', 'bar extracts object entry ids')
 assertEqual(bar.entryId('omarchy.clock'), 'omarchy.clock', 'bar extracts string entry ids')
 
+const entries = [{ id: 'a' }, { id: 'omarchy.tray' }, { id: 'b' }]
 // The tray sits where the layout puts it, like any other widget, so the bar
 // reads in the order the panel hotkeys count.
 assert(!/pinTrayToInner/.test(barSource) && bar.pinTrayToInner === undefined, 'the bar keeps the tray where the layout puts it')
 
-const entries = [{ id: 'a' }, { id: 'omarchy.tray' }, { id: 'b' }]
+// The section list lives in Util for QML and in BarModel and TrayModel for
+// plain JS; all three run the bar the same way.
+const utilSource = fs.readFileSync(root + '/shell/Commons/Util.qml', 'utf8')
+const utilSections = JSON.parse(utilSource.match(/readonly property var barSections: (\[[^\]]*\])/)[1])
+assertDeepEqual(bar.sections, ['left', 'centerBegin', 'center', 'centerEnd', 'right', 'tray'], 'the bar runs left, centerBegin, center, centerEnd, right, with tray in the tray\'s drawer')
+assertDeepEqual(utilSections, bar.sections, 'Util and BarModel list the same bar sections')
+const trayModel = requireFromRoot('shell/plugins/bar/widgets/TrayModel.js')
+for (const section of bar.sections)
+  assert(trayModel.layoutHasWidget({ [section]: ['omarchy.dropbox'] }, 'omarchy.dropbox'), `the tray finds a widget in ${section}`)
+
+// Panel tabbing and positional hotkeys take the center as one section.
+for (const region of ['centerBegin', 'center', 'centerEnd'])
+  assertDeepEqual(bar.navigationRegions(region), ['centerBegin', 'center', 'centerEnd'], `panel navigation from ${region} walks all three center sections`)
+assertDeepEqual(bar.navigationRegions('left'), ['left'], 'panel navigation in the left section stays in it')
+assertDeepEqual(bar.navigationRegions('right'), ['right'], 'panel navigation in the right section stays in it')
+assert(/var regions = BarModel\.navigationRegions\(region\)/.test(barSource), 'bar tabs panels across the center sections')
 
 // A settings-only shell.json write must patch the live bar, not rebuild it:
 // the module Repeaters recreate every widget when their array model changes.
@@ -374,15 +433,28 @@ assertEqual(
   null,
   'bar rebuilds when a changed id appears more than once in the layout'
 )
+assertDeepEqual(
+  bar.inlineSettingsDelta(
+    { centerBegin: [{ id: 'omarchy.indicators' }], center: [], centerEnd: [{ id: 'omarchy.weather' }] },
+    { centerBegin: [{ id: 'omarchy.indicators', alwaysShow: true }], center: [], centerEnd: [{ id: 'omarchy.weather' }] }
+  ),
+  [{ region: 'centerBegin', index: 0, entry: { id: 'omarchy.indicators', alwaysShow: true } }],
+  'bar patches settings in the sections beside the center box'
+)
+assertEqual(
+  bar.inlineSettingsDelta(
+    { centerBegin: [], center: [{ id: 'omarchy.clock' }], centerEnd: [] },
+    { centerBegin: [{ id: 'omarchy.clock' }], center: [], centerEnd: [] }
+  ),
+  null,
+  'bar rebuilds when a widget moves between the center sections'
+)
 assert(
   /BarModel\.inlineSettingsDelta\(layoutConfig, next\)/.test(barSource),
   'bar consults the inline settings delta before rebuilding the layout'
 )
 
 assertEqual(bar.moduleString({ id: 'custom', label: 42 }, 'label', 'fallback'), '42', 'bar stringifies module settings')
-assertEqual(bar.entryIndex(entries, 'b'), 2, 'bar finds entry indexes')
-assertDeepEqual(bar.entriesBefore(entries, 'b').map(bar.entryId), ['a', 'omarchy.tray'], 'bar returns entries before target')
-assertDeepEqual(bar.entriesAfter(entries, 'a').map(bar.entryId), ['omarchy.tray', 'b'], 'bar returns entries after target')
 
 assertEqual(bar.expandPath('~/module.qml', '/home/dhh'), '/home/dhh/module.qml', 'bar expands tilde paths')
 assertEqual(bar.expandPath('$HOME/module.qml', '/home/dhh'), '/home/dhh/module.qml', 'bar expands HOME paths')

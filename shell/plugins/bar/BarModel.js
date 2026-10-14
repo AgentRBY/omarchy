@@ -1,3 +1,10 @@
+// The bar's sections in the order they run along it, and tray, drawn inside
+// the tray's drawer, as Util.barSections has them. The center box sits in
+// the middle of the bar, holding whatever the center section does as one
+// centered group; centerBegin and centerEnd hang off its two edges.
+var sections = ["left", "centerBegin", "center", "centerEnd", "right", "tray"]
+var centerSections = ["centerBegin", "center", "centerEnd"]
+
 function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
@@ -32,22 +39,11 @@ function moduleString(entry, key, fallback) {
   return value === undefined || value === null ? fallback : String(value)
 }
 
-function entryIndex(entries, name) {
-  if (!Array.isArray(entries)) return -1
-  for (var i = 0; i < entries.length; i++) {
-    if (entryId(entries[i]) === name) return i
-  }
-  return -1
-}
-
-function entriesBefore(entries, name) {
-  var index = entryIndex(entries, name)
-  return index <= 0 ? [] : entries.slice(0, index)
-}
-
-function entriesAfter(entries, name) {
-  var index = entryIndex(entries, name)
-  return index === -1 ? [] : entries.slice(index + 1)
+// Panel tabbing and positional hotkeys take the center as one section: the
+// box and the two sections hanging off it, in the order they read.
+function navigationRegions(region) {
+  var name = String(region || "")
+  return centerSections.indexOf(name) !== -1 ? centerSections.slice() : [name]
 }
 
 // A shell.json write that only changes inline widget settings (the battery
@@ -60,7 +56,7 @@ function entriesAfter(entries, name) {
 // a duplicated id makes the push ambiguous.
 function inlineSettingsDelta(current, next) {
   if (!isPlainObject(current) || !isPlainObject(next)) return null
-  var regions = ["left", "center", "right", "tray"]
+  var regions = sections
   var counts = {}
   for (var r = 0; r < regions.length; r++) {
     var entries = Array.isArray(next[regions[r]]) ? next[regions[r]] : []
@@ -167,12 +163,16 @@ function pickPanelSlot(candidates, focusedScreen) {
 // around a centered group a dead zone, even though it visually reads as the
 // most natural place to drop.
 function nearestDropTarget(candidates, point, vertical) {
-  var rows = Array.isArray(candidates) ? candidates : []
   var axis = vertical ? Number(point && point.y) : Number(point && point.x)
+  var nearest = nearestEdge(candidates, axis, vertical)
+  return nearest ? nearest.target : null
+}
+
+function nearestEdge(candidates, axis, vertical) {
+  var rows = Array.isArray(candidates) ? candidates : []
   if (!isFinite(axis)) return null
 
   var best = null
-  var bestDistance = Infinity
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i]
     if (!row || !row.slot) continue
@@ -185,12 +185,50 @@ function nearestDropTarget(candidates, point, vertical) {
     var afterDistance = Math.abs(axis - (start + size))
     var after = afterDistance < beforeDistance
     var distance = after ? afterDistance : beforeDistance
-    if (distance < bestDistance) {
-      best = { slot: row.slot, after: after }
-      bestDistance = distance
-    }
+    if (!best || distance < best.distance)
+      best = { target: { slot: row.slot, after: after }, distance: distance }
   }
   return best
+}
+
+// How much of the room a widget dropped into the center box adds lands ahead
+// of the box's start edge. A centered box grows both ways. Beside the right
+// section the run is held at its end, so the box grows toward its start,
+// unless the widget leaves from beyond the box: the end then gives up the room
+// and the box grows toward it.
+function boxGrowLeadShare(fixedEdge, sourceRegion) {
+  if (fixedEdge === "center") return 0.5
+  if (fixedEdge !== "end") return 0
+  return sourceRegion === "centerEnd" || sourceRegion === "right" ? 0 : 1
+}
+
+// nearestDropTarget for a bar that draws the center box, given as the
+// outline it shows during a drag ({ x, y, width, height }). Over the box, a
+// drop lands among the widgets it holds, or in it when it holds none. Off it,
+// those widgets are out of reach, and the box's outer edges stand for the
+// inner ends of centerBegin and centerEnd, which may be empty. A drop at the
+// end of a section rather than beside a widget comes back as
+// { region, after }: after its last widget, or before its first.
+function centerDropTarget(candidates, box, point, vertical) {
+  var rows = Array.isArray(candidates) ? candidates : []
+  if (!box) return nearestDropTarget(rows, point, vertical)
+  var axis = vertical ? Number(point && point.y) : Number(point && point.x)
+  var start = Number(vertical ? box.y : box.x)
+  var end = start + Number(vertical ? box.height : box.width)
+  if (!isFinite(axis) || !isFinite(start) || !isFinite(end)) return null
+
+  if (axis >= start && axis <= end) {
+    var inside = nearestEdge(rows.filter(function(row) { return row && row.region === "center" }), axis, vertical)
+    return inside ? inside.target : { region: "center", after: true }
+  }
+
+  var outside = nearestEdge(rows.filter(function(row) { return row && row.region !== "center" }), axis, vertical)
+  var beginDistance = Math.abs(axis - start)
+  var endDistance = Math.abs(axis - end)
+  var edge = beginDistance <= endDistance
+    ? { target: { region: "centerBegin", after: true }, distance: beginDistance }
+    : { target: { region: "centerEnd", after: false }, distance: endDistance }
+  return outside && outside.distance <= edge.distance ? outside.target : edge.target
 }
 
 // Display cutouts (a camera notch at the top of a laptop panel) are described
@@ -312,13 +350,14 @@ if (typeof module !== "undefined") {
     pickDrawnSlot: pickDrawnSlot,
     pickPanelSlot: pickPanelSlot,
     nearestDropTarget: nearestDropTarget,
+    centerDropTarget: centerDropTarget,
+    boxGrowLeadShare: boxGrowLeadShare,
+    navigationRegions: navigationRegions,
+    sections: sections,
     normalizePosition: normalizePosition,
     entrySettings: entrySettings,
     entryId: entryId,
     moduleString: moduleString,
-    entryIndex: entryIndex,
-    entriesBefore: entriesBefore,
-    entriesAfter: entriesAfter,
     inlineSettingsDelta: inlineSettingsDelta,
     expandPath: expandPath,
     customModuleSafeName: customModuleSafeName,

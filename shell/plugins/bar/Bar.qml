@@ -20,7 +20,7 @@ Item {
   // not otherwise need it, but declaring it keeps clone construction atomic.
   property var pluginRegistry: null
   // Injected by the host shell every time shell.json is reloaded. Holds the
-  // `bar:` subtree: position, centerAnchor, layout. The host owns file IO;
+  // `bar:` subtree: position, background, layout. The host owns file IO;
   // the bar just renders whatever it's handed. The bar font follows the
   // OS-level fontconfig monospace binding — it is not stored in shell.json.
   property var barConfig: ({})
@@ -46,11 +46,9 @@ Item {
   property var fallbackBarConfig: ({
     position: "top",
     background: "opaque",
-    centerAnchor: "omarchy.clock",
-    layout: { left: [], center: [], right: [] }
+    layout: { left: [], centerBegin: [], center: [], centerEnd: [], right: [] }
   })
   property var layoutConfig: fallbackBarConfig.layout
-  property string centerAnchor: ""
   property bool requestedTransparent: false
   property bool useTransparentForeground: false
   property bool transparent: false
@@ -60,7 +58,6 @@ Item {
   // The look the blur behind the bar was last synced for. A background set by
   // editing shell.json skips the CLI, so the bar syncs Hyprland's blur itself.
   property string glassSyncedLook: ""
-  property bool centerSectionHovered: false
   // One bar surface exists per monitor and each reports into this count, so a
   // pointer crossing from one monitor's bar to another's stays counted however
   // the enter and leave interleave. A single shared bool would be left false by
@@ -68,6 +65,8 @@ Item {
   property int barHoverCount: 0
   // True while the pointer is over any bar, widgets included.
   readonly property bool barHovered: barHoverCount > 0
+  // The indicator peek, open while the pointer is on any bar. Plugins read it
+  // by this name through their bar API.
   property bool centerSectionRevealHeld: false
   property bool centerHoverRevealSuppressed: false
   property int barConfigSerial: 0
@@ -113,9 +112,11 @@ Item {
     return false
   }
   property var barDragSource: null
+  // Where the dragged widget would land: { slot, after } beside a widget, or
+  // { region, after } at an end of a section (see BarModel.centerDropTarget).
   property var barDragTarget: null
+  readonly property string barDragRegion: barDragTarget ? (barDragTarget.slot ? barDragTarget.slot.region : barDragTarget.region) : ""
   property var barDragTargetGeometry: null
-  property bool barDragAfter: false
   property var barDragWindow: null
   property var barDragScreen: null
   property url barDragImageUrl: ""
@@ -131,6 +132,7 @@ Item {
   property var barMoveScreen: null
   property var clickTargets: []
   property var moduleSlots: []
+  property var centerBoxes: []
   property var pluginBarApis: ({})
   // target -> { target, pluginId, clickTarget, popout }. Keyed by object so a
   // registration edits one entry in place instead of copying and rescanning an
@@ -388,6 +390,40 @@ Item {
     moduleSlots = next
   }
 
+  function registerCenterBox(box) {
+    if (!box || centerBoxes.indexOf(box) !== -1) return
+    centerBoxes = centerBoxes.concat([box])
+  }
+
+  function unregisterCenterBox(box) {
+    centerBoxes = centerBoxes.filter(function(item) { return item !== box })
+  }
+
+  // The center box drawn on a bar surface. Each surface declares one in the
+  // middle of the bar and one beside the right section, and draws one of them.
+  function centerBoxFor(window) {
+    for (var i = 0; i < centerBoxes.length; i++) {
+      var box = centerBoxes[i]
+      if (box && box.active && root.sameWindow(box.window, window)) return box
+    }
+    return null
+  }
+
+  // The box as its drag outline shows it, in scene coordinates: grown by
+  // whatever a drop in it would add, so a drop lands in the box anywhere the
+  // outline covers.
+  function centerBoxDropRect(box) {
+    if (!box) return null
+    try {
+      var point = box.mapToItem(null, 0, 0)
+      if (vertical)
+        return { x: point.x, y: point.y - box.previewLead, width: box.width, height: box.height + box.previewGrow }
+      return { x: point.x - box.previewLead, y: point.y, width: box.width + box.previewGrow, height: box.height }
+    } catch (e) {
+      return null
+    }
+  }
+
   function debugBarGeometry() {
     var out = []
     for (var i = 0; i < moduleSlots.length; i++) {
@@ -453,7 +489,6 @@ Item {
     barDragImageUrl = ""
     barDragTarget = null
     barDragTargetGeometry = null
-    barDragAfter = false
     barDragSceneX = 0
     barDragSceneY = 0
     barDragScreenX = 0
@@ -477,6 +512,31 @@ Item {
 
   function barDragScreenPoint(scenePoint) {
     return windowScreenPoint(scenePoint, barDragWindow)
+  }
+
+  // The marker for a drop at an end of a section: an outer edge of the center
+  // box for the sections hanging off it. A drop in the empty box has the box
+  // outline to show it and no marker.
+  function sectionDropMarkerRect(drop, box) {
+    var rect = centerBoxDropRect(box)
+    if (!rect || drop.region === "center") return null
+    var atEnd = drop.region === "centerEnd"
+    var screenPoint = barDragScreenPoint({ x: rect.x, y: rect.y })
+    var thickness = Style.spacing.xs
+    if (vertical) {
+      return {
+        x: screenPoint.x,
+        y: screenPoint.y + (atEnd ? rect.height : 0) - thickness / 2,
+        width: rect.width,
+        height: thickness
+      }
+    }
+    return {
+      x: screenPoint.x + (atEnd ? rect.width : 0) - thickness / 2,
+      y: screenPoint.y,
+      width: thickness,
+      height: rect.height
+    }
   }
 
   function dropMarkerRect(slot, after) {
@@ -683,7 +743,6 @@ Item {
       glassSyncedLook = look
       Util.execDetached("omarchy-bar sync-glass")
     }
-    centerAnchor = Util.canonicalWidgetId(config.centerAnchor || "")
 
     // layoutEntries feeds plain JS arrays to the module Repeaters, and QML
     // cannot diff those: reassigning layoutConfig rebuilds every widget on
@@ -721,23 +780,27 @@ Item {
     return Array.isArray(entries) ? entries : []
   }
 
-  // Tab order for the panels in one bar region. Scoped to a single bar surface
-  // so tabbing walks the bar the open panel belongs to instead of hopping the
-  // panel to another monitor's copy of the same widget.
+  // Tab order for the panels in one bar region, with the three center
+  // sections taken as one. Scoped to a single bar surface so tabbing walks the
+  // bar the open panel belongs to instead of hopping the panel to another
+  // monitor's copy of the same widget.
   function panelNavigationSlots(region, window) {
-    var entries = layoutEntries(region)
+    var regions = BarModel.navigationRegions(region)
     var slots = []
-    for (var i = 0; i < entries.length; i++) {
-      var id = entryId(entries[i])
-      for (var j = 0; j < moduleSlots.length; j++) {
-        var slot = moduleSlots[j]
-        if (!slot || slot.region !== region || slot.moduleName !== id) continue
-        if (window && !sameWindow(slotWindow(slot), window)) continue
-        var item = slot.activeItem
-        if (!item || item.visible !== true || slot.visible !== true || slot.width <= 0 || slot.height <= 0) continue
-        if (typeof item.open !== "function" || typeof item.close !== "function" || item.opened === undefined) continue
-        slots.push(slot)
-        break
+    for (var r = 0; r < regions.length; r++) {
+      var entries = layoutEntries(regions[r])
+      for (var i = 0; i < entries.length; i++) {
+        var id = entryId(entries[i])
+        for (var j = 0; j < moduleSlots.length; j++) {
+          var slot = moduleSlots[j]
+          if (!slot || slot.region !== regions[r] || slot.moduleName !== id) continue
+          if (window && !sameWindow(slotWindow(slot), window)) continue
+          var item = slot.activeItem
+          if (!item || item.visible !== true || slot.visible !== true || slot.width <= 0 || slot.height <= 0) continue
+          if (typeof item.open !== "function" || typeof item.close !== "function" || item.opened === undefined) continue
+          slots.push(slot)
+          break
+        }
       }
     }
     return slots
@@ -872,18 +935,6 @@ Item {
     return BarModel.moduleString(entry, key, fallback)
   }
 
-  function entryIndex(entries, name) {
-    return BarModel.entryIndex(entries, name)
-  }
-
-  function entriesBefore(entries, name) {
-    return BarModel.entriesBefore(entries, name)
-  }
-
-  function entriesAfter(entries, name) {
-    return BarModel.entriesAfter(entries, name)
-  }
-
   function canonicalWidgetId(name) {
     return Util.canonicalWidgetId(name)
   }
@@ -907,22 +958,18 @@ Item {
 
   Component.onCompleted: applyBarConfig()
 
-  // Revealing the indicators widens their section, which can slide a neighbour
-  // under a stationary pointer. Collapsing on that un-hover would move it back
-  // out and re-open the peek, so hold until the pointer leaves the bar.
-  function setCenterSectionHovered(hovered) {
-    centerSectionHovered = hovered
-    if (hovered) {
+  // The indicator peek opens as the pointer comes onto the bar and holds until
+  // it leaves. Revealing the indicators widens their section, which can slide a
+  // widget under a stationary pointer, so nothing narrower than the whole bar
+  // can hold it without opening and closing it in a loop.
+  function setBarHovered(hovered) {
+    barHoverCount = Math.max(0, barHoverCount + (hovered ? 1 : -1))
+    if (barHoverCount > 0) {
       centerSectionRevealTimer.stop()
       centerSectionRevealHeld = true
     } else {
       centerSectionRevealTimer.restart()
     }
-  }
-
-  function setBarHovered(hovered) {
-    barHoverCount = Math.max(0, barHoverCount + (hovered ? 1 : -1))
-    if (barHoverCount === 0) centerSectionRevealTimer.restart()
   }
 
   function setCenterHoverRevealSuppressed(value) {
@@ -932,10 +979,8 @@ Item {
   Timer {
     id: centerSectionRevealTimer
     interval: 120
-    // Collapse only. Opening the peek is the center section's own gesture, done
-    // in setCenterSectionHovered, so a timer left pending by a pointer that dipped
-    // off the bar and came back cannot reveal indicators it never pointed at.
-    onTriggered: if (!root.centerSectionHovered && !root.barHovered) root.centerSectionRevealHeld = false
+    // A pointer that dips off the bar and straight back leaves the peek open.
+    onTriggered: if (!root.barHovered) root.centerSectionRevealHeld = false
   }
 
   function run(command) {
@@ -1043,6 +1088,7 @@ Item {
 
       candidates.push({
         slot: slot,
+        region: slot.region,
         x: slotPoint.x,
         y: slotPoint.y,
         width: slot.width,
@@ -1050,7 +1096,15 @@ Item {
       })
     }
 
-    return BarModel.nearestDropTarget(candidates, scenePoint, root.vertical)
+    var box = sourceWindow ? root.centerBoxFor(sourceWindow) : null
+    return BarModel.centerDropTarget(candidates, root.centerBoxDropRect(box), scenePoint, root.vertical)
+  }
+
+  function dropMarkerFor(drop, sourceSlot) {
+    if (!drop) return null
+    if (drop.slot) return root.dropMarkerRect(drop.slot, drop.after)
+    var sourceWindow = root.slotWindow(sourceSlot) || root.barDragWindow
+    return root.sectionDropMarkerRect(drop, sourceWindow ? root.centerBoxFor(sourceWindow) : null)
   }
 
   function visibleModuleSlot(region, name, sourceSlot) {
@@ -1082,11 +1136,29 @@ Item {
     return ""
   }
 
+  function firstVisibleModuleName(region, sourceSlot) {
+    var entries = layoutEntries(region)
+    for (var i = 0; i < entries.length; i++) {
+      var name = entryId(entries[i])
+      if (visibleModuleSlot(region, name, sourceSlot)) return name
+    }
+
+    return ""
+  }
+
   function dropBarModuleAtTarget(sourceSlot, targetSlot, afterTarget) {
     if (!sourceSlot || !targetSlot) return false
 
     var beforeName = afterTarget ? nextVisibleModuleName(targetSlot.region, targetSlot.moduleName, sourceSlot) : targetSlot.moduleName
     return dropBarModule(sourceSlot, targetSlot.region, beforeName)
+  }
+
+  function dropBarModuleAt(sourceSlot, drop) {
+    if (!sourceSlot || !drop) return false
+    if (drop.slot) return dropBarModuleAtTarget(sourceSlot, drop.slot, drop.after)
+
+    var beforeName = drop.after ? "" : firstVisibleModuleName(drop.region, sourceSlot)
+    return dropBarModule(sourceSlot, drop.region, beforeName)
   }
 
   function moduleTargetClickable(target) {
@@ -1482,7 +1554,8 @@ Item {
 
         CenterModules {
           anchors.fill: parent
-          entries: barWindow.centerBesideRight ? [] : root.layoutEntries("center")
+          window: barWindow
+          drawn: !barWindow.centerBesideRight
         }
 
         LeftModules {
@@ -1498,15 +1571,19 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
         }
 
-        // Keeps the center region, so settings pushes, drag and drop, and panel
-        // routing still address it. The gap lets a drop at the seam land in
-        // the section the pointer is nearer to.
-        ModuleList {
-          entries: barWindow.centerBesideRight ? root.layoutEntries("center") : []
-          region: "center"
+        // Where a display notch covers the middle of the bar, the center
+        // sections run on just left of the right one. They keep their regions,
+        // so settings pushes, drag and drop, and panel routing still address
+        // them. The gap lets a drop at the seam land in the section the pointer
+        // is nearer to.
+        CenterSections {
+          window: barWindow
+          active: barWindow.centerBesideRight
+          besideRight: true
           anchors.right: rightModules.left
           anchors.rightMargin: Style.space(4)
-          anchors.verticalCenter: parent.verticalCenter
+          anchors.top: parent.top
+          anchors.bottom: parent.bottom
         }
       }
     }
@@ -1517,7 +1594,10 @@ Item {
       Item {
         anchors.fill: parent
 
-        CenterModules { anchors.fill: parent }
+        CenterModules {
+          anchors.fill: parent
+          window: barWindow
+        }
 
         LeftModules {
           anchors.top: parent.top
@@ -1657,11 +1737,6 @@ Item {
     }
   }
 
-  function findCenterAnchorEntry(entries) {
-    var idx = root.entryIndex(entries, root.centerAnchor)
-    return idx === -1 ? null : entries[idx]
-  }
-
   component LeftModules: ModuleList {
     entries: root.layoutEntries("left")
     region: "left"
@@ -1672,120 +1747,133 @@ Item {
     region: "right"
   }
 
+  // The gesture area under the whole bar, with the center sections drawn over
+  // it in the middle of it.
   component CenterModules: Item {
     id: centerRoot
 
-    property var entries: root.layoutEntries("center")
-    readonly property bool hasAnchor: root.entryIndex(entries, root.centerAnchor) !== -1
-    readonly property var anchorEntry: root.findCenterAnchorEntry(entries)
+    property var window: null
+    // False where a display notch has moved the center sections beside the
+    // right one.
+    property bool drawn: true
 
-    Loader {
+    CenterGestureArea { anchors.fill: parent }
+
+    CenterSections {
       anchors.fill: parent
-      sourceComponent: root.vertical ? verticalCenterModules : horizontalCenterModules
+      window: centerRoot.window
+      active: centerRoot.drawn
+    }
+  }
+
+  // The center box and the two sections hanging off its edges. In the middle
+  // of the bar the box is centered, and centerBegin and centerEnd grow away
+  // from it. Beside the right section the three run on as one, growing toward
+  // the start of the bar. Placed by hand rather than by a Row or Column, which
+  // cannot center one child and hang the others off it.
+  component CenterSections: Item {
+    id: sections
+
+    property var window: null
+    // Only one set of center sections per bar surface is active; the other
+    // builds nothing.
+    property bool active: true
+    property bool besideRight: false
+
+    implicitWidth: root.vertical ? root.barSize : beginList.width + centerBox.width + endList.width
+    implicitHeight: root.vertical ? beginList.height + centerBox.height + endList.height : root.barSize
+
+    ModuleList {
+      id: beginList
+      entries: sections.active ? root.layoutEntries("centerBegin") : []
+      region: "centerBegin"
+      x: root.vertical ? Math.round((sections.width - width) / 2) : centerBox.x - width
+      y: root.vertical ? centerBox.y - height : Math.round((sections.height - height) / 2)
     }
 
-    Component {
-      id: horizontalCenterModules
-
-      Item {
-        anchors.fill: parent
-
-        CenterGestureArea { anchors.fill: parent }
-
-        Item {
-          anchors.left: parent.left
-          anchors.right: centerRoot.hasAnchor ? centerAnchorModule.left : parent.right
-          anchors.top: parent.top
-          anchors.bottom: parent.bottom
-
-          HoverHandler {
-            onHoveredChanged: root.setCenterSectionHovered(hovered)
-          }
-        }
-
-        ModuleList {
-          visible: !centerRoot.hasAnchor
-          entries: centerRoot.entries
-          region: "center"
-          anchors.centerIn: parent
-        }
-
-        ModuleList {
-          visible: centerRoot.hasAnchor
-          entries: root.entriesBefore(centerRoot.entries, root.centerAnchor)
-          region: "center"
-          anchors.right: centerAnchorModule.left
-          anchors.verticalCenter: centerAnchorModule.verticalCenter
-        }
-
-        ModuleSlot {
-          id: centerAnchorModule
-          visible: centerRoot.hasAnchor
-          entry: centerRoot.anchorEntry
-          region: "center"
-          anchors.centerIn: parent
-        }
-
-        ModuleList {
-          visible: centerRoot.hasAnchor
-          entries: root.entriesAfter(centerRoot.entries, root.centerAnchor)
-          region: "center"
-          anchors.left: centerAnchorModule.right
-          anchors.verticalCenter: centerAnchorModule.verticalCenter
-        }
-      }
+    ModuleList {
+      id: endList
+      entries: sections.active ? root.layoutEntries("centerEnd") : []
+      region: "centerEnd"
+      x: root.vertical ? Math.round((sections.width - width) / 2) : centerBox.x + centerBox.width
+      y: root.vertical ? centerBox.y + centerBox.height : Math.round((sections.height - height) / 2)
     }
 
-    Component {
-      id: verticalCenterModules
+    CenterBox {
+      id: centerBox
+      window: sections.window
+      active: sections.active
+      fixedEdge: sections.besideRight ? "end" : "center"
+      crossSize: root.vertical ? sections.width : sections.height
+      x: root.vertical ? 0 : (sections.besideRight ? beginList.width : Math.round((sections.width - width) / 2))
+      y: root.vertical ? Math.round((sections.height - height) / 2) : 0
+    }
+  }
 
-      Item {
-        anchors.fill: parent
+  // The middle of the bar: the center section's widgets, centered as one
+  // group. Empty, it takes no room and the sections beside it meet in the
+  // middle of the bar, except during a drag, when it opens a sliver that a
+  // widget can be dropped into or beside. The outline it shows then grows to
+  // take in a widget that would land in it.
+  component CenterBox: Item {
+    id: box
 
-        CenterGestureArea { anchors.fill: parent }
+    property var window: null
+    property bool active: true
+    // The edge of the box that stays put as it grows: its middle, or its end
+    // where it runs on beside the right section.
+    property string fixedEdge: "center"
+    // The bar's thickness, which the drag outline spans.
+    property real crossSize: 0
+    readonly property bool dragHere: active && !!root.barDragSource && root.sameWindow(root.barDragWindow, window)
+    readonly property bool dropInto: dragHere && root.barDragRegion === "center"
+    readonly property real contentExtent: root.vertical ? boxList.height : boxList.width
+    readonly property real extent: Math.max(contentExtent, dragHere ? Style.space(4) : 0)
+    // A widget dropped in from another section grows the box by its own
+    // length, as much of it ahead of the box's start edge as the box would
+    // grow that way (BarModel.boxGrowLeadShare).
+    readonly property real previewGrow: {
+      var source = root.barDragSource
+      if (!dropInto || !source || source.region === "center") return 0
+      return root.vertical ? source.height : source.width
+    }
+    readonly property real leadShare: BarModel.boxGrowLeadShare(fixedEdge, root.barDragSource ? root.barDragSource.region : "")
+    readonly property real previewLead: previewGrow * leadShare
+    property real shownGrow: previewGrow
+    readonly property real shownLead: shownGrow * leadShare
 
-        Item {
-          anchors.left: parent.left
-          anchors.right: parent.right
-          anchors.top: parent.top
-          anchors.bottom: centerRoot.hasAnchor ? centerAnchorModule.top : parent.bottom
+    Behavior on shownGrow {
+      NumberAnimation { duration: Style.duration(120); easing.type: Easing.OutCubic }
+    }
 
-          HoverHandler {
-            onHoveredChanged: root.setCenterSectionHovered(hovered)
-          }
-        }
+    width: root.vertical ? crossSize : extent
+    height: root.vertical ? extent : crossSize
+    // Its drag outline can grow over the sections beside it.
+    z: 1
 
-        ModuleList {
-          visible: !centerRoot.hasAnchor
-          entries: centerRoot.entries
-          region: "center"
-          anchors.centerIn: parent
-        }
+    Component.onCompleted: root.registerCenterBox(box)
+    Component.onDestruction: root.unregisterCenterBox(box)
 
-        ModuleList {
-          visible: centerRoot.hasAnchor
-          entries: root.entriesBefore(centerRoot.entries, root.centerAnchor)
-          region: "center"
-          anchors.bottom: centerAnchorModule.top
-          anchors.horizontalCenter: centerAnchorModule.horizontalCenter
-        }
+    ModuleList {
+      id: boxList
+      entries: box.active ? root.layoutEntries("center") : []
+      region: "center"
+      x: Math.round((box.width - width) / 2)
+      y: Math.round((box.height - height) / 2)
+    }
 
-        ModuleSlot {
-          id: centerAnchorModule
-          visible: centerRoot.hasAnchor
-          entry: centerRoot.anchorEntry
-          region: "center"
-          anchors.centerIn: parent
-        }
+    BorderSurface {
+      readonly property int inset: Style.space(2)
 
-        ModuleList {
-          visible: centerRoot.hasAnchor
-          entries: root.entriesAfter(centerRoot.entries, root.centerAnchor)
-          region: "center"
-          anchors.top: centerAnchorModule.bottom
-          anchors.horizontalCenter: centerAnchorModule.horizontalCenter
-        }
-      }
+      visible: box.dragHere
+      x: root.vertical ? inset : -box.shownLead
+      y: root.vertical ? -box.shownLead : inset
+      width: root.vertical ? box.width - inset * 2 : box.width + box.shownGrow
+      height: root.vertical ? box.height + box.shownGrow : box.height - inset * 2
+      color: "transparent"
+      borderSpec: Border.flat(box.dropInto ? Commons.Color.accent : root.barForeground, 1)
+      radius: Math.min(Style.cornerRadius, Math.min(width, height) / 2)
+      opacity: box.dropInto ? 1 : 0.5
     }
   }
 
@@ -1878,11 +1966,11 @@ Item {
     property string region: ""
 
     visible: entries.length > 0
-    // A hidden list must not build its modules. The center section declares
-    // both an anchored and an unanchored arrangement and shows whichever
-    // fits, so leaving the other one loaded mounts every center module
-    // twice — two IPC handlers registered for the same target, two clocks
-    // ticking, two of every timer and fetch behind them.
+    // A hidden list must not build its modules. Each bar surface declares the
+    // center sections twice, in the middle of the bar and beside the right
+    // section, and draws one of them; building both would mount every center
+    // module twice — two IPC handlers registered for the same target, two
+    // clocks ticking, two of every timer and fetch behind them.
     active: visible && entries.length > 0
     sourceComponent: root.vertical ? verticalModuleList : horizontalModuleList
     width: item ? item.implicitWidth : 0
@@ -2163,24 +2251,22 @@ Item {
           root.barDragScreenY = screenPoint.y
 
           var drop = root.moduleDropAtScene(scenePoint, slot)
-          root.barDragTarget = drop ? drop.slot : null
-          root.barDragAfter = drop ? drop.after : false
-          root.barDragTargetGeometry = drop ? root.dropMarkerRect(drop.slot, drop.after) : null
+          root.barDragTarget = drop
+          root.barDragTargetGeometry = root.dropMarkerFor(drop, slot)
         }
       }
 
       onReleased: function(mouse) {
         var wasDragging = dragging
-        var targetSlot = root.barDragTarget
-        var afterTarget = root.barDragAfter
+        var drop = root.barDragTarget
 
         if (wasDragging) suppressClick = true
 
         dragging = false
         root.clearBarDrag()
 
-        if (wasDragging && targetSlot) {
-          root.dropBarModuleAtTarget(slot, targetSlot, afterTarget)
+        if (wasDragging && drop) {
+          root.dropBarModuleAt(slot, drop)
           mouse.accepted = true
         } else if (!wasDragging) {
           mouse.accepted = false
