@@ -661,24 +661,10 @@ Item {
     return BarModel.normalizePosition(value)
   }
 
-  // Apply tray-pinning on top of the shared layout normalization so the
-  // bar host and scriptable config helpers can't drift on entry shape.
+  // The shared layout normalization, so the bar host and scriptable config
+  // helpers can't drift on entry shape.
   function normalizeLayout(layout) {
-    var normalized = Util.normalizeLayout(Util.isPlainObject(layout) ? layout : fallbackBarConfig.layout)
-    return {
-      left:   pinTrayToInner(normalized.left,   "left"),
-      center: pinTrayToInner(normalized.center, "center"),
-      right:  pinTrayToInner(normalized.right,  "right"),
-      tray:   normalized.tray
-    }
-  }
-
-  // The tray drawer reveals inward (away from the bar edge). Place it at the
-  // section's inner edge: start of the right section, end of the left/center
-  // sections. The drawer's reserved space then sits next to the bar center,
-  // not stranded mid-section.
-  function pinTrayToInner(entries, section) {
-    return BarModel.pinTrayToInner(entries, section)
+    return Util.normalizeLayout(Util.isPlainObject(layout) ? layout : fallbackBarConfig.layout)
   }
 
   function applyBarConfig() {

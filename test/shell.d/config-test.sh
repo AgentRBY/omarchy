@@ -48,14 +48,16 @@ jq -e '
 ' "$ROOT/config/omarchy/shell.json" >/dev/null
 pass "default clock date format has no leading zero"
 
+# The bar drew the tray first in the right section whatever the layout said
+# (migrations/1791968925.sh), so the default lists it there. Agents follow it,
+# past only the keyboard layout, which hides itself with a single layout.
 jq -e '
   def ids: map(.id // .);
   (.bar.layout.right | ids) as $ids |
-  ($ids | index("omarchy.tray")) as $tray |
   ($ids | index("omarchy.agents")) as $agents |
-  $tray != null and $agents == $tray + 1
-' "$ROOT/config/omarchy/shell.json" >/dev/null
-pass "default right layout keeps agents next to the tray"
+  $ids[0] == "omarchy.tray" and $agents != null and ($ids[1:$agents] - ["omarchy.keyboard-layout"]) == []
+' "$ROOT/config/omarchy/shell.json" >/dev/null || fail "default right layout starts with the tray, with agents beside it"
+pass "default right layout starts with the tray, with agents beside it"
 
 ROOT="$ROOT" python3 <<'PY'
 import json

@@ -313,9 +313,11 @@ assertDeepEqual(bar.entrySettings({ id: 'omarchy.clock', format: 'HH:mm' }), { f
 assertEqual(bar.entryId({ id: 'omarchy.clock' }), 'omarchy.clock', 'bar extracts object entry ids')
 assertEqual(bar.entryId('omarchy.clock'), 'omarchy.clock', 'bar extracts string entry ids')
 
+// The tray sits where the layout puts it, like any other widget, so the bar
+// reads in the order the panel hotkeys count.
+assert(!/pinTrayToInner/.test(barSource) && bar.pinTrayToInner === undefined, 'the bar keeps the tray where the layout puts it')
+
 const entries = [{ id: 'a' }, { id: 'omarchy.tray' }, { id: 'b' }]
-assertDeepEqual(bar.pinTrayToInner(entries, 'left').map(bar.entryId), ['a', 'b', 'omarchy.tray'], 'bar pins tray to left inner edge')
-assertDeepEqual(bar.pinTrayToInner(entries, 'right').map(bar.entryId), ['omarchy.tray', 'a', 'b'], 'bar pins tray to right inner edge')
 
 // A settings-only shell.json write must patch the live bar, not rebuild it:
 // the module Repeaters recreate every widget when their array model changes.

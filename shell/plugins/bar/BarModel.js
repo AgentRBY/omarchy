@@ -26,21 +26,6 @@ function entryId(entry) {
   return ""
 }
 
-function pinTrayToInner(entries, section) {
-  var trayEntry = null
-  var result = []
-  var values = Array.isArray(entries) ? entries : []
-  for (var i = 0; i < values.length; i++) {
-    if (entryId(values[i]) === "omarchy.tray") trayEntry = values[i]
-    else result.push(values[i])
-  }
-  if (trayEntry) {
-    if (section === "right") result.unshift(trayEntry)
-    else result.push(trayEntry)
-  }
-  return result
-}
-
 function moduleString(entry, key, fallback) {
   var settings = entrySettings(entry)
   var value = settings[key]
@@ -330,7 +315,6 @@ if (typeof module !== "undefined") {
     normalizePosition: normalizePosition,
     entrySettings: entrySettings,
     entryId: entryId,
-    pinTrayToInner: pinTrayToInner,
     moduleString: moduleString,
     entryIndex: entryIndex,
     entriesBefore: entriesBefore,
