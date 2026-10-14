@@ -286,7 +286,7 @@ Item {
             anchors.rightMargin: Style.spacing.controlPaddingX
             anchors.verticalCenter: parent.verticalCenter
             textFormat: Text.PlainText
-            text: root.filterText || "Search apps…"
+            text: root.filterText || Commons.I18n.t("dock.searchApps")
             color: Commons.Color.menu.text
             opacity: root.filterText ? 1 : 0.58
             font.family: Style.font.menuFamily
@@ -460,7 +460,7 @@ Item {
 
         MenuRow {
           visible: !!root.dock
-          text: menu.pinned ? "Remove from Dock" : "Keep in Dock"
+          text: menu.pinned ? Commons.I18n.t("dock.removeFromDock") : Commons.I18n.t("dock.keepInDock")
           onTriggered: {
             if (root.dock && menu.entry) root.dock.setPinned(String(menu.entry.id || ""), !menu.pinned)
             root.menuEntry = null

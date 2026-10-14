@@ -22,6 +22,7 @@ Item {
   property double nowMs: 0
   property bool hovered: false
   property bool hour24: false
+  property var words: null
   property real moonPhase: 0
   property color foreground: Commons.Color.foreground
   property color fainter: Qt.darker(foreground, 2.1)
@@ -66,8 +67,8 @@ Item {
     var out = []
     var up = Sun.eventMark(sun.riseMinutes)
     var down = Sun.eventMark(sun.setMinutes)
-    if (up !== null) out.push({ x: up, minutes: sun.riseMinutes, rising: true, name: "Sunrise" })
-    if (down !== null) out.push({ x: down, minutes: sun.setMinutes, rising: false, name: "Sunset" })
+    if (up !== null) out.push({ x: up, minutes: sun.riseMinutes, rising: true, label: Commons.I18n.t("elsewhen.sunriseAt") })
+    if (down !== null) out.push({ x: down, minutes: sun.setMinutes, rising: false, label: Commons.I18n.t("elsewhen.sunsetAt") })
     return out
   }
 
@@ -216,7 +217,8 @@ Item {
         visible: strip.shownChip === arrow.index
         delay: 0
         closePolicy: Popup.NoAutoClose
-        text: arrow.modelData.name + " " + Model.formatMinuteOfDay(arrow.modelData.minutes, strip.hour24)
+        text: arrow.modelData.label
+          .arg(Model.formatMinuteOfDay(arrow.modelData.minutes, strip.hour24, strip.words))
         fontFamily: strip.fontFamily
       }
     }

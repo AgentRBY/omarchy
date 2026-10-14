@@ -14,6 +14,10 @@ var DOCUMENT_EXTENSIONS = {
   pages: true, numbers: true, key: true
 }
 
+function translator(tr) {
+  return typeof tr === "function" ? tr : function(key, english) { return english }
+}
+
 function parseStatus(raw) {
   var text = String(raw || "").trim()
   if (text === "") return defaultStatus()
@@ -89,33 +93,34 @@ function formatPercent(value) {
   return number.toFixed(1).replace(/\.0$/, "") + "%"
 }
 
-function usageText(usedBytes, quotaBytes, quotaKnown) {
+function usageText(usedBytes, quotaBytes, quotaKnown, tr) {
   if (quotaKnown && Number(quotaBytes || 0) > 0) {
-    return formatBytes(usedBytes) + " of " + formatBytes(quotaBytes)
+    return translator(tr)("dropbox.usedOfQuota", "%1 of %2").replace("%1", formatBytes(usedBytes)).replace("%2", formatBytes(quotaBytes))
   }
   return formatBytes(usedBytes)
 }
 
-function relativeTime(timestampSec, nowMs) {
+function relativeTime(timestampSec, nowMs, tr) {
+  var t = translator(tr)
   var ts = Number(timestampSec || 0)
-  if (!isFinite(ts) || ts <= 0) return "Unknown time"
-  var now = nowMs === undefined ? Date.now() : Number(nowMs)
+  if (!isFinite(ts) || ts <= 0) return t("dropbox.unknownTime", "Unknown time")
+  var now = nowMs === undefined || nowMs === null ? Date.now() : Number(nowMs)
   var diff = Math.max(0, Math.floor((now - ts * 1000) / 1000))
-  if (diff < 60) return "Just now"
+  if (diff < 60) return t("dropbox.justNow", "Just now")
   var minutes = Math.floor(diff / 60)
-  if (minutes < 60) return minutes + "m ago"
+  if (minutes < 60) return t("dropbox.minutesAgo", "%1m ago").replace("%1", minutes)
   var hours = Math.floor(minutes / 60)
-  if (hours < 24) return hours + "h ago"
+  if (hours < 24) return t("dropbox.hoursAgo", "%1h ago").replace("%1", hours)
   var days = Math.floor(hours / 24)
-  if (days < 30) return days + "d ago"
+  if (days < 30) return t("dropbox.daysAgo", "%1d ago").replace("%1", days)
   var months = Math.floor(days / 30)
-  if (months < 12) return months + "mo ago"
-  return Math.floor(days / 365) + "y ago"
+  if (months < 12) return t("dropbox.monthsAgo", "%1mo ago").replace("%1", months)
+  return t("dropbox.yearsAgo", "%1y ago").replace("%1", Math.floor(days / 365))
 }
 
-function fileMeta(file, nowMs) {
+function fileMeta(file, nowMs, tr) {
   if (!file) return ""
-  var parts = [relativeTime(file.modifiedTs, nowMs)]
+  var parts = [relativeTime(file.modifiedTs, nowMs, tr)]
   var folder = String(file.folder || "")
   if (folder !== "") parts.push(folder)
   return parts.join(" · ")

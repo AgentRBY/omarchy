@@ -473,7 +473,7 @@ BarWidget {
             if (tt) return tt
             var id = String(modelData.id || "")
             var slash = id.lastIndexOf("/")
-            return slash !== -1 ? id.substring(slash + 1) : (id || "Unknown")
+            return slash !== -1 ? id.substring(slash + 1) : (id || Commons.I18n.t("tray.unknown"))
           }
           readonly property bool isPinned: root.pinnedIds.indexOf(itemId) !== -1
           readonly property bool isHidden: root.hiddenIds.indexOf(itemId) !== -1
@@ -506,7 +506,7 @@ BarWidget {
             anchors.verticalCenter: parent.verticalCenter
             anchors.right: parent.right
             iconText: "\uf08d"
-            text: rowRoot.isPinned ? "Unpin" : "Pin"
+            text: rowRoot.isPinned ? Commons.I18n.t("tray.unpin") : Commons.I18n.t("tray.pin")
             foreground: root.foreground
             horizontalPadding: 8
             verticalPadding: 3
@@ -521,7 +521,7 @@ BarWidget {
             anchors.right: rowPinBtn.left
             anchors.rightMargin: Style.space(6)
             iconText: "\uf06e"
-            text: rowRoot.isHidden ? "Show" : "Hide"
+            text: rowRoot.isHidden ? Commons.I18n.t("tray.show") : Commons.I18n.t("tray.hide")
             foreground: root.foreground
             horizontalPadding: 8
             verticalPadding: 3

@@ -155,7 +155,7 @@ BarWidget {
 
           Text {
             textFormat: Text.PlainText
-            text: root.title || "Nothing playing"
+            text: root.title || I18n.t("media.nothingPlaying")
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.subtitle
@@ -245,7 +245,7 @@ BarWidget {
             readonly property var player: modelData
             readonly property bool selected: root.activePlayer && player
               && root.mediaService.playerKey(root.activePlayer) === root.mediaService.playerKey(player)
-            readonly property string sourceTitle: player ? (player.trackTitle || player.identity || player.desktopEntry || "Media source") : "Media source"
+            readonly property string sourceTitle: player ? (player.trackTitle || player.identity || player.desktopEntry || I18n.t("media.mediaSource")) : I18n.t("media.mediaSource")
             readonly property string sourceDetail: player && player.trackArtist ? player.trackArtist : (player && player.identity ? player.identity : "")
 
             width: sourceList.width

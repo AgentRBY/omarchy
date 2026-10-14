@@ -224,7 +224,7 @@ if [[ -d $HOME/.hermes || -d $HOME/.config/Hermes ]] && [[ -t 0 ]]; then
   # du answers non-zero when either directory is missing, and pipefail would
   # turn that into an aborted removal; the size is worth no such thing.
   size=$(du -shc "$HOME/.hermes" "$HOME/.config/Hermes" 2>/dev/null | tail -1 | cut -f1 || true)
-  if gum confirm --default=false "Also delete ~/.hermes and ~/.config/Hermes ($size: chats, memories, skills, connections and tokens)?"; then
+  if gum confirm --default=false --affirmative "$(omarchy-i18n common.yes)" --negative "$(omarchy-i18n common.no)" "$(omarchy-i18n hermes.deleteData "$size")"; then
     hermes_holders stop
     rm -rf "$HOME/.hermes" "$HOME/.config/Hermes"
     data_removed=true

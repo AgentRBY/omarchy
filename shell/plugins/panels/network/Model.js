@@ -86,8 +86,9 @@ function headerDetail(info) {
   return ""
 }
 
-function bandLabel(band) {
-  if (band === "auto") return "Auto"
+function bandLabel(band, tr) {
+  var t = typeof tr === "function" ? tr : function(key, english) { return english }
+  if (band === "auto") return t("network.bandAuto", "Auto")
   if (!band) return ""
   return band + "ghz"
 }
@@ -95,19 +96,21 @@ function bandLabel(band) {
 // Under Automatic the pills are hidden, so the header carries the live band
 // instead -- "WI-FI BAND: 2.4GHZ". Once a band is pinned the pills are on
 // screen and say it themselves, so the header drops back to a plain label.
-function bandSectionTitle(selected, current) {
-  if (selected !== "auto") return "WI-FI BAND"
+function bandSectionTitle(selected, current, tr) {
+  var t = typeof tr === "function" ? tr : function(key, english) { return english }
+  if (selected !== "auto") return t("network.wifiBand", "WI-FI BAND")
 
-  var label = bandLabel(current)
-  if (label === "") return "WI-FI BAND"
+  var label = bandLabel(current, tr)
+  if (label === "") return t("network.wifiBand", "WI-FI BAND")
 
-  return "WI-FI BAND: " + label.toUpperCase()
+  return t("network.wifiBandCurrent", "WI-FI BAND: %1").replace("%1", label.toUpperCase())
 }
 
-function bandTooltip(band) {
-  if (band === "auto") return "Let Wi-Fi pick the band"
+function bandTooltip(band, tr) {
+  var t = typeof tr === "function" ? tr : function(key, english) { return english }
+  if (band === "auto") return t("network.bandAutoTooltip", "Let Wi-Fi pick the band")
   if (!band) return ""
-  return "Stay on " + bandLabel(band)
+  return t("network.stayOnBand", "Stay on %1").replace("%1", bandLabel(band, tr))
 }
 
 function parseBandStatus(raw) {
@@ -291,11 +294,12 @@ function formatRate(bytesPerSec) {
 // `hasSamples` false means no probe has come back yet, which is different from
 // a probe that timed out. The rows stay mounted through that gap and read "--"
 // so the grid doesn't reflow a second after the panel opens.
-function formatPingLatency(ms, hasSamples) {
+function formatPingLatency(ms, hasSamples, tr) {
+  var t = typeof tr === "function" ? tr : function(key, english) { return english }
   if (hasSamples === false) return "--"
 
   var value = parseFloat(ms)
-  if (!isFinite(value) || value < 0) return "Timeout"
+  if (!isFinite(value) || value < 0) return t("network.timeout", "Timeout")
   return value.toFixed(value > 0 && value < 10 ? 1 : 0) + " ms"
 }
 
@@ -325,15 +329,16 @@ function sortWifiRows(rows) {
   return nets
 }
 
-function wifiSectionTitle(wifiNetworks, index) {
+function wifiSectionTitle(wifiNetworks, index, tr) {
+  var t = typeof tr === "function" ? tr : function(key, english) { return english }
   var networks = Array.isArray(wifiNetworks) ? wifiNetworks : []
   if (index < 0 || index >= networks.length) return ""
 
   var net = networks[index]
   if (!net) return ""
 
-  if (net.known && index === 0) return "KNOWN NETWORKS"
-  if (!net.known && (index === 0 || (networks[index - 1] && networks[index - 1].known))) return "OTHER NETWORKS"
+  if (net.known && index === 0) return t("network.knownNetworks", "KNOWN NETWORKS")
+  if (!net.known && (index === 0 || (networks[index - 1] && networks[index - 1].known))) return t("network.otherNetworks", "OTHER NETWORKS")
   return ""
 }
 
@@ -363,14 +368,15 @@ var enterpriseConnectScript =
   " && nmcli connection up uuid \"$u\"" +
   " || { nmcli connection delete uuid \"$u\" >/dev/null 2>&1; false; }"
 
-function networkFailureReason(reason, needsCredentials, reasons) {
+function networkFailureReason(reason, needsCredentials, reasons, tr) {
+  var t = typeof tr === "function" ? tr : function(key, english) { return english }
   var r = reasons || {}
-  if (needsCredentials && reason === r.NoSecrets) return "Passphrase required"
-  if (needsCredentials && reason === r.WifiAuthTimeout) return "Wrong password"
-  if (reason === r.WifiNetworkLost) return "Network lost"
-  if (reason === r.WifiClientDisconnected) return "Disconnected"
-  if (reason === r.WifiClientFailed) return "Connection failed"
-  return "Failed to connect"
+  if (needsCredentials && reason === r.NoSecrets) return t("network.passphraseRequired", "Passphrase required")
+  if (needsCredentials && reason === r.WifiAuthTimeout) return t("network.wrongPassword", "Wrong password")
+  if (reason === r.WifiNetworkLost) return t("network.networkLost", "Network lost")
+  if (reason === r.WifiClientDisconnected) return t("network.disconnected", "Disconnected")
+  if (reason === r.WifiClientFailed) return t("network.connectionFailed", "Connection failed")
+  return t("network.failedToConnect", "Failed to connect")
 }
 
 // Whether a failed connect should reopen the passphrase prompt. NoSecrets

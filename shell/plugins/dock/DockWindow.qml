@@ -536,7 +536,7 @@ PanelWindow {
       width: menu.width - menu.contentLeftInset - menu.contentRightInset
 
       Repeater {
-        model: [["top", "Top"], ["bottom", "Bottom"], ["left", "Left"], ["right", "Right"]]
+        model: [["top", Commons.I18n.t("dock.positionTop")], ["bottom", Commons.I18n.t("dock.positionBottom")], ["left", Commons.I18n.t("dock.positionLeft")], ["right", Commons.I18n.t("dock.positionRight")]]
 
         delegate: MenuRow {
           required property var modelData
@@ -563,7 +563,7 @@ PanelWindow {
 
       MenuRow {
         visible: menu.hasEntry
-        text: menu.item && menu.item.pinned ? "Remove from Dock" : "Keep in Dock"
+        text: menu.item && menu.item.pinned ? Commons.I18n.t("dock.removeFromDock") : Commons.I18n.t("dock.keepInDock")
         onTriggered: window.dock.setPinned(menu.item.key, !menu.item.pinned)
       }
 

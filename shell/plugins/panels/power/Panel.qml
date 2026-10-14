@@ -55,7 +55,7 @@ Panel {
 
   function modeLabel() {
     var device = UPower.displayDevice
-    return Model.modeLabel(device, root.discharging, upowerStates())
+    return Model.modeLabel(device, root.discharging, upowerStates(), Commons.I18n.t)
   }
 
   function profileIcon(name) {
@@ -95,26 +95,26 @@ Panel {
   // Cute agent-flavored phrases shown in the hero status line, rotated on a
   // timer so the panel feels alive when current is flowing (either direction).
   readonly property var chargingPhrases: [
-    "Pumping power",
-    "Injecting electrons",
-    "Pouring juice",
-    "Amassing watts",
-    "Hoarding joules",
-    "Sucking volts",
-    "Topping reserves",
-    "Soaking amps",
-    "Inhaling kilowatts"
+    Commons.I18n.t("power.chargingPhrase1"),
+    Commons.I18n.t("power.chargingPhrase2"),
+    Commons.I18n.t("power.chargingPhrase3"),
+    Commons.I18n.t("power.chargingPhrase4"),
+    Commons.I18n.t("power.chargingPhrase5"),
+    Commons.I18n.t("power.chargingPhrase6"),
+    Commons.I18n.t("power.chargingPhrase7"),
+    Commons.I18n.t("power.chargingPhrase8"),
+    Commons.I18n.t("power.chargingPhrase9")
   ]
   readonly property var onBatteryPhrases: [
-    "Slurping power",
-    "Spending joules",
-    "Draining watts",
-    "Burning electrons",
-    "Sipping juice",
-    "Spending coulombs",
-    "Bleeding amps",
-    "Guzzling volts",
-    "Munching reserves"
+    Commons.I18n.t("power.dischargingPhrase1"),
+    Commons.I18n.t("power.dischargingPhrase2"),
+    Commons.I18n.t("power.dischargingPhrase3"),
+    Commons.I18n.t("power.dischargingPhrase4"),
+    Commons.I18n.t("power.dischargingPhrase5"),
+    Commons.I18n.t("power.dischargingPhrase6"),
+    Commons.I18n.t("power.dischargingPhrase7"),
+    Commons.I18n.t("power.dischargingPhrase8"),
+    Commons.I18n.t("power.dischargingPhrase9")
   ]
   property int phraseIndex: 0
 
@@ -128,7 +128,7 @@ Panel {
   readonly property bool rotatingPhrases: activePhrases.length > 0
 
   readonly property string heroStatusText: {
-    if (fullyCharged) return "Fully charged"
+    if (fullyCharged) return Commons.I18n.t("power.fullyCharged")
     if (rotatingPhrases) return activePhrases[phraseIndex % activePhrases.length]
     return modeLabel()
   }
@@ -444,12 +444,12 @@ Panel {
             width: (parent.width - parent.spacing) / 2
             spacing: Style.spacing.labelGap
             InfoPair {
-              label: root.chargeThresholdActive ? "Charge limit" : (root.discharging ? "Time left" : "Time to full")
+              label: root.chargeThresholdActive ? Commons.I18n.t("power.chargeLimit") : (root.discharging ? Commons.I18n.t("power.timeLeft") : Commons.I18n.t("power.timeToFull"))
               value: root.chargeThresholdActive ? (root.batteryInfo.threshold || "-") : (root.batteryFlowIdle ? "-" : (root.batteryInfo.time || "—"))
             }
             InfoPair {
-              label: root.chargeThresholdActive ? "Battery state" : (root.discharging ? "Discharging" : "Charging")
-              value: root.chargeThresholdActive ? "Holding" : (root.batteryFull ? "-" : (root.batteryInfo.rate || ""))
+              label: root.chargeThresholdActive ? Commons.I18n.t("power.batteryState") : (root.discharging ? Commons.I18n.t("power.discharging") : Commons.I18n.t("power.charging"))
+              value: root.chargeThresholdActive ? Commons.I18n.t("power.holding") : (root.batteryFull ? "-" : (root.batteryInfo.rate || ""))
             }
           }
         }
@@ -486,7 +486,7 @@ Panel {
                 width: profileRow.cellWidth
                 iconText: root.profileIcon(String(modelData))
                 iconSize: Style.font.title
-                text: String(modelData).charAt(0).toUpperCase() + String(modelData).slice(1)
+                text: Model.profileLabel(modelData, Commons.I18n.t)
                 fontSize: Style.font.bodySmall
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily

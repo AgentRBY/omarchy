@@ -8,7 +8,7 @@ set -e
 voxtype_lib_path="${OMARCHY_VOXTYPE_LIB_PATH:-/usr/lib/voxtype}"
 
 if omarchy-cmd-missing voxtype; then
-  if gum confirm "Install Voxtype + AI model (~150MB) to enable dictation?"; then
+  if gum confirm --affirmative "$(omarchy-i18n common.yes)" --negative "$(omarchy-i18n common.no)" "$(omarchy-i18n dictation.installVoxtype)"; then
     omarchy-pkg-add wtype voxtype-bin
   else
     exit 0

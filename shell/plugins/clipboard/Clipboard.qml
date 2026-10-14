@@ -439,7 +439,7 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: root.filterText || "Search clipboard…"
+            text: root.filterText || Commons.I18n.t("clipboard.search")
             color: root.foreground
             opacity: root.filterText ? 1 : 0.58
             font.family: root.fontFamily
@@ -598,7 +598,7 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              text: root.history.length === 0 ? "Clipboard is empty" : "No matches for “" + root.filterText + "”"
+              text: root.history.length === 0 ? Commons.I18n.t("clipboard.empty") : Commons.I18n.t("common.noMatchesFor").arg(root.filterText)
               color: root.foreground
               opacity: 0.7
               font.family: root.fontFamily

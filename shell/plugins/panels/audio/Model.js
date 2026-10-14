@@ -87,12 +87,14 @@ function nodeProps(node) {
   return node && node.ready && node.properties ? node.properties : {}
 }
 
-function nodeLabel(node) {
-  if (!node) return "Unknown"
+// tr as in outputVolumeName; only the fallback for a nameless device is UI copy.
+function nodeLabel(node, tr) {
+  var t = typeof tr === "function" ? tr : function(key, english) { return english }
+  if (!node) return t("audio.unknownDevice", "Unknown")
   var p = nodeProps(node)
   var nickname = friendlyDeviceLabel(node.nickname || node.nick || p["node.nick"] || p["device.profile.description"] || "")
   if (nickname) return nickname
-  return friendlyDeviceLabel(node.description || p["node.description"] || node.name || "Unknown")
+  return friendlyDeviceLabel(node.description || p["node.description"] || node.name || t("audio.unknownDevice", "Unknown"))
 }
 
 function isHeadphones(node) {
@@ -241,12 +243,14 @@ function unmatchedMprisStreamLabel(label, players, streams) {
   })
 }
 
-function streamLabel(node, players, streams) {
-  if (!node) return "Stream"
+// Matching passes no tr, so a nameless stream compares as English everywhere.
+function streamLabel(node, players, streams, tr) {
+  var t = typeof tr === "function" ? tr : function(key, english) { return english }
+  if (!node) return t("audio.stream", "Stream")
   var label = rawStreamLabel(node)
   return friendlyStreamLabel(matchingMprisStreamLabel(label, players)
     || unmatchedMprisStreamLabel(label, players, streams)
-    || label) || "Stream"
+    || label) || t("audio.stream", "Stream")
 }
 
 function streamRepresentsPlayer(node, player, players, streams) {

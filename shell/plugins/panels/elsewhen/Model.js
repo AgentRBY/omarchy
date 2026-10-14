@@ -6,6 +6,27 @@ var DEFAULT_ZONES = "Los Angeles|America/Los_Angeles, Paris|Europe/Paris, Tokyo|
 var WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
+// Display words. QML passes `words` built from the shell's catalog (`t`) and
+// format locale (`am`, `pm`, `date(parts)`); without it, as under the Node
+// tests, everything reads in English.
+var ENGLISH_WORDS = {
+  t: function(key, english) { return english },
+  am: "AM",
+  pm: "PM",
+  date: function(parts) {
+    return WEEKDAYS[parts.weekday].slice(0, 3) + " " + MONTHS[parts.month] + " " + parts.day
+  }
+}
+
+function word(words, name) {
+  return words && words[name] !== undefined && words[name] !== null ? words[name] : ENGLISH_WORDS[name]
+}
+
+// Fills a catalog string's %1.
+function fill(text, value) {
+  return String(text).replace("%1", value)
+}
+
 // Keeps the list free of entries that could never name a zone.
 var ZONE_ID = /^[A-Za-z0-9_+\-\/]+$/
 
@@ -136,11 +157,13 @@ function dayDelta(parts, reference) {
   return Math.round((a - b) / 86400000)
 }
 
-function dayLabel(delta) {
+function dayLabel(delta, words) {
+  var t = word(words, "t")
   if (delta === 0) return ""
-  if (delta === 1) return "Tomorrow"
-  if (delta === -1) return "Yesterday"
-  return delta > 0 ? "+" + delta + " days" : delta + " days"
+  if (delta === 1) return t("elsewhen.tomorrow", "Tomorrow")
+  if (delta === -1) return t("elsewhen.yesterday", "Yesterday")
+  return delta > 0 ? fill(t("elsewhen.daysAhead", "+%1 days"), delta)
+                   : fill(t("elsewhen.daysBehind", "-%1 days"), -delta)
 }
 
 function pad2(n) {
@@ -154,19 +177,19 @@ function formatTime(parts, hour24) {
   return h + ":" + pad2(parts.minute)
 }
 
-function meridiem(parts) {
-  return parts.hour < 12 ? "AM" : "PM"
+function meridiem(parts, words) {
+  return parts.hour < 12 ? word(words, "am") : word(words, "pm")
 }
 
 // "14:05" or "2:05 PM" at a zone offset; "" before the offset is known.
-function formatClock(nowMs, offsetMinutes, hour24) {
+function formatClock(nowMs, offsetMinutes, hour24, words) {
   if (offsetMinutes === undefined || offsetMinutes === null) return ""
   var parts = zoneParts(nowMs, offsetMinutes)
-  return formatTime(parts, hour24) + (hour24 ? "" : " " + meridiem(parts))
+  return formatTime(parts, hour24) + (hour24 ? "" : " " + meridiem(parts, words))
 }
 
-function formatDate(parts) {
-  return WEEKDAYS[parts.weekday].slice(0, 3) + " " + MONTHS[parts.month] + " " + parts.day
+function formatDate(parts, words) {
+  return word(words, "date")(parts)
 }
 
 function isDaytime(parts) {
@@ -207,16 +230,17 @@ function inDaylight(progress) {
 }
 
 // "+9h" or "-3.5h" from the viewer's clock; "" on the viewer's own offset.
-function relativeOffsetLabel(zoneOffsetMinutes, localOffsetMinutes) {
+function relativeOffsetLabel(zoneOffsetMinutes, localOffsetMinutes, words) {
   var diff = Number(zoneOffsetMinutes) - Number(localOffsetMinutes)
   if (diff === 0) return ""
   var hours = diff / 60
   var text = (Math.round(hours * 10) / 10).toString()
-  return (diff > 0 ? "+" : "") + text + "h"
+  var t = word(words, "t")
+  return (diff > 0 ? "+" : "") + fill(t("elsewhen.hoursShort", "%1h"), text)
 }
 
 // Everything a row needs; `ready` is false until the zone has been probed.
-function rowFor(zone, probe, nowMs, localOffsetMinutes, hour24) {
+function rowFor(zone, probe, nowMs, localOffsetMinutes, hour24, words) {
   var info = probe ? probe[zone.id] : null
   if (!info) return { label: zone.label, id: zone.id, ready: false }
   var parts = zoneParts(nowMs, info.offsetMinutes)
@@ -230,22 +254,22 @@ function rowFor(zone, probe, nowMs, localOffsetMinutes, hour24) {
     offsetMinutes: info.offsetMinutes,
     time: formatTime(parts, hour24),
     hour: parts.hour,
-    meridiem: hour24 ? "" : meridiem(parts),
-    date: formatDate(parts),
-    dayLabel: dayLabel(delta),
+    meridiem: hour24 ? "" : meridiem(parts, words),
+    date: formatDate(parts, words),
+    dayLabel: dayLabel(delta, words),
     daytime: isDaytime(parts),
     phase: phaseFor(parts),
     lit: inDaylight(dayProgress(parts)),
     phaseLabel: phaseLabel(phaseFor(parts)),
     progress: dayProgress(parts),
-    relative: relativeOffsetLabel(info.offsetMinutes, localOffsetMinutes)
+    relative: relativeOffsetLabel(info.offsetMinutes, localOffsetMinutes, words)
   }
 }
 
-function rows(zones, probe, nowMs, localOffsetMinutes, hour24) {
+function rows(zones, probe, nowMs, localOffsetMinutes, hour24, words) {
   var out = []
   for (var i = 0; i < zones.length; i++)
-    out.push(rowFor(zones[i], probe, nowMs, localOffsetMinutes, hour24))
+    out.push(rowFor(zones[i], probe, nowMs, localOffsetMinutes, hour24, words))
   return out
 }
 
@@ -659,16 +683,16 @@ function scrubDeltaMinutes(fraction, cityLocalMinutes) {
 }
 
 // Round before splitting into hour and minute, and wrap after, so 419.8 is "7:00".
-function formatMinuteOfDay(minute, hour24) {
+function formatMinuteOfDay(minute, hour24, words) {
   var m = Math.round(Number(minute))
   m = ((m % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES
   var hour = Math.floor(m / 60)
-  return formatTime({ hour: hour, minute: m % 60 }, hour24)
-    + (hour24 ? "" : (hour < 12 ? " AM" : " PM"))
+  var parts = { hour: hour, minute: m % 60 }
+  return formatTime(parts, hour24) + (hour24 ? "" : " " + meridiem(parts, words))
 }
 
 // "+3h", "-45m", "" for now.
-function formatScrubDelta(minutes) {
+function formatScrubDelta(minutes, words) {
   var m = Math.round(minutes)
   if (m === 0) return ""
   var sign = m > 0 ? "+" : "-"
@@ -676,9 +700,10 @@ function formatScrubDelta(minutes) {
   // The arrow keys can run past a day, where hours alone stop reading well.
   var d = Math.floor(a / DAY_MINUTES), h = Math.floor(a % DAY_MINUTES / 60), rem = a % 60
   var parts = []
-  if (d) parts.push(d + "d")
-  if (h) parts.push(h + "h")
-  if (rem) parts.push(rem + "m")
+  var t = word(words, "t")
+  if (d) parts.push(fill(t("elsewhen.daysShort", "%1d"), d))
+  if (h) parts.push(fill(t("elsewhen.hoursShort", "%1h"), h))
+  if (rem) parts.push(fill(t("elsewhen.minutesShort", "%1m"), rem))
   return sign + parts.join(" ")
 }
 

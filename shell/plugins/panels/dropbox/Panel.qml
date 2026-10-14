@@ -317,7 +317,7 @@ Panel {
             Column {
               width: parent.width
               spacing: Style.spacing.labelGap
-              InfoPair { label: Commons.I18n.t("dropbox.stored"); value: Model.usageText(dropbox.usedBytes, dropbox.quotaBytes, dropbox.quotaKnown) }
+              InfoPair { label: Commons.I18n.t("dropbox.stored"); value: Model.usageText(dropbox.usedBytes, dropbox.quotaBytes, dropbox.quotaKnown, Commons.I18n.t) }
             }
           }
 
@@ -438,7 +438,7 @@ Panel {
         Text {
           textFormat: Text.PlainText
           Layout.fillWidth: true
-          text: dropbox.installed ? "Login to Dropbox" : "Dropbox CLI is not installed"
+          text: dropbox.installed ? Commons.I18n.t("dropbox.login") : Commons.I18n.t("dropbox.notInstalled")
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -448,7 +448,7 @@ Panel {
         Text {
           textFormat: Text.PlainText
           Layout.fillWidth: true
-          text: dropbox.installed ? "Start the authentication flow" : "Install Dropbox from the service menu"
+          text: dropbox.installed ? Commons.I18n.t("dropbox.loginHelp") : Commons.I18n.t("dropbox.installHelp")
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -471,7 +471,7 @@ Panel {
     id: fileRow
     property var file: null
     property int rowIndex: 0
-    readonly property string fileName: file ? String(file.name || "Untitled") : "Untitled"
+    readonly property string fileName: file ? String(file.name || Commons.I18n.t("dropbox.untitled")) : Commons.I18n.t("dropbox.untitled")
 
     hasCursor: root.cursorActive && root.focusSection === "files" && root.fileIndex === rowIndex
     foreground: root.foreground
@@ -521,7 +521,7 @@ Panel {
         Text {
           textFormat: Text.PlainText
           Layout.fillWidth: true
-          text: Model.fileMeta(fileRow.file)
+          text: Model.fileMeta(fileRow.file, undefined, Commons.I18n.t)
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

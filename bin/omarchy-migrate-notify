@@ -21,9 +21,9 @@ pending_migrations=$(omarchy-migrate --pending 2>/dev/null) || exit 0
 pending_count=$(printf '%s\n' "$pending_migrations" | sed '/^[[:space:]]*$/d' | wc -l)
 
 if (( pending_count == 1 )); then
-  message="Click to run 1 pending migration."
+  message=$(omarchy-i18n migrate.clickToRunOne)
 else
-  message="Click to run $pending_count pending migrations."
+  message=$(omarchy-i18n migrate.clickToRun "$pending_count")
 fi
 
 # This runs from omarchy-migrate-notify.service after graphical-session.target,

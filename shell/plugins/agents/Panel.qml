@@ -280,7 +280,7 @@ Panel {
 
   function startAdd(label) {
     addPrivate = (addChecks[addProvider] || "") === "additional"
-    addStatus = "Starting…"
+    addStatus = Commons.I18n.t("agents.starting")
     addCode = ""
     addUrl = ""
     // Claude's login offers pasting a code back whenever its page shows one,
@@ -306,7 +306,7 @@ Panel {
   function submitPaste(code) {
     if (!addProcess.running || code.trim() === "") return
     addProcess.write(code.trim() + "\n")
-    addStatus = "Checking the code…"
+    addStatus = Commons.I18n.t("agents.checkingCode")
   }
 
   // The add command's own lines are tagged; everything else is the CLI
@@ -415,7 +415,7 @@ Panel {
     var parts = []
     if (String(account.plan || "") !== "") parts.push(account.plan)
     if (account.resetCredits && Number(account.resetCredits.available) > 0)
-      parts.push(account.resetCredits.available + " free reset" + (Number(account.resetCredits.available) === 1 ? "" : "s"))
+      parts.push(freeResetsText(Number(account.resetCredits.available)))
     return parts.join(" · ")
   }
 
@@ -441,7 +441,7 @@ Panel {
     if (!p || addStage === "running") return
     addProvider = p.providerId
     addPrivate = !!account && account.primary !== true
-    addStatus = "Starting…"
+    addStatus = Commons.I18n.t("agents.starting")
     addCode = ""
     addUrl = ""
     // Claude's login offers pasting a code back whenever its page shows one,
@@ -458,14 +458,22 @@ Panel {
   function resetCreditsText(credits) {
     if (!credits || !(Number(credits.available) > 0)) return ""
     var count = Number(credits.available)
-    var text = count + " free reset" + (count === 1 ? "" : "s")
     var expires = new Date(String(credits.nextExpiresAt || "")).getTime()
-    if (isFinite(expires) && expires > nowMs) text += " · next expires in " + formatDuration(expires - nowMs)
-    return text
+    if (isFinite(expires) && expires > nowMs) {
+      return count === 1
+        ? Commons.I18n.t("agents.freeResetOneExpires").arg(formatDuration(expires - nowMs))
+        : Commons.I18n.t("agents.freeResetsExpires").arg(count).arg(formatDuration(expires - nowMs))
+    }
+    return freeResetsText(count)
+  }
+
+  function freeResetsText(count) {
+    return count === 1 ? Commons.I18n.t("agents.freeResetOne") : Commons.I18n.t("agents.freeResets").arg(count)
   }
 
   function planLabel(p) {
     var tier = String(p && p.tierLabel || "")
+    if (tier === "Prepaid") return Commons.I18n.t("agents.tierPrepaid")
     return tier === "" ? "" : tier.charAt(0).toUpperCase() + tier.slice(1)
   }
 
@@ -584,13 +592,78 @@ Panel {
   }
 
   function formatDuration(ms) {
-    if (!(ms > 0)) return "now"
+    if (!(ms > 0)) return Commons.I18n.t("agents.durationNow")
     var minutes = Math.floor(ms / 60000)
     var hours = Math.floor(minutes / 60)
     var days = Math.floor(hours / 24)
-    if (days > 0) return days + "d " + (hours % 24) + "h"
-    if (hours > 0) return hours + "h " + (minutes % 60) + "m"
-    return Math.max(1, minutes) + "m"
+    if (days > 0) return Commons.I18n.t("agents.durationDaysHours").arg(days).arg(hours % 24)
+    if (hours > 0) return Commons.I18n.t("agents.durationHoursMinutes").arg(hours).arg(minutes % 60)
+    return Commons.I18n.t("agents.durationMinutes").arg(Math.max(1, minutes))
+  }
+
+  // Window titles stay English in the records, where scopedPart() and the
+  // collectors match on them; only what reaches the screen is translated.
+  function windowDisplayTitle(title) {
+    var value = String(title || "")
+    if (value === "Session") return Commons.I18n.t("agents.windowSession")
+    if (value === "Weekly") return Commons.I18n.t("agents.windowWeekly")
+    if (value === "Monthly") return Commons.I18n.t("agents.windowMonthly")
+    if (value === "Limit") return Commons.I18n.t("agents.windowLimit")
+    var part = scopedPart(value)
+    if (part && part.window === "Session") return Commons.I18n.t("agents.modelSession").arg(part.model)
+    if (part && part.window === "Weekly") return Commons.I18n.t("agents.modelWeekly").arg(part.model)
+    if (part && part.window === "Monthly") return Commons.I18n.t("agents.modelMonthly").arg(part.model)
+    return value
+  }
+
+  function scopedAllowanceText(scoped, windowTitle) {
+    var percent = Math.round(scoped.percent * 100)
+    var value = String(windowTitle || "")
+    if (value === "Session") return Commons.I18n.t("agents.scopedSession").arg(scoped.title).arg(percent)
+    if (value === "Weekly") return Commons.I18n.t("agents.scopedWeekly").arg(scoped.title).arg(percent)
+    if (value === "Monthly") return Commons.I18n.t("agents.scopedMonthly").arg(scoped.title).arg(percent)
+    return Commons.I18n.t("agents.scopedOther").arg(scoped.title).arg(percent).arg(windowDisplayTitle(value))
+  }
+
+  // The collectors write a fixed English status; the ones that reach the
+  // screen are shown in the current language.
+  function statusDisplayText(status) {
+    var value = String(status || "")
+    if (value === "Balance unavailable") return Commons.I18n.t("agents.balanceUnavailable")
+    var limits = value.match(/^(.+) limits unavailable$/)
+    if (limits) return Commons.I18n.t("agents.providerLimitsUnavailable").arg(limits[1])
+    var provider = value.match(/^(.+) unavailable$/)
+    if (provider) return Commons.I18n.t("agents.providerUnavailable").arg(provider[1])
+    if (value === "Sign-in expired") return Commons.I18n.t("agents.signInExpired")
+    if (value === "Waiting for auth") return Commons.I18n.t("agents.waitingForAuth")
+    if (value === "Limits paused") return Commons.I18n.t("agents.limitsPaused")
+    return value
+  }
+
+  // The usage collectors cache their help lines in English, so the fixed
+  // ones are translated here; commands stay verbatim as arguments, and raw
+  // error text from a provider passes through as it came.
+  function helpDisplayText(text) {
+    var value = String(text || "")
+    switch (value) {
+    case "Run `claude auth login` to restore authoritative usage.":
+      return Commons.I18n.t("agents.helpRunToRestoreUsage").arg("`claude auth login`")
+    case "Run `codex login` to authenticate.":
+      return Commons.I18n.t("agents.helpRunToAuthenticate").arg("`codex login`")
+    case "Start Grok, or run `grok login`, to sign in.":
+      return Commons.I18n.t("agents.helpStartOrRunToSignIn").arg("Grok").arg("`grok login`")
+    case "Start Grok to see its limits; signing in again is not needed.":
+      return Commons.I18n.t("agents.helpStartToSeeLimits").arg("Grok")
+    case "Grok's saved sign-in expired. Start Grok to refresh it.":
+      return Commons.I18n.t("agents.helpSignInExpired").arg("Grok")
+    case "Set FIREWORKS_API_KEY, run `firectl set-api-key`, or sign in to Fireworks in pi or opencode.":
+      return Commons.I18n.t("agents.helpFireworksSignIn").arg("FIREWORKS_API_KEY").arg("`firectl set-api-key`")
+    case "codex not found in PATH":
+      return Commons.I18n.t("agents.helpNotInPath").arg("codex")
+    case "Fireworks usage scan failed":
+      return Commons.I18n.t("agents.helpScanFailed").arg("Fireworks")
+    }
+    return value
   }
 
   // ---------------------------------------------------------------- balance
@@ -620,9 +693,11 @@ Panel {
 
   function balanceDetailText(b) {
     if (!b || !(b.funded > 0)) return ""
-    var text = formatMoney(b.spent, b.currency) + " spent of " + formatMoney(b.funded, b.currency) + " funded"
-    if (b.estimated) text += " · estimated"
-    return text
+    var spent = formatMoney(b.spent, b.currency)
+    var funded = formatMoney(b.funded, b.currency)
+    return b.estimated
+      ? Commons.I18n.t("agents.balanceSpentEstimated").arg(spent).arg(funded)
+      : Commons.I18n.t("agents.balanceSpent").arg(spent).arg(funded)
   }
 
   // ---------------------------------------------------------------- summary
@@ -702,7 +777,7 @@ Panel {
     for (var i = 0; i < providers.length; i++) {
       var count = Number(providers[i].syncDeviceCount || 0)
       if (providers[i].syncEnabled && count > 0)
-        return "Merged from " + count + " device" + (count === 1 ? "" : "s")
+        return count === 1 ? Commons.I18n.t("agents.mergedOne") : Commons.I18n.t("agents.merged").arg(count)
     }
     return ""
   }
@@ -812,7 +887,7 @@ Panel {
     stdout: SplitParser { onRead: function(line) { root.handleAddLine(line) } }
     onExited: {
       if (root.addStage === "running") {
-        root.addResult = "The sign-in didn't finish."
+        root.addResult = Commons.I18n.t("agents.signInUnfinished")
         root.addStage = "error"
       }
     }
@@ -1358,7 +1433,7 @@ Panel {
       width: parent.width
       textFormat: Text.PlainText
       // Shown for the status, so a record with no help to offer says the status rather than nothing.
-      text: section.provider ? String(section.provider.authHelpText || section.provider.usageStatusText || "") : ""
+      text: section.provider ? (root.helpDisplayText(section.provider.authHelpText) || root.statusDisplayText(section.provider.usageStatusText) || "") : ""
       color: root.urgent
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -1767,7 +1842,7 @@ Panel {
             var detail = root.accountDetail(head.account)
             if (detail !== "") parts.push(detail)
             var trouble = root.otherTrouble(head.account)
-            if (trouble !== "") parts.push(trouble)
+            if (trouble !== "") parts.push(root.statusDisplayText(trouble))
             return parts.length > 0 ? "· " + parts.join(" · ") : ""
           }
           color: root.otherTrouble(head.account) !== "" ? root.urgent : root.dim
@@ -1859,7 +1934,7 @@ Panel {
         // With Autoswitch on, Use waits until the line is hovered or picked.
         TextLink {
           visible: !head.autoOn || useHover.hovered || head.picked
-          text: head.pickedKind === "account" ? "Use ⏎" : "Use"
+          text: Commons.I18n.t("agents.use") + (head.pickedKind === "account" ? " ⏎" : "")
           picked: head.pickedKind === "account"
           onClicked: root.useAccount(head.owner, head.account)
         }
@@ -1887,7 +1962,7 @@ Panel {
 
     PanelToolTip {
       visible: unavailableHover.hovered && unavailable.visible
-      text: unavailable.record ? String(unavailable.record.authHelpText || "Usage has not been updated yet.") : ""
+      text: unavailable.record ? (root.helpDisplayText(unavailable.record.authHelpText) || Commons.I18n.t("agents.usageNotUpdated")) : ""
     }
   }
 
@@ -1912,16 +1987,18 @@ Panel {
       text: {
         var lines = []
         if (compact.window) {
-          lines.push(compact.window.title + ": " + Math.round(compact.window.percent * 100) + "% used"
-            + (compact.resetMs > 0 ? " · resets in " + root.formatDuration(compact.resetMs) : ""))
+          var windowName = root.windowDisplayTitle(compact.window.title)
+          var used = Math.round(compact.window.percent * 100)
+          lines.push(compact.resetMs > 0
+            ? Commons.I18n.t("agents.windowUsedResets").arg(windowName).arg(used).arg(root.formatDuration(compact.resetMs))
+            : Commons.I18n.t("agents.windowUsed").arg(windowName).arg(used))
         }
         if (compact.stale)
           lines.push(compact.fetchedAt > 0 && root.nowMs - compact.fetchedAt > 60000
-            ? "Last updated " + root.formatDuration(root.nowMs - compact.fetchedAt) + " ago"
-            : compact.fetchedAt > 0 ? "Last updated less than a minute ago" : "Last updated time unavailable")
+            ? Commons.I18n.t("agents.lastUpdatedAgo").arg(root.formatDuration(root.nowMs - compact.fetchedAt))
+            : compact.fetchedAt > 0 ? Commons.I18n.t("agents.lastUpdatedJustNow") : Commons.I18n.t("agents.lastUpdatedUnknown"))
         for (var i = 0; i < compact.scoped.length; i++)
-          lines.push(compact.scoped[i].title + ": " + Math.round(compact.scoped[i].percent * 100) + "% of its "
-            + String(compact.window ? compact.window.title : "").toLowerCase() + " allowance")
+          lines.push(root.scopedAllowanceText(compact.scoped[i], compact.window ? compact.window.title : ""))
         return lines.join("\n")
       }
     }
@@ -1931,7 +2008,7 @@ Panel {
       textFormat: Text.PlainText
       width: parent.width * 0.3
       anchors.verticalCenter: parent.verticalCenter
-      text: compact.window ? compact.window.title : ""
+      text: compact.window ? root.windowDisplayTitle(compact.window.title) : ""
       color: root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall

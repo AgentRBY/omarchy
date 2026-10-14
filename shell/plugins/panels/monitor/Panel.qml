@@ -576,7 +576,7 @@ Panel {
                   if (root.brightnessAvailable) {
                     return root.brightnessName(brightnessSlider.dragging ? brightnessSlider.liveValue : root.brightnessPercent).toUpperCase()
                   }
-                  return "FIXED BRIGHTNESS"
+                  return Commons.I18n.t("monitor.fixedBrightness")
                 }
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
@@ -904,7 +904,9 @@ Panel {
 
       Text {
         textFormat: Text.PlainText
-        text: monitorRow.display.name + (monitorRow.display.focused ? " · focused" : "")
+        text: monitorRow.display.focused
+          ? Commons.I18n.t("monitor.displayFocused").arg(monitorRow.display.name)
+          : monitorRow.display.name
         color: root.bar.foreground
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.body

@@ -234,7 +234,7 @@ Panel {
   readonly property bool hasOutput: !!(volumeSink && volumeSink.audio)
   readonly property bool hasInput: !!(source && source.audio) || (inputViaWpctl && UntypedInput.known)
   readonly property bool anyAudible: (hasOutput && !outputMuted) || (hasInput && !inputMuted)
-  readonly property string toggleHint: anyAudible ? "Mute" : "Unmute"
+  readonly property string toggleHint: anyAudible ? Commons.I18n.t("audio.mute") : Commons.I18n.t("audio.unmute")
 
   readonly property color hoverFill: bar
     ? Style.hoverFillFor(bar.foreground, Commons.Color.accent)
@@ -583,7 +583,7 @@ Panel {
   }
 
   function nodeLabel(node) {
-    return Model.nodeLabel(node)
+    return Model.nodeLabel(node, Commons.I18n.t)
   }
 
   function nodeProps(node) {
@@ -649,7 +649,7 @@ Panel {
   // displayAudioStreams carries primitives now, and resolving each row back
   // would only rebuild what audioStreams already is.
   function streamLabel(node) {
-    return Model.streamLabel(node, mprisPlayers, audioStreams)
+    return Model.streamLabel(node, mprisPlayers, audioStreams, Commons.I18n.t)
   }
 
   function streamRepresentsPlayer(node, player) {

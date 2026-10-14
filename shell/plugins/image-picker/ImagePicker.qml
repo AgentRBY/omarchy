@@ -133,7 +133,7 @@ Item {
 
   function currentLabel() {
     var path = currentPath()
-    if (!path) return filterText ? "No matches" : ""
+    if (!path) return filterText ? Commons.I18n.t("common.noMatches") : ""
 
     return labelForPath(path)
   }

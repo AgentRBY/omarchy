@@ -183,7 +183,7 @@ Item {
       if (exitCode !== 0 || root.qrSize === 0) {
         root.qrSize = 0
         root.qrRows = []
-        if (root.error === "") root.error = "Could not generate the Wi-Fi QR code"
+        if (root.error === "") root.error = I18n.t("wifiqr.generateFailed")
       }
     }
   }
@@ -206,7 +206,7 @@ Item {
       if (root.pwExpectedStop) return
       if (!root.opened) return
       if (exitCode === 0 && root.password !== "") root.passwordVisible = true
-      else root.passwordError = "Could not read the Wi-Fi password"
+      else root.passwordError = I18n.t("wifiqr.passwordFailed")
     }
   }
 
@@ -343,7 +343,7 @@ Item {
             visible: root.showingQr && root.secured
             text: root.passwordError !== "" ? root.passwordError
               : root.passwordVisible ? root.password
-              : "Show password"
+              : I18n.t("wifiqr.showPassword")
             color: root.passwordError !== "" ? root.onScrimUrgent : root.onScrim
             opacity: root.passwordVisible || root.passwordError !== "" ? 1 : 0.6
             font.family: root.fontFamily

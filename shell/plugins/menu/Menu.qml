@@ -325,6 +325,14 @@ Item {
     "power-profiles": {
       script: "current=$(powerprofilesctl get 2>/dev/null); omarchy-powerprofiles-list 2>/dev/null | while read -r p; do [[ -z $p ]] && continue; printf '%s\\t%s\\t%s\\n' \"$p\" \"$p\" \"$current\"; done",
       icon: "\udb81\udc0b",
+      // Profile names are powerprofilesctl ids; only the label is translated,
+      // and the id stays searchable through searchTerms.
+      labelFor: function(value) {
+        if (value === "power-saver") return Commons.I18n.t("menu.powerProfilePowerSaver")
+        if (value === "balanced") return Commons.I18n.t("menu.powerProfileBalanced")
+        if (value === "performance") return Commons.I18n.t("menu.powerProfilePerformance")
+        return value
+      },
       actionFor: function(value) { return "omarchy-powerprofiles-set autodetect " + Util.shellQuote(value) }
     },
     // Rows carry a fourth field (the English name) so searching "danish"
@@ -417,7 +425,8 @@ Item {
       var line = lines[i].trim()
       if (!line) continue
       var parts = line.split("\t")
-      var label = parts[0] || ""
+      var rawLabel = parts[0] || ""
+      var label = spec.labelFor ? spec.labelFor(rawLabel) : rawLabel
       var value = parts[1] || parts[0] || ""
       var current = parts[2] || ""
       if (!label) continue
@@ -440,7 +449,7 @@ Item {
         action: spec.actionFor(value),
         provider: "",
         aliases: [],
-        searchTerms: parts[3] ? [parts[3]] : [],
+        searchTerms: (parts[3] ? [parts[3]] : []).concat(label !== rawLabel ? [rawLabel] : []),
         when: "",
         checked: "",
         disabled: "",
@@ -623,7 +632,7 @@ Item {
       displayModel.append({
         itemId: "dmenu.apply", disabled: false, kind: "dmenu", icon: "", iconFont: "",
         appIcon: "", appId: "", label: Commons.I18n.t("common.apply"), target: "",
-        detail: root.dmenuSelected.length + " selected", path: "", childCount: 0,
+        detail: Commons.I18n.t("menu.selectedCount").arg(root.dmenuSelected.length), path: "", childCount: 0,
         action: "", provider: "", score: -1, section: ""
       })
     }
@@ -674,7 +683,7 @@ Item {
     for (var i = 0; i < displayModel.count; i++) {
       var row = displayModel.get(i)
       if (row.itemId === "dmenu.apply") {
-        displayModel.setProperty(i, "detail", root.dmenuSelected.length + " selected")
+        displayModel.setProperty(i, "detail", Commons.I18n.t("menu.selectedCount").arg(root.dmenuSelected.length))
       } else if (row.kind === "dmenu") {
         var value = MenuModel.dmenuValue(root.dmenuOptions[Number(row.itemId.substring(6))])
         displayModel.setProperty(i, "icon", root.dmenuSelected.indexOf(value) !== -1 ? "✓" : "○")
@@ -956,7 +965,7 @@ Item {
   function openDmenu(payload) {
     requestSerial += 1
     mode = payload.mode === "input" ? "input" : "select"
-    dmenuPrompt = String(payload.prompt || (mode === "input" ? "Input" : "Select"))
+    dmenuPrompt = String(payload.prompt || (mode === "input" ? Commons.I18n.t("menu.inputPrompt") : Commons.I18n.t("menu.selectPrompt")))
     dmenuOptions = Array.isArray(payload.options) ? payload.options : []
     dmenuMultiple = mode === "select" && payload.multiple === true
     dmenuOnChange = dmenuMultiple && Array.isArray(payload.onChange)
@@ -1652,7 +1661,7 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              text: root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet"
+              text: root.filterText ? Commons.I18n.t("common.noMatchesFor").arg(root.filterText) : Commons.I18n.t("menu.nothingHere")
               color: root.foreground
               opacity: 0.7
               font.family: root.fontFamily

@@ -164,7 +164,7 @@ Item {
         var parsed = JSON.parse(raw)
         return { options: parsed, error: "" }
       } catch (e) {
-        return { options: [], error: "Options command emitted invalid JSON" }
+        return { options: [], error: Commons.I18n.t("multiSelect.invalidJson") }
       }
     }
     var out = []
@@ -206,7 +206,7 @@ Item {
       if (!root.loadingOptions) return
       optionsProcess.running = false
       root.loadingOptions = false
-      root.optionsError = "Options command timed out"
+      root.optionsError = Commons.I18n.t("multiSelect.timedOut")
     }
   }
 
@@ -247,7 +247,7 @@ Item {
       refreshTimeoutTimer.stop()
       if (exitCode !== 0) {
         root.loadingOptions = false
-        root.optionsError = "Options command exited " + exitCode
+        root.optionsError = Commons.I18n.t("multiSelect.exited").arg(exitCode)
       }
     }
   }
