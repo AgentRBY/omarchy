@@ -137,23 +137,23 @@ assert(
   'each bar surface decides the move from its own screen'
 )
 assert(
-  /CenterModules \{\s*anchors\.fill: parent\s*window: barWindow\s*drawn: !barWindow\.centerBesideRight\s*\}/.test(barSource),
+  /CenterModules \{\s*anchors\.fill: parent\s*window: barWindow\s*pool: horizontalPool\s*drawn: !barWindow\.centerBesideRight\s*\}/.test(barSource),
   'a moved center section draws nothing in the middle of the bar'
 )
 assert(
-  /CenterSections \{\s*window: barWindow\s*active: barWindow\.centerBesideRight\s*besideRight: true\s*anchors\.right: rightModules\.left\s*anchors\.rightMargin: Style\.space\(\d+\)/.test(barSource),
+  /CenterSections \{\s*window: barWindow\s*pool: horizontalPool\s*active: barWindow\.centerBesideRight\s*besideRight: true\s*anchors\.right: rightModules\.left\s*anchors\.rightMargin: Style\.space\(\d+\)/.test(barSource),
   'the center sections sit just left of the right section in their own regions'
 )
 // Each surface declares the center sections twice and draws one; the other
-// must build no widgets, or every center widget would run twice.
+// must show no widgets, or it would take them from the one drawn.
 const centerSections = barSource.slice(barSource.indexOf('component CenterSections'), barSource.indexOf('component CenterBox'))
 const centerBox = barSource.slice(barSource.indexOf('component CenterBox'), barSource.indexOf('component CenterGestureArea'))
 for (const region of ['centerBegin', 'centerEnd'])
-  assert(new RegExp(`entries: sections\\.active \\? root\\.layoutEntries\\("${region}"\\) : \\[\\]`).test(centerSections), `inactive center sections build nothing for ${region}`)
+  assert(new RegExp(`keys: sections\\.active \\? root\\.layoutWidgets\\.sections\\.${region} : \\[\\]`).test(centerSections), `inactive center sections show nothing for ${region}`)
 assert(
-  /entries: box\.active \? root\.layoutEntries\("center"\) : \[\]/.test(centerBox) &&
+  /keys: box\.active \? root\.layoutWidgets\.sections\.center : \[\]/.test(centerBox) &&
     /readonly property bool dragHere: active && /.test(centerBox),
-  'an inactive center box builds nothing and opens no drop sliver'
+  'an inactive center box shows nothing and takes no drops'
 )
 assert(
   /fixedEdge: sections\.besideRight \? "end" : "center"/.test(centerSections) &&

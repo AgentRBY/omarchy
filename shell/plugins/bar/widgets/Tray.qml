@@ -29,9 +29,14 @@ BarWidget {
   readonly property int trayItemGap: 0
   readonly property int trayJoinGap: 0
   // Bar widgets dragged into the tray section sit in the drawer after the
-  // app icons. The bar draws them into sectionHost, and its dropSpace is the
-  // empty place offered to drop the first one.
+  // app icons. The bar draws them into sectionHost, and outlines it while a
+  // widget is dragged, as it does the center box.
   property Item sectionHost: null
+  // The part of the tray section the drawer shows, in the tray ({ x, y,
+  // width, height }), or null while it shows none of it. It moves with the
+  // drawer's contents as they slide in and out, and is cut to the drawer as
+  // they are, so the bar's outline of it never reaches past the tray.
+  readonly property var sectionShown: trayContent.item ? trayContent.item.sectionShown : null
   readonly property int sectionCount: bar && bar.layoutConfig && Array.isArray(bar.layoutConfig.tray) ? bar.layoutConfig.tray.length : 0
   readonly property real sectionExtent: sectionHost ? (vertical ? sectionHost.implicitHeight : sectionHost.implicitWidth) : 0
   readonly property bool hasDrawer: allItems.length > 0 || sectionCount > 0 || barDragging
@@ -241,6 +246,17 @@ BarWidget {
     NumberAnimation { duration: Style.duration(root.animationDuration); easing.type: Easing.OutCubic }
   }
 
+  // The section from `start`, `length` long along the bar, as far as the
+  // drawer's clip from `clipStart`, `clipLength` long, shows it
+  // (TrayModel.shownSpan).
+  function shownSection(clipStart, clipLength, start, length) {
+    var span = TrayModel.shownSpan(clipStart, clipLength, start, length)
+    if (!span) return null
+    return vertical
+      ? { x: 0, y: span.start, width: barSize, height: span.length }
+      : { x: span.start, y: 0, width: span.length, height: barSize }
+  }
+
   Loader {
     id: trayContent
     anchors.fill: parent
@@ -254,6 +270,7 @@ BarWidget {
       id: horizontalTrayRoot
 
       readonly property int chevronWidth: root.hasDrawer ? expandIcon.implicitWidth : 0
+      readonly property var sectionShown: root.shownSection(drawerArea.x + trayClip.x, trayClip.width, drawerArea.x + trayClip.x + drawerContent.x + section.x, section.width)
 
       implicitWidth: pinnedRow.implicitWidth + chevronWidth + root.revealExtent
       implicitHeight: root.barSize
@@ -313,6 +330,7 @@ BarWidget {
             // Placed by hand: a Row leaves a child with no width where it
             // was, and an empty section has none.
             SectionArea {
+              id: section
               x: root.fixedAtStart ? 0 : trayIcons.width
               anchors.verticalCenter: parent.verticalCenter
             }
@@ -342,6 +360,7 @@ BarWidget {
       id: verticalTrayRoot
 
       readonly property int chevronHeight: root.hasDrawer ? expandIcon.implicitHeight : 0
+      readonly property var sectionShown: root.shownSection(drawerArea.y + trayClip.y, trayClip.height, drawerArea.y + trayClip.y + drawerContent.y + section.y, section.height)
 
       implicitWidth: root.barSize
       implicitHeight: pinnedCol.implicitHeight + chevronHeight + root.revealExtent
@@ -402,6 +421,7 @@ BarWidget {
             // Placed by hand: a Column leaves a child with no height where it
             // was, and an empty section has none.
             SectionArea {
+              id: section
               y: root.fixedAtStart ? 0 : trayIcons.height
               anchors.horizontalCenter: parent.horizontalCenter
             }
@@ -830,51 +850,18 @@ BarWidget {
     }
   }
 
-  // The tray section's place in the drawer: the bar parents its widgets here,
-  // and while a widget is dragged with none here yet, an empty slot shows
-  // where to drop it.
+  // The tray section's place in the drawer: the bar parents its widgets here.
+  // Empty, it takes no room.
   component SectionArea: Item {
     id: sectionArea
-    // The bar's widgets and the drop slot never show together, so both sit at
-    // the origin and the area takes the size of whichever is there.
     implicitWidth: childrenRect.width
     implicitHeight: childrenRect.height
-    // What the section's widgets take up. One hiding itself (an update badge
-    // with nothing to update) offers nowhere to drop, so that counts as empty.
-    readonly property real widgetsExtent: {
-      var size = 0
-      for (var i = 0; i < children.length; i++) {
-        var child = children[i]
-        if (child !== dropSpace && child.visible) size += root.vertical ? child.height : child.width
-      }
-      return size
-    }
-
-    property alias dropSpace: dropSpace
 
     Component.onCompleted: root.sectionHost = sectionArea
     // The bar can tear this area down after the widget itself is gone
     // (a plugin rescan destroys them in its own order), so unregister
     // only while the widget is still there to unregister from.
     Component.onDestruction: if (root && root.sectionHost === sectionArea) root.sectionHost = null
-
-    Item {
-      id: dropSpace
-      readonly property string region: "tray"
-      readonly property string moduleName: ""
-      visible: root.barDragging && sectionArea.widgetsExtent === 0
-      width: visible ? root.trayItemExtent : 0
-      height: visible ? root.trayItemExtent : 0
-
-      Rectangle {
-        anchors.fill: parent
-        anchors.margins: Style.space(4)
-        radius: Style.space(4)
-        color: "transparent"
-        border.width: 1
-        border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.45)
-      }
-    }
   }
 
   component TrayItem: Item {
