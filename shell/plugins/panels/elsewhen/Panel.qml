@@ -53,6 +53,8 @@ Panel {
     var locale = formatLocale
     return {
       t: Commons.I18n.t,
+      tn: Commons.I18n.tn,
+      fmt: Commons.I18n.formatNumber,
       am: locale.amText,
       pm: locale.pmText,
       date: function(parts) {
@@ -68,7 +70,7 @@ Panel {
 
   function offsetTextFor(rowData) {
     if (!rowData || !rowData.ready) return ""
-    return offsetMode === "utc" ? Model.utcOffsetLabel(rowData.offsetMinutes) : rowData.relative
+    return offsetMode === "utc" ? Model.utcOffsetLabel(rowData.offsetMinutes, words) : rowData.relative
   }
 
   // ---- state
@@ -359,7 +361,7 @@ Panel {
 
   readonly property string localTime: {
     var here = Model.localParts(effectiveMs)
-    var text = Model.formatTime(here, hour24)
+    var text = Model.formatTime(here, hour24, words)
     return hour24 ? text : text + " " + Model.meridiem(here, words)
   }
 
@@ -393,7 +395,8 @@ Panel {
     font.family: root.fontFamily
     font.pixelSize: Style.font.heading
     font.weight: Font.DemiBold
-    text: "00:00"
+    // In the language's digits, which are not all as wide as ASCII ones.
+    text: Model.formatTime({ hour: 0, minute: 0 }, true, root.words)
   }
 
   TextMetrics {
@@ -516,7 +519,7 @@ Panel {
 
   function utcLabelFor(zoneId) {
     var known = searchProbe[zoneId]
-    return known === undefined ? "" : Model.utcOffsetLabel(known.offsetMinutes)
+    return known === undefined ? "" : Model.utcOffsetLabel(known.offsetMinutes, words)
   }
 
   // Tracked cities, the city you are in (for the globe's home) and session cities.

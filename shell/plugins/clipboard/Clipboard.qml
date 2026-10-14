@@ -132,7 +132,7 @@ Item {
   }
 
   function rebuildDisplay() {
-    var rows = ClipboardHistory.displayRows(root.history, root.filterText, 50, Commons.I18n.t)
+    var rows = ClipboardHistory.displayRows(root.history, root.filterText, 50, Commons.I18n.t, Commons.I18n.tn, Commons.I18n.formatNumber)
 
     displayModel.clear()
     for (var i = 0; i < rows.length; i++) {

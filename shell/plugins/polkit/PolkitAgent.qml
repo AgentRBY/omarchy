@@ -221,6 +221,10 @@ Item {
 
   PanelWindow {
     id: panel
+    // Right-to-left languages read this window mirrored.
+    Binding { target: panel.contentItem; property: "LayoutMirroring.enabled"; value: Commons.I18n.rightToLeft }
+    Binding { target: panel.contentItem; property: "LayoutMirroring.childrenInherit"; value: true }
+
     visible: root.dialogVisible
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"

@@ -24,6 +24,7 @@ done
 # The confirmation prompt reads its text from the English catalog.
 mkdir -p "$SUDO_TEST_ROOT/default/i18n/en"
 cp "$ROOT/default/i18n/en/cli.json" "$SUDO_TEST_ROOT/default/i18n/en/cli.json"
+cp "$ROOT/default/i18n/plural.jq" "$ROOT/default/i18n/locales.json" "$SUDO_TEST_ROOT/default/i18n/"
 
 run_update() {
   SUDO_TEST_HOME="$test_home" \

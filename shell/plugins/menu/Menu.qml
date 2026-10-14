@@ -59,7 +59,7 @@ Item {
   // user's own rows and retitles always win.
   property string language: "en"
   property var menuCatalog: ({})
-  readonly property string languagePath: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/omarchy/language"
+  readonly property string languagePath: Quickshell.env("OMARCHY_LANGUAGE_FILE") || ((Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/omarchy/language")
   property var defaultMenuItems: []
   property var userMenuItems: []
   // Whether each file has answered once, loaded or (the user's) missing. At
@@ -632,7 +632,7 @@ Item {
       displayModel.append({
         itemId: "dmenu.apply", disabled: false, kind: "dmenu", icon: "", iconFont: "",
         appIcon: "", appId: "", label: Commons.I18n.t("common.apply"), target: "",
-        detail: Commons.I18n.t("menu.selectedCount").arg(root.dmenuSelected.length), path: "", childCount: 0,
+        detail: Commons.I18n.tn("menu.selectedCount", root.dmenuSelected.length).arg(Commons.I18n.formatNumber(root.dmenuSelected.length)), path: "", childCount: 0,
         action: "", provider: "", score: -1, section: ""
       })
     }
@@ -683,7 +683,7 @@ Item {
     for (var i = 0; i < displayModel.count; i++) {
       var row = displayModel.get(i)
       if (row.itemId === "dmenu.apply") {
-        displayModel.setProperty(i, "detail", Commons.I18n.t("menu.selectedCount").arg(root.dmenuSelected.length))
+        displayModel.setProperty(i, "detail", Commons.I18n.tn("menu.selectedCount", root.dmenuSelected.length).arg(Commons.I18n.formatNumber(root.dmenuSelected.length)))
       } else if (row.kind === "dmenu") {
         var value = MenuModel.dmenuValue(root.dmenuOptions[Number(row.itemId.substring(6))])
         displayModel.setProperty(i, "icon", root.dmenuSelected.indexOf(value) !== -1 ? "✓" : "○")
@@ -1328,7 +1328,7 @@ Item {
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
             event.accepted = true
-          } else if ((event.key === Qt.Key_Backspace || event.key === Qt.Key_Left) && !root.filterText) {
+          } else if ((event.key === Qt.Key_Backspace || Util.readingKey(event) === Qt.Key_Left) && !root.filterText) {
             root.goBack()
             event.accepted = true
           } else if (event.key === Qt.Key_Up) {
@@ -1343,7 +1343,7 @@ Item {
           } else if (event.key === Qt.Key_PageDown) {
             root.select(6)
             event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Right) {
+          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || Util.readingKey(event) === Qt.Key_Right) {
             if (root.dmenuActive) {
               if (root.mode === "input") root.applyDmenuSelection(root.filterText)
               else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
@@ -1545,7 +1545,8 @@ Item {
                 Text {
                   textFormat: Text.PlainText
                   width: parent.width
-                  text: row.detail
+                  // A parent path's separator points along the reading direction.
+                  text: Commons.I18n.rightToLeft && row.kind !== "dmenu" ? row.detail.replace(/ › /g, " ‹ ") : row.detail
                   visible: (root.filterText || row.kind === "dmenu") && row.detail.length > 0
                   color: root.foreground
                   opacity: 0.52
@@ -1576,7 +1577,7 @@ Item {
 
                 Text {
                   textFormat: Text.PlainText
-                  text: row.kind === "menu" || row.kind === "link" ? "›" : ""
+                  text: row.kind === "menu" || row.kind === "link" ? (Commons.I18n.rightToLeft ? "‹" : "›") : ""
                   color: row.hasCursor ? root.selectedText : root.foreground
                   opacity: row.kind === "menu" || row.kind === "link" ? 0.36 : 0
                   font.family: root.fontFamily

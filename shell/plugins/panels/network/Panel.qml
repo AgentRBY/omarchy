@@ -160,7 +160,7 @@ Panel {
   // Under Automatic there is nothing to pick, so the pills collapse away and
   // the header states the live band instead.
   readonly property bool bandPillsVisible: canSelectBand && bandPinned
-  readonly property string bandSectionTitle: Model.bandSectionTitle(bandEffective, bandCurrent, Commons.I18n.t)
+  readonly property string bandSectionTitle: Model.bandSectionTitle(bandEffective, bandCurrent, Commons.I18n.t, Commons.I18n.formatNumber)
   readonly property bool bandBusy: pendingBand !== ""
   // The speed test needs an interface to test, so its hero action only
   // appears once there is one.
@@ -280,11 +280,11 @@ Panel {
   }
 
   function bandLabel(band) {
-    return Model.bandLabel(band, Commons.I18n.t)
+    return Model.bandLabel(band, Commons.I18n.t, Commons.I18n.formatNumber)
   }
 
   function bandTooltip(band) {
-    return Model.bandTooltip(band, Commons.I18n.t)
+    return Model.bandTooltip(band, Commons.I18n.t, Commons.I18n.formatNumber)
   }
 
   // Single cursor model: exactly one highlighted spot across the whole
@@ -595,15 +595,15 @@ Panel {
   }
 
   function formatHeaderSpeed(mbps) {
-    return Model.formatHeaderSpeed(mbps)
+    return Model.formatHeaderSpeed(mbps, Commons.I18n.formatNumber)
   }
 
   function formatHeaderFreq(mhz) {
-    return Model.formatHeaderFreq(mhz)
+    return Model.formatHeaderFreq(mhz, Commons.I18n.formatNumber)
   }
 
   function headerDetail() {
-    return Model.headerDetail(info)
+    return Model.headerDetail(info, Commons.I18n.formatNumber)
   }
 
   function updateDetails(raw) {
@@ -655,19 +655,19 @@ Panel {
   }
 
   function formatBytes(bytes) {
-    return Model.formatBytes(bytes)
+    return Model.formatBytes(bytes, Commons.I18n.formatNumber)
   }
 
   function formatRate(bytesPerSec) {
-    return Model.formatRate(bytesPerSec)
+    return Model.formatRate(bytesPerSec, Commons.I18n.formatNumber)
   }
 
   function formatPingLatency(ms) {
-    return Model.formatPingLatency(ms, hasInternetPing, Commons.I18n.t)
+    return Model.formatPingLatency(ms, hasInternetPing, Commons.I18n.t, Commons.I18n.formatNumber)
   }
 
   function formatPacketLoss(percent) {
-    return Model.formatPacketLoss(percent, hasInternetPing)
+    return Model.formatPacketLoss(percent, hasInternetPing, Commons.I18n.formatNumber)
   }
 
   // Prefer a connected device: a machine can expose several NICs of the

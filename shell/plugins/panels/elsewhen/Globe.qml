@@ -203,7 +203,7 @@ Item {
   function offsetLabelFor(zone) {
     var off = offsets[zone]
     if (off === undefined) return ""
-    return offsetMode === "utc" ? Model.utcOffsetLabel(off)
+    return offsetMode === "utc" ? Model.utcOffsetLabel(off, words)
                                 : Model.relativeOffsetLabel(off, homeOffsetMinutes, words)
   }
 
@@ -588,7 +588,7 @@ Item {
     loading: root.jumpOptions.length === 0
     buttonText: Commons.I18n.t("elsewhen.jumpToCity")
     loadingText: Commons.I18n.t("elsewhen.loadingCities")
-    offsetLabel: function(zoneId) { return Model.utcOffsetLabel(root.offsets[zoneId]) }
+    offsetLabel: function(zoneId) { return Model.utcOffsetLabel(root.offsets[zoneId], root.words) }
     foreground: root.foreground
     dim: root.dim
     fainter: root.fainter

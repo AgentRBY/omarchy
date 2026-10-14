@@ -460,15 +460,14 @@ Panel {
     var count = Number(credits.available)
     var expires = new Date(String(credits.nextExpiresAt || "")).getTime()
     if (isFinite(expires) && expires > nowMs) {
-      return count === 1
-        ? Commons.I18n.t("agents.freeResetOneExpires").arg(formatDuration(expires - nowMs))
-        : Commons.I18n.t("agents.freeResetsExpires").arg(count).arg(formatDuration(expires - nowMs))
+      return Commons.I18n.tn("agents.freeResetsExpires", count)
+        .arg(Commons.I18n.formatNumber(count)).arg(formatDuration(expires - nowMs))
     }
     return freeResetsText(count)
   }
 
   function freeResetsText(count) {
-    return count === 1 ? Commons.I18n.t("agents.freeResetOne") : Commons.I18n.t("agents.freeResets").arg(count)
+    return Commons.I18n.tn("agents.freeResets", count).arg(Commons.I18n.formatNumber(count))
   }
 
   function planLabel(p) {
@@ -596,9 +595,9 @@ Panel {
     var minutes = Math.floor(ms / 60000)
     var hours = Math.floor(minutes / 60)
     var days = Math.floor(hours / 24)
-    if (days > 0) return Commons.I18n.t("agents.durationDaysHours").arg(days).arg(hours % 24)
-    if (hours > 0) return Commons.I18n.t("agents.durationHoursMinutes").arg(hours).arg(minutes % 60)
-    return Commons.I18n.t("agents.durationMinutes").arg(Math.max(1, minutes))
+    if (days > 0) return Commons.I18n.t("agents.durationDaysHours").arg(Commons.I18n.formatNumber(days)).arg(Commons.I18n.formatNumber(hours % 24))
+    if (hours > 0) return Commons.I18n.t("agents.durationHoursMinutes").arg(Commons.I18n.formatNumber(hours)).arg(Commons.I18n.formatNumber(minutes % 60))
+    return Commons.I18n.t("agents.durationMinutes").arg(Commons.I18n.formatNumber(Math.max(1, minutes)))
   }
 
   // Window titles stay English in the records, where scopedPart() and the
@@ -617,7 +616,7 @@ Panel {
   }
 
   function scopedAllowanceText(scoped, windowTitle) {
-    var percent = Math.round(scoped.percent * 100)
+    var percent = Commons.I18n.formatNumber(Math.round(scoped.percent * 100))
     var value = String(windowTitle || "")
     if (value === "Session") return Commons.I18n.t("agents.scopedSession").arg(scoped.title).arg(percent)
     if (value === "Weekly") return Commons.I18n.t("agents.scopedWeekly").arg(scoped.title).arg(percent)
@@ -688,7 +687,7 @@ Panel {
   function formatMoney(value, currency) {
     var amount = Number(value)
     if (!isFinite(amount)) amount = 0
-    return currencyPrefix(currency) + amount.toFixed(2)
+    return currencyPrefix(currency) + Commons.I18n.formatNumber(amount, 2)
   }
 
   function balanceDetailText(b) {
@@ -737,16 +736,16 @@ Panel {
     }
 
     var phrases = []
-    if (week > 0) phrases.push(Commons.I18n.t("agents.tokensThisWeek").arg(usage.formatTokenCount(week)))
-    if (today > 0) phrases.push(Commons.I18n.t("agents.tokensToday").arg(usage.formatTokenCount(today)))
+    if (week > 0) phrases.push(Commons.I18n.tn("agents.tokensThisWeek", week).arg(usage.formatTokenCount(week)))
+    if (today > 0) phrases.push(Commons.I18n.tn("agents.tokensToday", today).arg(usage.formatTokenCount(today)))
     var topModel = ""
     for (var model in byModel) if (topModel === "" || byModel[model] > byModel[topModel]) topModel = model
     if (topModel !== "" && byModel[topModel] > 0) phrases.push(Commons.I18n.t("agents.mostlyModel").arg(topModel))
     var busiest = ""
     for (var date in byDay) if (busiest === "" || byDay[date] > byDay[busiest]) busiest = date
     if (busiest !== "" && byDay[busiest] > 0) phrases.push(Commons.I18n.t("agents.busiestDay").arg(dayName(busiest)))
-    if (prompts > 0) phrases.push(Commons.I18n.t("agents.promptsToday").arg(prompts))
-    if (sessions > 0) phrases.push(Commons.I18n.t("agents.sessionsToday").arg(sessions))
+    if (prompts > 0) phrases.push(Commons.I18n.tn("agents.promptsToday", prompts).arg(Commons.I18n.formatNumber(prompts)))
+    if (sessions > 0) phrases.push(Commons.I18n.tn("agents.sessionsToday", sessions).arg(Commons.I18n.formatNumber(sessions)))
     return phrases
   }
   property int phraseIndex: 0
@@ -765,6 +764,13 @@ Panel {
 
   onSummaryPhrasesChanged: if (shownPhrase === "" || summaryPhrases.length <= 1) showPhrase()
 
+  // The held line was written in the language it was shown in; once a new
+  // language's strings arrive and the phrases rebuild, show it again.
+  Connections {
+    target: Commons.I18n
+    function onStringsChanged() { Qt.callLater(root.showPhrase) }
+  }
+
   function dayName(date) {
     var parsed = new Date(String(date || "") + "T00:00:00")
     if (isNaN(parsed.getTime())) return String(date || "")
@@ -777,7 +783,7 @@ Panel {
     for (var i = 0; i < providers.length; i++) {
       var count = Number(providers[i].syncDeviceCount || 0)
       if (providers[i].syncEnabled && count > 0)
-        return count === 1 ? Commons.I18n.t("agents.mergedOne") : Commons.I18n.t("agents.merged").arg(count)
+        return Commons.I18n.tn("agents.merged", count).arg(Commons.I18n.formatNumber(count))
     }
     return ""
   }
@@ -1017,7 +1023,9 @@ Panel {
 
         Column {
           id: column
-          x: panelFlick.overhang
+          // The overhang sits on the start side, which is the right when
+          // mirrored; there the scroll bar takes the left instead.
+          x: LayoutMirroring.enabled ? (panelFlick.interactive ? panelScroll.width + Style.space(6) : 0) : panelFlick.overhang
           // When the panel scrolls, the bar gets its own strip rather than
           // sitting on top of the right-aligned numbers.
           width: panelFlick.width - panelFlick.overhang - (panelFlick.interactive ? panelScroll.width + Style.space(6) : 0)
@@ -1927,7 +1935,7 @@ Panel {
           current: head.autoOn
           tooltip: head.autoOn
             ? Commons.I18n.t("agents.stopAutoSwitch")
-            : Commons.I18n.t("agents.switchAutoAt").arg(root.switchThreshold(head.owner))
+            : Commons.I18n.t("agents.switchAutoAt").arg(Commons.I18n.formatNumber(root.switchThreshold(head.owner)))
           onClicked: root.setSwitchMode(head.owner, head.autoOn ? "manual" : "auto")
         }
 
@@ -1988,7 +1996,7 @@ Panel {
         var lines = []
         if (compact.window) {
           var windowName = root.windowDisplayTitle(compact.window.title)
-          var used = Math.round(compact.window.percent * 100)
+          var used = Commons.I18n.formatNumber(Math.round(compact.window.percent * 100))
           lines.push(compact.resetMs > 0
             ? Commons.I18n.t("agents.windowUsedResets").arg(windowName).arg(used).arg(root.formatDuration(compact.resetMs))
             : Commons.I18n.t("agents.windowUsed").arg(windowName).arg(used))
@@ -2091,7 +2099,10 @@ Panel {
         height: meter.thickness * 2.5
         radius: width / 2
         anchors.verticalCenter: meterTrack.verticalCenter
-        x: root.clamp(meterTrack.width * root.clamp(Number(modelData.percent), 0, 1) - width / 2, 0, meterTrack.width - width)
+        // Explicit x doesn't mirror, so the tick measures from the end the
+        // fill grows from.
+        readonly property real along: root.clamp(meterTrack.width * root.clamp(Number(modelData.percent), 0, 1) - width / 2, 0, meterTrack.width - width)
+        x: LayoutMirroring.enabled ? meterTrack.width - width - along : along
         color: meter.alarming ? root.urgent : root.foreground
       }
     }

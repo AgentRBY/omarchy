@@ -187,7 +187,7 @@ Rectangle {
 
       Caption {
         Layout.alignment: Qt.AlignBaseline
-        text: Model.tempLabel(row.panel.facts[Model.factsKey(row.rowData)], row.panel.units)
+        text: Model.tempLabel(row.panel.facts[Model.factsKey(row.rowData)], row.panel.units, row.panel.words)
         visible: text !== ""
         color: tempHover.hovered ? row.foreground : row.dim
 

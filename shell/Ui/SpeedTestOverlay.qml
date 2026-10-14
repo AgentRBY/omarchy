@@ -15,6 +15,10 @@ import qs.Ui
 // track the live readings. Callers name the dials, the unit, and the scale.
 PanelWindow {
   id: root
+  // Right-to-left languages read this window mirrored.
+  Binding { target: root.contentItem; property: "LayoutMirroring.enabled"; value: Commons.I18n.rightToLeft }
+  Binding { target: root.contentItem; property: "LayoutMirroring.childrenInherit"; value: true }
+
 
   required property string fontFamily
   required property bool running
@@ -373,13 +377,8 @@ PanelWindow {
       Text {
         textFormat: Text.PlainText
         anchors.horizontalCenter: parent.horizontalCenter
-        // Both branches go through the locale: a reading is a measurement, so
-        // its separators follow the system's number conventions rather than the
-        // interface language. toFixed would have hardcoded a dot below 10 while
-        // everything above it was already grouped for the locale.
-        text: dial.reading < 10
-          ? dial.reading.toLocaleString(Qt.locale(), 'f', 1)
-          : Math.round(dial.reading).toLocaleString(Qt.locale(), 'f', 0)
+        // Written in the interface language's decimal separator and digits.
+        text: Commons.I18n.formatNumber(dial.reading, dial.reading < 10 ? 1 : 0)
         color: root.onScrim
         font.family: root.fontFamily
         font.pixelSize: Style.font.display

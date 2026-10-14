@@ -317,7 +317,7 @@ Panel {
             Column {
               width: parent.width
               spacing: Style.spacing.labelGap
-              InfoPair { label: Commons.I18n.t("dropbox.stored"); value: Model.usageText(dropbox.usedBytes, dropbox.quotaBytes, dropbox.quotaKnown, Commons.I18n.t) }
+              InfoPair { label: Commons.I18n.t("dropbox.stored"); value: Model.usageText(dropbox.usedBytes, dropbox.quotaBytes, dropbox.quotaKnown, Commons.I18n.t, Commons.I18n.formatNumber) }
             }
           }
 
@@ -521,7 +521,7 @@ Panel {
         Text {
           textFormat: Text.PlainText
           Layout.fillWidth: true
-          text: Model.fileMeta(fileRow.file, undefined, Commons.I18n.t)
+          text: Model.fileMeta(fileRow.file, undefined, Commons.I18n.t, Commons.I18n.formatNumber)
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

@@ -616,7 +616,7 @@ Panel {
               Text {
                 id: brightnessPercent
                 textFormat: Text.PlainText
-                text: Math.round(brightnessSlider.dragging ? brightnessSlider.liveValue : root.brightnessPercent) + "%"
+                text: Commons.I18n.formatNumber(Math.round(brightnessSlider.dragging ? brightnessSlider.liveValue : root.brightnessPercent)) + "%"
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
@@ -689,7 +689,7 @@ Panel {
               Text {
                 id: textSizePx
                 textFormat: Text.PlainText
-                text: (textSizeSlider.dragging
+                text: Commons.I18n.formatNumber(textSizeSlider.dragging
                        ? root.textSizeStops[Math.round(textSizeSlider.liveValue)]
                        : root.displayedTextPx()) + "px"
                 color: Qt.darker(root.bar.foreground, 1.4)
@@ -846,7 +846,7 @@ Panel {
     required property string scaleValue
     required property int scaleIndex
 
-    text: root.effectiveScale(scaleValue) + "x"
+    text: Commons.I18n.formatNumber(root.effectiveScale(scaleValue)) + "x"
     fontSize: Style.font.caption
     foreground: root.bar.foreground
     fontFamily: root.bar.fontFamily

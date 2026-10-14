@@ -144,11 +144,17 @@ Panel {
   readonly property int refreshMinutes: Math.max(1, parseInt(setting("refreshMinutes", 15), 10) || 15)
 
   readonly property string reportLocation:  configuredLocation || wttrLocation || (areaInfo && areaInfo.areaName && areaInfo.areaName[0] ? areaInfo.areaName[0].value : "")
-  readonly property string reportTempNum:   current ? String(useImperial ? current.temp_F : current.temp_C) : ""
+  readonly property string reportTempNum:   current ? displayNumber(useImperial ? current.temp_F : current.temp_C) : ""
   readonly property string tempUnit:        "°" + (useImperial ? "F" : "C")
   readonly property string reportFeels:     current ? formatTemp(useImperial ? current.FeelsLikeF : current.FeelsLikeC) : ""
-  readonly property string reportWind:      current ? (useImperial ? (current.windspeedMiles + " mph") : (current.windspeedKmph + " km/h")) : ""
-  readonly property string reportHumidity:  current ? (current.humidity + "%") : ""
+  readonly property string reportWind:      current ? (useImperial ? (displayNumber(current.windspeedMiles) + " mph") : (displayNumber(current.windspeedKmph) + " km/h")) : ""
+  readonly property string reportHumidity:  current ? (displayNumber(current.humidity) + "%") : ""
+
+  // The report's numbers arrive as strings ("13"), and blank when missing.
+  function displayNumber(value) {
+    if (value === undefined || value === null || value === "") return ""
+    return Commons.I18n.formatNumber(value)
+  }
 
   function refresh() {
     // Each full refresh cycle gets a fresh retry budget, so an earlier
@@ -315,7 +321,7 @@ Panel {
   }
 
   function formatTemp(value) {
-    return Model.formatTemp(value, useImperial)
+    return Model.formatTemp(value, useImperial, Commons.I18n.formatNumber)
   }
 
   function dayName(dateString) {
@@ -325,7 +331,7 @@ Panel {
 
   // Bare degree value (no unit letter), used in the forecast row.
   function bareTempForDay(day, kind) {
-    return Model.bareTempForDay(day, kind, useImperial)
+    return Model.bareTempForDay(day, kind, useImperial, Commons.I18n.formatNumber)
   }
 
   // Representative icon for a forecast day: the hourly entry nearest noon.
@@ -561,6 +567,9 @@ Panel {
           Row {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(2)
+            // A reading and its unit ("13 °C") stay in that order in a
+            // right-to-left layout too, the way bidi text keeps them.
+            LayoutMirroring.enabled: false
 
             Text {
               id: tempBig

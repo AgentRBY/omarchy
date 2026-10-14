@@ -1020,7 +1020,8 @@ Panel {
 
       Popup {
         id: copyPopup
-        x: copyButton.x + copyButton.width - width
+        // Opens toward the row, from whichever end the button sits at.
+        x: copyButton.LayoutMirroring.enabled ? copyButton.x : copyButton.x + copyButton.width - width
         y: copyButton.y + copyButton.height + Style.space(4)
         width: Style.space(280)
         padding: 0

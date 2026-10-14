@@ -592,7 +592,9 @@ BarWidget {
             anchors.left: parent.left
             width: Style.space(22)
             horizontalAlignment: Text.AlignHCenter
-            text: "\u2039"
+            textFormat: Text.PlainText
+            // Back points against the reading direction.
+            text: Commons.I18n.rightToLeft ? "\u203a" : "\u2039"
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -753,7 +755,8 @@ BarWidget {
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(10)
-                text: "\u203a"
+                textFormat: Text.PlainText
+                text: Commons.I18n.rightToLeft ? "\u2039" : "\u203a"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall

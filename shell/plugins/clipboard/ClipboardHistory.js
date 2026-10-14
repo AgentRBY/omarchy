@@ -127,17 +127,21 @@ function isImagePath(path) {
   return /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(String(path || ""))
 }
 
-// tr is an optional translate(key, english) from the QML side (I18n.t);
-// without it the English text stands, which is what the Node tests assert.
+// tr is an optional translate(key, english) from the QML side (I18n.t),
+// trn its plural form (I18n.tn) and fmt a number formatter
+// (I18n.formatNumber); without them the English text and plain digits
+// stand, which is what the Node tests assert.
 function translator(tr) {
   return typeof tr === "function" ? tr : function(key, english) { return english }
 }
 
-function fileEntryText(entry, tr) {
+function fileEntryText(entry, tr, trn, fmt) {
+  var tn = typeof trn === "function" ? trn : function(key, count, english) { return count === 1 ? english.one : english.other }
+  var number = typeof fmt === "function" ? fmt : function(v) { return String(v) }
   var paths = filePaths(entry)
   if (paths.length === 0) return ""
   if (paths.length === 1) return fileName(paths[0])
-  return translator(tr)("clipboard.files", "%1 files").replace("%1", paths.length)
+  return tn("clipboard.files", paths.length, { one: "%1 file", other: "%1 files" }).replace("%1", number(paths.length))
 }
 
 function imagePreviewText(entry, tr) {
@@ -152,10 +156,10 @@ function imagePreviewText(entry, tr) {
   return pattern.replace("%1", timestamp)
 }
 
-function previewText(entry, tr) {
+function previewText(entry, tr, trn, fmt) {
   if (!entry) return ""
   if (entry.type === "image") return imagePreviewText(entry, tr)
-  var fileText = fileEntryText(entry, tr)
+  var fileText = fileEntryText(entry, tr, trn, fmt)
   if (fileText) return fileText
   return String(entry.text || "").replace(/\s+/g, " ")
 }
@@ -181,7 +185,7 @@ function cappedEntry(entry) {
   return { type: "text", text: entry.text.slice(0, cut > 0 ? cut : displayTextLimit) }
 }
 
-function displayRows(history, query, limit, tr) {
+function displayRows(history, query, limit, tr, trn, fmt) {
   var values = Array.isArray(history) ? history : []
   var needle = String(query || "").trim().toLowerCase()
   var max = limit === undefined || limit === null ? 50 : Number(limit)
@@ -203,7 +207,7 @@ function displayRows(history, query, limit, tr) {
     rows.push({
       entryType: isFile ? "file" : entry.type,
       fullText: isImage ? "" : fullText(entry),
-      previewText: previewText(entry, tr),
+      previewText: previewText(entry, tr, trn, fmt),
       previewImage: previewPath,
       path: isImage ? String(entry.path || "") : (isFile && paths.length === 1 ? paths[0] : ""),
       mime: isImage ? String(entry.mime || "image/png") : "text/plain",

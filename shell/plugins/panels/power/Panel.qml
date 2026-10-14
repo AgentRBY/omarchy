@@ -127,6 +127,12 @@ Panel {
   }
   readonly property bool rotatingPhrases: activePhrases.length > 0
 
+  // The battery script's readings in the current language's digits; the
+  // time field already comes translated, so it is shown as it arrives.
+  function reading(raw) {
+    return Model.localizeReading(raw, Commons.I18n.formatNumber)
+  }
+
   readonly property string heroStatusText: {
     if (fullyCharged) return Commons.I18n.t("power.fullyCharged")
     if (rotatingPhrases) return activePhrases[phraseIndex % activePhrases.length]
@@ -279,7 +285,7 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: root.batteryIcon()
-    labelText: root.showPercentage && !vertical ? Math.round(root.batteryFraction * 100) + "%" : ""
+    labelText: root.showPercentage && !vertical ? Commons.I18n.formatNumber(Math.round(root.batteryFraction * 100)) + "%" : ""
     slotSize: Style.bar.iconSlot * (root.showPercentage && !vertical ? 2 : 1)
     tooltipText: ""
     onPressed: function(b) {
@@ -375,7 +381,7 @@ Panel {
           Text {
             id: heroPercent
             textFormat: Text.PlainText
-            text: root.batteryInfo.percentage || "—"
+            text: root.reading(root.batteryInfo.percentage) || "—"
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.displayLarge
@@ -436,8 +442,8 @@ Panel {
           Column {
             width: (parent.width - parent.spacing) / 2
             spacing: Style.spacing.labelGap
-            InfoPair { label: Commons.I18n.t("power.batterySize"); value: root.batteryInfo.size || "" }
-            InfoPair { label: Commons.I18n.t("power.chargeCycles"); value: root.batteryInfo.cycles || "—" }
+            InfoPair { label: Commons.I18n.t("power.batterySize"); value: root.reading(root.batteryInfo.size) }
+            InfoPair { label: Commons.I18n.t("power.chargeCycles"); value: root.reading(root.batteryInfo.cycles) || "—" }
           }
 
           Column {
@@ -445,11 +451,11 @@ Panel {
             spacing: Style.spacing.labelGap
             InfoPair {
               label: root.chargeThresholdActive ? Commons.I18n.t("power.chargeLimit") : (root.discharging ? Commons.I18n.t("power.timeLeft") : Commons.I18n.t("power.timeToFull"))
-              value: root.chargeThresholdActive ? (root.batteryInfo.threshold || "-") : (root.batteryFlowIdle ? "-" : (root.batteryInfo.time || "—"))
+              value: root.chargeThresholdActive ? (root.reading(root.batteryInfo.threshold) || "-") : (root.batteryFlowIdle ? "-" : (root.batteryInfo.time || "—"))
             }
             InfoPair {
               label: root.chargeThresholdActive ? Commons.I18n.t("power.batteryState") : (root.discharging ? Commons.I18n.t("power.discharging") : Commons.I18n.t("power.charging"))
-              value: root.chargeThresholdActive ? Commons.I18n.t("power.holding") : (root.batteryFull ? "-" : (root.batteryInfo.rate || ""))
+              value: root.chargeThresholdActive ? Commons.I18n.t("power.holding") : (root.batteryFull ? "-" : root.reading(root.batteryInfo.rate))
             }
           }
         }

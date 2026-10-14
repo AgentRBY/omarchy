@@ -441,7 +441,7 @@ Panel {
                 visible: !root.editingLife
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.today.getFullYear()
+                text: Commons.I18n.formatNumber(root.today.getFullYear())
                 color: Qt.darker(root.contentForeground, 1.5)
                 font.family: root.contentFontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -454,7 +454,7 @@ Panel {
                 visible: !root.editingLife
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.yearDonePercent + "%"
+                text: Commons.I18n.formatNumber(root.yearDonePercent) + "%"
                 color: root.contentForeground
                 font.family: root.contentFontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -515,7 +515,7 @@ Panel {
                 textFormat: Text.PlainText
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.lifeDonePercent + "%"
+                text: Commons.I18n.formatNumber(root.lifeDonePercent) + "%"
                 color: root.contentForeground
                 font.family: root.contentFontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -666,7 +666,7 @@ Panel {
                     height: root.cellHeight
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    text: modelData.week
+                    text: Commons.I18n.formatNumber(modelData.week)
                     color: Qt.darker(root.contentForeground, 1.9)
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.caption
@@ -695,7 +695,7 @@ Panel {
                       Text {
                         textFormat: Text.PlainText
                         anchors.centerIn: parent
-                        text: modelData.day
+                        text: Commons.I18n.formatNumber(modelData.day)
                         color: modelData.inMonth
                           ? (modelData.weekend ? Qt.darker(root.contentForeground, 1.45) : root.contentForeground)
                           : Qt.darker(root.contentForeground, 2.2)
@@ -710,9 +710,13 @@ Panel {
             }
 
             // Hairline down the week-number gutter, drawn only beside the
-            // day rows so it does not cut through the header band.
+            // day rows so it does not cut through the header band. Placed
+            // by x, so it follows the rows to the right edge when mirrored.
             Rectangle {
-              x: gridColumn.x + root.weekColumnWidth + root.cellSpacing + Math.round((root.gutterWidth - width) / 2)
+              readonly property real gutterOffset: root.weekColumnWidth + root.cellSpacing + Math.round((root.gutterWidth - width) / 2)
+              x: LayoutMirroring.enabled
+                ? gridColumn.x + gridColumn.width - gutterOffset - width
+                : gridColumn.x + gutterOffset
               y: gridColumn.y + headerRow.height + gridColumn.spacing
               width: Style.spacing.hairline
               height: gridColumn.height - headerRow.height - gridColumn.spacing
@@ -759,7 +763,8 @@ Panel {
                 anchors.left: parent.left
                 anchors.leftMargin: -Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                iconText: "󰅁"
+                // Previous points back along the reading direction.
+                iconText: Commons.I18n.rightToLeft ? "󰅂" : "󰅁"
                 tooltipText: Commons.I18n.t("clock.previousMonth")
                 foreground: root.contentForeground
                 fontFamily: root.contentFontFamily
@@ -770,7 +775,7 @@ Panel {
                 anchors.right: parent.right
                 anchors.rightMargin: -Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                iconText: "󰅂"
+                iconText: Commons.I18n.rightToLeft ? "󰅁" : "󰅂"
                 tooltipText: Commons.I18n.t("clock.nextMonth")
                 foreground: root.contentForeground
                 fontFamily: root.contentFontFamily

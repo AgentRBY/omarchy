@@ -124,8 +124,10 @@
   "lock.didNotLock": "Screen did not lock before suspend",
   "lock.unlockedNoLockScreen": "The session was left unlocked (no lock screen is configured).",
   "lock.unlockedTimeout": "The session was left unlocked (the shell did not secure the session within %1ms).",
-  "migrate.clickToRun": "Click to run %1 pending migrations.",
-  "migrate.clickToRunOne": "Click to run 1 pending migration.",
+  "migrate.clickToRun": {
+    "one": "Click to run %1 pending migration.",
+    "other": "Click to run %1 pending migrations."
+  },
   "migrate.pending": "Pending Omarchy Migrations",
   "monitor.extendedRestored": "Extended mode restored",
   "monitor.laptopDisabled": "Laptop display disabled",
@@ -160,16 +162,27 @@
   "preinstalls.confirmRemove": "Are you sure you want to remove all preinstalled web apps, TUI wrappers, and desktop applications?",
   "preinstalls.confirmRestore": "Are you sure you want to restore all preinstalled web apps, TUI wrappers, and desktop applications?",
   "reminder.cleared": "All reminders have been cleared",
-  "reminder.count": "%1 reminders",
-  "reminder.countOne": "1 reminder",
-  "reminder.customInMinutes": "%1 in %2 minutes",
+  "reminder.count": {
+    "one": "%1 reminder",
+    "other": "%1 reminders"
+  },
+  "reminder.customInMinutes": {
+    "one": "%1 in %2 minute",
+    "other": "%1 in %2 minutes"
+  },
   "reminder.durationMinutesSeconds": "%1m %2s",
   "reminder.durationSeconds": "%1s",
   "reminder.inRemaining": "%1 in %2 (%3)",
   "reminder.minuteLabel": "%1-min reminder",
-  "reminder.minutesUp": "Your %1 minutes are up",
+  "reminder.minutesUp": {
+    "one": "Your %1 minute is up",
+    "other": "Your %1 minutes are up"
+  },
   "reminder.none": "No outstanding reminders",
-  "reminder.setForMinutes": "Reminder set for %1 minutes",
+  "reminder.setForMinutes": {
+    "one": "Reminder set for %1 minute",
+    "other": "Reminder set for %1 minutes"
+  },
   "reminder.setTooltip": "Set Reminder",
   "reminder.title": "Reminder",
   "reminder.upcoming": "Upcoming reminders",
@@ -218,6 +231,10 @@
   "system.shutdownFailed": "Shutdown failed",
   "system.shutdownRetry": "Could not complete shutdown. Please try again.",
   "system.shuttingDown": "Shutting down",
+  "tailscale.fileCount": {
+    "one": "%1 file",
+    "other": "%1 files"
+  },
   "tailscale.received": "Received %1",
   "tailscale.savedTo": "Saved to %1",
   "tailscale.sendFailed": "Could not send to %1",
@@ -263,7 +280,10 @@
   "update.kernelReboot": "Linux kernel has been updated. Reboot?",
   "update.ready": "Ready to update?",
   "update.rebootRequired": "Updates require reboot. Ready?",
-  "update.removeOrphans": "Remove %1 orphaned package(s)?",
+  "update.removeOrphans": {
+    "one": "Remove %1 orphaned package?",
+    "other": "Remove %1 orphaned packages?"
+  },
   "update.whatsNew": "What's new: %1",
   "webapp.iconPlaceholder": "Could not fetch favicon automatically. Enter PNG icon URL or icon name",
   "webapp.intro": "Let's create a new web app you can start with the app launcher.",

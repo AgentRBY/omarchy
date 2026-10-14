@@ -60,8 +60,12 @@ BarWidget {
   // which only catches up at the next login.
   readonly property var formatLocale: Qt.locale(I18n.formatLocale)
 
+  // The ISO week goes in as a literal, so its digits are localized here the
+  // way Qt localizes the rest of the format.
   function formatted(date) {
-    return date.toLocaleString(root.formatLocale, activeFormat.replace(/ww/g, Model.isoWeekLiteral(date.getFullYear(), date.getMonth(), date.getDate())))
+    var week = Model.isoWeekLiteral(date.getFullYear(), date.getMonth(), date.getDate())
+    week = week.split("").map(function(digit) { return I18n.formatNumber(digit) }).join("")
+    return date.toLocaleString(root.formatLocale, activeFormat.replace(/ww/g, week))
   }
 
   // ---- Calendar popup. Shape contract for shell.summon/hide/toggle

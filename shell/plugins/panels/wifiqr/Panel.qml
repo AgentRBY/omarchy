@@ -286,6 +286,9 @@ Item {
             Grid {
               anchors.fill: parent
               columns: root.qrSize
+              // A mirrored QR code does not scan: modules stay left to right
+              // in right-to-left languages too.
+              LayoutMirroring.enabled: false
 
               Repeater {
                 model: root.qrSize * root.qrSize

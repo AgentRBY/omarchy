@@ -913,7 +913,7 @@ Panel {
               Text {
                 id: outputPercent
                 textFormat: Text.PlainText
-                text: Math.round((outputSlider.dragging ? outputSlider.liveValue : root.outputVolume) * 100) + "%"
+                text: Commons.I18n.formatNumber(Math.round((outputSlider.dragging ? outputSlider.liveValue : root.outputVolume) * 100)) + "%"
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
@@ -1000,7 +1000,7 @@ Panel {
               Text {
                 id: microphonePercent
                 textFormat: Text.PlainText
-                text: root.inputLevelKnown ? Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100) + "%" : "–"
+                text: root.inputLevelKnown ? Commons.I18n.formatNumber(Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100)) + "%" : "–"
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
@@ -1317,7 +1317,7 @@ Panel {
         Text {
           id: streamPct
           textFormat: Text.PlainText
-          text: Math.round(streamRow.streamVolume * 100) + "%"
+          text: Commons.I18n.formatNumber(Math.round(streamRow.streamVolume * 100)) + "%"
           color: Qt.darker(root.bar.foreground, 1.5)
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.caption

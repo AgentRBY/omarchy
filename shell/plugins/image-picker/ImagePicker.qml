@@ -681,6 +681,7 @@ Item {
 
           readonly property real itemStep: root.sliceWidth + root.sliceSpacing
           readonly property real previewX: (width - root.expandedWidth) / 2
+          readonly property bool mirrored: LayoutMirroring.enabled
 
           Keys.priority: Keys.BeforeItem
           Keys.onPressed: function(event) {
@@ -713,10 +714,10 @@ Item {
             } else if (root.filterable && Util.editsFilter(event, root.filterText)) {
               root.updateFilter(Util.editedFilter(event, root.filterText))
               event.accepted = true
-            } else if (event.key === Qt.Key_Left || (event.key === Qt.Key_Tab && event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab) {
+            } else if (Util.readingKey(event) === Qt.Key_Left || (event.key === Qt.Key_Tab && event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab) {
               root.selectAdjacent(-1)
               event.accepted = true
-            } else if (event.key === Qt.Key_Right || event.key === Qt.Key_Tab) {
+            } else if (Util.readingKey(event) === Qt.Key_Right || event.key === Qt.Key_Tab) {
               root.selectAdjacent(1)
               event.accepted = true
             } else if (root.filterable && event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
@@ -748,7 +749,10 @@ Item {
               onPreviewSettledChanged: if (previewSettled) root.maybeReveal()
               onSelectedChanged: if (selected && previewReady) root.neighborImagesEnabled = true
 
-              x: selected ? carousel.previewX : (relativeIndex < 0 ? carousel.previewX + relativeIndex * carousel.itemStep : carousel.previewX + root.expandedWidth + root.sliceSpacing + (relativeIndex - 1) * carousel.itemStep)
+              readonly property real readingX: selected ? carousel.previewX : (relativeIndex < 0 ? carousel.previewX + relativeIndex * carousel.itemStep : carousel.previewX + root.expandedWidth + root.sliceSpacing + (relativeIndex - 1) * carousel.itemStep)
+              // A mirrored (right-to-left) layout runs the carousel from the
+              // right, so the next image sits where the reading continues.
+              x: carousel.mirrored ? carousel.width - readingX - width : readingX
               width: selected ? root.expandedWidth : root.sliceWidth
               height: selected ? root.expandedHeight : root.sliceHeight
               y: selected ? 0 : (root.expandedHeight - root.sliceHeight) / 2

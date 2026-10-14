@@ -244,9 +244,9 @@ Item {
             else root.close()
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
-          } else if (event.key === Qt.Key_Left) {
+          } else if (Util.readingKey(event) === Qt.Key_Left) {
             root.select(-1)
-          } else if (event.key === Qt.Key_Right) {
+          } else if (Util.readingKey(event) === Qt.Key_Right) {
             root.select(1)
           } else if (event.key === Qt.Key_Up) {
             root.select(-root.columns)
@@ -435,7 +435,10 @@ Item {
       visible: !!entry && !root.dragging
       width: Math.max(Style.space(160), menuColumn.implicitWidth) + padding * 2
       height: menuColumn.implicitHeight + padding * 2
-      x: Math.min(root.menuPoint.x, panel.width - width - Style.gapsOut)
+      // Opens along the reading direction from the pointer.
+      x: LayoutMirroring.enabled
+        ? Math.max(Style.gapsOut, root.menuPoint.x - width)
+        : Math.min(root.menuPoint.x, panel.width - width - Style.gapsOut)
       y: Math.min(root.menuPoint.y, panel.height - height - Style.gapsOut)
       radius: Style.cornerRadius
       color: Commons.Color.popups.background
@@ -488,7 +491,8 @@ Item {
 
     Text {
       anchors.verticalCenter: parent.verticalCenter
-      x: Style.spacing.controlPaddingX
+      anchors.left: parent.left
+      anchors.leftMargin: Style.spacing.controlPaddingX
       textFormat: Text.PlainText
       text: row.text
       color: Commons.Color.popups.text

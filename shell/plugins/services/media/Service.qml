@@ -496,7 +496,7 @@ Item {
       icon: MediaModel.volumeOsdIcon(step.percent, step.muted),
       message: "",
       value: String(step.percent),
-      progressText: step.percent + "%",
+      progressText: I18n.formatNumber(step.percent) + "%",
       max: "100",
       duration: ""
     }))

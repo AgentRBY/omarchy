@@ -918,7 +918,7 @@ Panel {
       if (action === "forgetting") return Commons.I18n.t("bluetooth.forgetting")
       if (action === "disconnecting" || devState === 2) return Commons.I18n.t("bluetooth.disconnecting")
       if (isConnected) {
-        if (dev.batteryAvailable) return Math.round(dev.battery * 100) + "%"
+        if (dev.batteryAvailable) return Commons.I18n.formatNumber(Math.round(dev.battery * 100)) + "%"
         return sectionName === "connected" ? "" : Commons.I18n.t("bluetooth.connectedStatus")
       }
       if (action === "connecting" || devState === 3 || dev.pairing === true) return Commons.I18n.t("bluetooth.connecting")

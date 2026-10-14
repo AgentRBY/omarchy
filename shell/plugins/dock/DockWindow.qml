@@ -12,6 +12,10 @@ import "DockModel.js" as DockModel
 // mask is empty and clicks fall through to the windows below.
 PanelWindow {
   id: window
+  // Right-to-left languages read this window mirrored.
+  Binding { target: window.contentItem; property: "LayoutMirroring.enabled"; value: Commons.I18n.rightToLeft }
+  Binding { target: window.contentItem; property: "LayoutMirroring.childrenInherit"; value: true }
+
 
   property var dock: null
 
@@ -256,6 +260,11 @@ PanelWindow {
 
   Item {
     id: body
+
+    // The strip keeps its order in every language, like the bar: drags and
+    // drops reckon slots along x from the first app. Only the menu mirrors.
+    LayoutMirroring.enabled: false
+    LayoutMirroring.childrenInherit: true
 
     width: slots.implicitWidth
     height: slots.implicitHeight
@@ -589,7 +598,8 @@ PanelWindow {
 
     Text {
       anchors.verticalCenter: parent.verticalCenter
-      x: Style.spacing.controlPaddingX
+      anchors.left: parent.left
+      anchors.leftMargin: Style.spacing.controlPaddingX
       textFormat: Text.PlainText
       text: row.text
       color: Commons.Color.popups.text

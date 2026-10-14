@@ -191,6 +191,10 @@ BarWidget {
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: Style.space(6)
+        // Transport controls keep previous, play, next in every language,
+        // matching their glyphs; media controls are not mirrored.
+        LayoutMirroring.enabled: false
+        LayoutMirroring.childrenInherit: true
 
         Button {
           iconText: "󰒮"

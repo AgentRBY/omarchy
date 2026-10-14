@@ -129,7 +129,7 @@ Item {
     for (var j = 0; j < arr.length; j++)
       labels.push(byValue[String(arr[j])] || String(arr[j]))
     if (labels.length <= 3) return labels.join(", ")
-    return arr.length + " selected"
+    return Commons.I18n.tn("multiSelect.selectedCount", arr.length).arg(Commons.I18n.formatNumber(arr.length))
   }
 
   property var filtered: resolvedOptions
@@ -247,7 +247,7 @@ Item {
       refreshTimeoutTimer.stop()
       if (exitCode !== 0) {
         root.loadingOptions = false
-        root.optionsError = Commons.I18n.t("multiSelect.exited").arg(exitCode)
+        root.optionsError = Commons.I18n.t("multiSelect.exited").arg(Commons.I18n.formatNumber(exitCode))
       }
     }
   }

@@ -7,6 +7,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Services.Notifications
 import qs.Commons
+import qs.Commons as Commons
 
 import "components"
 import "NotificationLogic.js" as NotificationLogic
@@ -1088,6 +1089,10 @@ Item {
 
             NotificationCard {
               id: card
+              // Right-to-left languages read the card mirrored; the toast
+              // column itself stays where the bar's placement puts it.
+              LayoutMirroring.enabled: Commons.I18n.rightToLeft
+              LayoutMirroring.childrenInherit: true
               anchors.right: parent.right
               app: cardSlot.app
               appIcon: cardSlot.appIcon
