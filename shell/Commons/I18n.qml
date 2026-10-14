@@ -65,10 +65,13 @@ QtObject {
     registryFile.reload()
   }
 
+  // The catalogs are small local files, read synchronously so the first
+  // binding to call t() already gets the string rather than the raw key.
   property FileView languageFile: FileView {
     path: root.configHome + "/omarchy/language"
     watchChanges: true
     printErrors: false
+    blockLoading: true
     onLoaded: root.setLanguage(text())
     onLoadFailed: root.setLanguage("")
     onFileChanged: reload()
@@ -78,6 +81,7 @@ QtObject {
     path: root.omarchyPath + "/default/i18n/en/shell.json"
     watchChanges: true
     printErrors: false
+    blockLoading: true
     onLoaded: { root.englishStrings = root.parseCatalog(text()); root.rebuildStrings() }
     onFileChanged: reload()
   }
@@ -87,6 +91,7 @@ QtObject {
     path: root.omarchyPath + "/default/i18n/" + root.language + "/shell.json"
     watchChanges: true
     printErrors: false
+    blockLoading: true
     onLoaded: { root.languageStrings = root.parseCatalog(text()); root.rebuildStrings() }
     onLoadFailed: { root.languageStrings = ({}); root.rebuildStrings() }
     onFileChanged: reload()
@@ -97,6 +102,7 @@ QtObject {
     path: root.omarchyPath + "/default/i18n/locales.json"
     watchChanges: true
     printErrors: false
+    blockLoading: true
     onLoaded: root.applyRegistry(text())
     onFileChanged: reload()
   }
