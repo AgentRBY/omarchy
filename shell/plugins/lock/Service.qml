@@ -272,7 +272,7 @@ Item {
     nudgeFingerprint()
     if (!wakeCoalesceTimer.running) {
       wakeCoalesceTimer.start()
-      Quickshell.execDetached(["timeout", "10", "bash", "-c", "omarchy-system-wake"])
+      Quickshell.execDetached(["timeout", "--signal=KILL", "10s", "bash", "-c", "omarchy-system-wake"])
     }
   }
 
@@ -377,7 +377,7 @@ Item {
     root.monitorDpmsKnown = false
     pauseFingerprint()
     logEvent("blank-requested")
-    Quickshell.execDetached(["timeout", "10", "bash", "-c", "omarchy-brightness-keyboard off; omarchy-brightness-display off"])
+    Quickshell.execDetached(["timeout", "--signal=KILL", "10s", "bash", "-c", "omarchy-brightness-keyboard off; omarchy-brightness-display off"])
   }
 
   function screenBlank(screenName) {
