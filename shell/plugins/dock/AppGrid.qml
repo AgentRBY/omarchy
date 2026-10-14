@@ -465,11 +465,11 @@ Item {
             if (root.dock && menu.entry) root.dock.setPinned(String(menu.entry.id || ""), !menu.pinned)
             root.menuEntry = null
           }
+        }
 
         MenuRow {
           text: Commons.I18n.t("dock.uninstall")
           onTriggered: root.requestUninstall(menu.entry)
-        }
         }
       }
     }
