@@ -44,7 +44,9 @@ const crypto = require('crypto')
 const manifest = readJson('translation-manifest.json')
 const sourceHash = (value) => crypto.createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 12)
 const isStale = (code, unit, englishValue) => !manifest[code] || manifest[code][unit] !== sourceHash(englishValue)
-const placeholders = (value) => (String(value).match(/%(\d|s|%)/g) || []).sort().join(' ')
+// Only %1-style tokens count, as in scripts/i18n-sync.py: nothing escapes a
+// percent sign, and Turkish writes it before the number ("%%2" shows "%80").
+const placeholders = (value) => (String(value).match(/%\d/g) || []).sort().join(' ')
 function assertCatalogMirrors(kind, english, catalog, code) {
   const problems = []
   const enKeys = Object.keys(english).sort()
