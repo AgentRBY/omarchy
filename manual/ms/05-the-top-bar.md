@@ -83,6 +83,8 @@ Bar mengkonfigurasi dirinya sendiri. Anda tidak perlu membuka fail konfigurasi u
 
 Pegang tompok kosong bar di sekeliling tengah dan seretnya ke arah tepi skrin lain, dan bar berpindah ke sana — kiri, kanan, atas, atau bawah semuanya berfungsi, dan setiap widget menyesuaikan diri (bar menegak kembali kepada bentuk ikon sahaja yang padat). Klik dan tahan memulakan seretan yang sama. Klik kiri dua kali pada ruang kosong yang sama untuk mengitar latar belakang bar dari jernih kepada kaca kepada legap. Dan seret mana-mana widget untuk menyusunnya semula atau membuangnya ke bahagian lain.
 
+Widget yang anda mahu kekalkan tetapi tidak perlu sentiasa kelihatan boleh masuk ke dalam laci dulang: seretnya ke atas dulang, dan laci akan terbuka untuk menerimanya. Ia terletak di sana selepas ikon aplikasi, muncul setiap kali laci dipaparkan, dan memastikan laci kekal terbuka semasa panelnya sedang dibuka. Seretnya kembali keluar ke bar untuk meletakkannya semula.
+
 Jika anda lebih suka memilih daripada menu, **Pencetus → Penampilan → Bar Menu** mempunyai kedudukan, dan **Latar Bar** memilih cara bar dilukis: **Bar Legap**, **Bar Kaca** (lut sinar, dengan apa yang berada di belakangnya dikaburkan), atau **Bar Jernih**.
 
 Perkara yang sama mempunyai arahan, iaitu apa yang anda mahukan untuk persediaan [dotfiles](31-dotfiles.md):
@@ -91,6 +93,7 @@ Perkara yang sama mempunyai arahan, iaitu apa yang anda mahukan untuk persediaan
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

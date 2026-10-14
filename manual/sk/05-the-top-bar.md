@@ -83,6 +83,8 @@ Lišta sa konfiguruje sama. Na presúvanie vecí nemusíte otvárať konfigurač
 
 Chyťte prázdne miesto lišty okolo stredu a potiahnite ho k inému okraju obrazovky a lišta sa tam presunie — ľavo, pravo, hore alebo dolu, všetko funguje a každý widget sa prispôsobí (zvislé lišty sa vrátia ku kompaktným formám len s ikonami). Kliknutie a podržanie spustí rovnaké ťahanie. Dvakrát kliknite ľavým tlačidlom na to isté prázdne miesto, aby ste cyklovali pozadie lišty z priehľadného na sklenené a na neprehľadné. A potiahnite ľubovoľný widget, aby ste ho preusporiadali alebo hodili do inej sekcie.
 
+Widget, ktorý chcete mať poruke, ale nie stále na očiach, môže ísť do zásuvky systémovej lišty: potiahnite ho na systémovú lištu a zásuvka sa otvorí, aby ho prijala. Sedí tam za ikonami aplikácií, objaví sa vždy, keď sa objaví zásuvka, a kým je jeho panel otvorený, drží svoju zásuvku otvorenú. Potiahnite ho späť na lištu, aby ste ho vrátili na miesto.
+
 Ak radšej vyberáte z menu, **Akcie → Vzhľad → Lišta menu** má polohu a **Pozadie lišty** vyberá, ako sa lišta kreslí: **Neprehľadná lišta**, **Sklenená lišta** (priesvitná, s tým, čo je za ňou, rozmazaným) alebo **Priehľadná lišta**.
 
 Tie isté veci majú príkazy, čo je to, čo chcete pre nastavenie [dotfiles](31-dotfiles.md):
@@ -91,6 +93,7 @@ Tie isté veci majú príkazy, čo je to, čo chcete pre nastavenie [dotfiles](3
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

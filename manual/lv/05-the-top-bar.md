@@ -83,6 +83,8 @@ Josla konfigurējas pati. Tev nav jāatver konfigurācijas fails, lai pārvietot
 
 Satver tukšu joslas daļu ap centru un velc to uz citu ekrāna malu, un josla pārvietojas turp — kreisi, labi, augšā vai apakšā viss darbojas, un katrs logrīks pielāgojas (vertikālās joslas atkāpjas uz kompaktām tikai ikonu formām). Klikšķis un turēšana sāk to pašu vilkšanu. Veic dubultu kreiso klikšķi tajā pašā tukšajā vietā, lai ciklētu joslas fonu no caurspīdīga uz stikla uz necaurspīdīgu. Un velc jebkuru logrīku, lai to pārkārtotu vai iemestu citā sadaļā.
 
+Logrīku, kuru vēlies turēt pa rokai, bet ne vienmēr acu priekšā, vari likt teknes atvilktnē: velc to uz tekni, un atvilktne atvērsies, lai to uzņemtu. Tur tas sēž aiz lietotņu ikonām, parādās katru reizi, kad parādās atvilktne, un tur atvilktni vaļā, kamēr ir atvērts tā panelis. Velc to atpakaļ ārā uz joslu, lai noliktu to atpakaļ.
+
 Ja tu labāk izvēlētos no izvēlnes, **Palaist → Izskats → Izvēlņu josla** ir pozīcija, un **Joslas fons** izvēlas, kā josla tiek zīmēta: **Necaurspīdīga josla**, **Stikla josla** (caurspīdīga, ar to, kas aiz tās, izplūdušu) vai **Caurspīdīga josla**.
 
 Tām pašām lietām ir komandas, kas ir tas, ko tu vēlies [dotfailu](31-dotfiles.md) iestatīšanai:
@@ -91,6 +93,7 @@ Tām pašām lietām ir komandas, kas ir tas, ko tu vēlies [dotfailu](31-dotfil
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

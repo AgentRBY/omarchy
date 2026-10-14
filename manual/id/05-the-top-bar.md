@@ -83,6 +83,8 @@ Bilah mengkonfigurasi dirinya sendiri. Anda tidak harus membuka berkas konfigura
 
 Ambil tambalan kosong bilah di sekitar tengah dan seret ke arah tepi layar lain, dan bilah pindah ke sana — kiri, kanan, atas, atau bawah semuanya berfungsi, dan setiap widget beradaptasi (bilah vertikal kembali ke bentuk ikon saja yang kompak). Klik-dan-tahan memulai seretan yang sama. Klik dua kali dengan tombol kiri ruang kosong yang sama untuk menggilir latar belakang bilah dari bening ke kaca ke pekat. Dan seret widget mana pun untuk menyusun ulang atau membuangnya ke bagian lain.
 
+Widget yang ingin Anda sediakan tetapi tidak selalu terlihat dapat masuk ke laci baki: seret ke baki, dan lacinya akan terbuka untuk menerimanya. Ia berada di sana setelah ikon-ikon aplikasi, muncul setiap kali laci muncul, dan menjaga lacinya tetap terbuka selama panelnya terbuka. Seret kembali keluar ke bilah untuk mengembalikannya.
+
 Jika Anda lebih suka memilih dari menu, **Pemicu → Tampilan → Bilah Menu** memiliki posisi, dan **Latar Bilah** memilih bagaimana bilah digambar: **Bilah Pekat**, **Bilah Kaca** (tembus pandang, dengan yang di belakangnya diburamkan), atau **Bilah Bening**.
 
 Hal yang sama memiliki perintah, yang merupakan yang Anda inginkan untuk penyiapan [dotfiles](31-dotfiles.md):
@@ -91,6 +93,7 @@ Hal yang sama memiliki perintah, yang merupakan yang Anda inginkan untuk penyiap
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

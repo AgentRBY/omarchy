@@ -83,6 +83,8 @@ Die Leiste konfiguriert sich selbst. Du musst keine Konfigurationsdatei öffnen,
 
 Greife eine leere Stelle der Leiste rund um die Mitte und ziehe sie zu einer anderen Bildschirmkante, und die Leiste bewegt sich dorthin — links, rechts, oben oder unten funktionieren alle, und jedes Widget passt sich an (vertikale Leisten fallen auf kompakte Nur-Symbol-Formen zurück). Ein Klicken und Halten startet dasselbe Ziehen. Doppel-Linksklicke auf denselben leeren Bereich, um den Leistenhintergrund von klar zu glasig zu deckend zu wechseln. Und ziehe ein beliebiges Widget, um es neu anzuordnen oder in einen anderen Abschnitt zu werfen.
 
+Ein Widget, das du griffbereit haben willst, aber nicht immer im Blick, kann in die Schublade des Trays: Ziehe es auf den Tray, und die Schublade öffnet sich, um es aufzunehmen. Es sitzt dort hinter den App-Symbolen, erscheint, wann immer die Schublade erscheint, und hält die Schublade offen, solange sein Panel geöffnet ist. Ziehe es wieder heraus auf die Leiste, um es zurückzubringen.
+
 Wenn du lieber aus einem Menü wählen willst, hat **Auslösen → Aussehen → Menüleiste** die Position, und **Leistenhintergrund** wählt, wie die Leiste gezeichnet wird: **Deckende Leiste**, **Glasleiste** (durchsichtig, wobei das Dahinter unscharf ist) oder **Klare Leiste**.
 
 Dieselben Dinge haben Befehle, was du für ein [Dotfiles](31-dotfiles.md)-Setup willst:
@@ -91,6 +93,7 @@ Dieselben Dinge haben Befehle, was du für ein [Dotfiles](31-dotfiles.md)-Setup 
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

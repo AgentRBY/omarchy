@@ -83,6 +83,8 @@ Upau hujisanidi wenyewe. Huhitaji kufungua faili ya usanidi kusogeza vitu.
 
 Shika kipande tupu cha upau karibu na katikati na kuiburuta kuelekea ukingo mwingine wa skrini, na upau huenda huko — kushoto, kulia, juu, au chini yote hufanya kazi, na kila wijeti hujibadilisha (mipau wima hurudi kwenye umbo finyu la aikoni tu). Kubofya-na-kushikilia huanzisha uburutaji huo huo. Bofya mara mbili kushoto nafasi hiyo hiyo tupu kubadilisha mandhari ya upau kutoka wazi kwenda kioo kwenda isiyoangavu. Na buruta wijeti yoyote kuipanga upya au kuitupa katika sehemu nyingine.
 
+Wijeti unayoitaka iwepo karibu lakini isiwe inaonekana kila wakati inaweza kwenda katika droo ya trei: iburute juu ya trei, na droo itafunguka kuipokea. Hukaa hapo baada ya aikoni za programu, huonekana kila droo inapoonekana, na huifanya droo ibaki wazi wakati paneli yake imefunguliwa. Iburute nje tena kuirudisha kwenye upau.
+
 Ikiwa unapendelea kuchagua kutoka menyu, **Anzisha → Muonekano → Upau wa menyu** ina nafasi, na **Mandhari ya Upau** huchagua jinsi upau unavyochorwa: **Upau Usioangavu**, **Upau wa Kioo** (unaona nyuma, na kilicho nyuma kimefumbwa), au **Upau Wazi**.
 
 Mambo hayo hayo yana amri, ambayo ndiyo unayoitaka kwa usanidi wa [dotfiles](31-dotfiles.md):
@@ -91,6 +93,7 @@ Mambo hayo hayo yana amri, ambayo ndiyo unayoitaka kwa usanidi wa [dotfiles](31-
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

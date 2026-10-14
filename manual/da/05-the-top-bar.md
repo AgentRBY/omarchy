@@ -83,6 +83,8 @@ Linjen konfigurerer sig selv. Du behøver ikke at åbne en konfigurationsfil for
 
 Grib et tomt område på linjen omkring midten, og træk det mod en anden skærmkant, og linjen flytter derover — venstre, højre, top eller bund virker alle, og hver widget tilpasser sig (lodrette linjer falder tilbage til kompakte former kun med ikoner). Et klik-og-hold starter den samme trækning. Dobbelt-venstreklik på det samme tomme område for at bladre linjens baggrund fra klar til glasagtig til uigennemsigtig. Og træk en hvilken som helst widget for at omarrangere den eller kaste den ind i en anden sektion.
 
+En widget, du vil have ved hånden, men ikke altid i syne, kan ryge i bakkens skuffe: træk den hen på bakken, og skuffen åbner sig og tager imod den. Den sidder der efter appikonerne, dukker op, hver gang skuffen gør det, og holder sin skuffe åben, mens dens panel er oppe. Træk den tilbage ud på linjen for at sætte den på plads igen.
+
 Hvis du hellere vil vælge fra en menu, har **Udløs → Udseende → Menulinje** placeringen, og **Linjebaggrund** vælger, hvordan linjen tegnes: **Uigennemsigtig linje**, **Glaslinje** (gennemsigtig, med det bagved sløret) eller **Klar linje**.
 
 De samme ting har kommandoer, hvilket er det, du vil have til en [dotfiles](31-dotfiles.md)-opsætning:
@@ -91,6 +93,7 @@ De samme ting har kommandoer, hvilket er det, du vil have til en [dotfiles](31-d
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

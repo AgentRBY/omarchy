@@ -83,6 +83,8 @@ La barra si configura da sola. Non devi aprire un file di configurazione per spo
 
 Afferra una zona vuota della barra attorno al centro e trascinala verso un altro bordo dello schermo, e la barra si sposta lì — sinistra, destra, alto o basso funzionano tutti, e ogni widget si adatta (le barre verticali ripiegano su forme compatte solo icona). Un clic tenuto premuto avvia lo stesso trascinamento. Fai doppio clic sinistro su quello stesso spazio vuoto per cambiare a ciclo lo sfondo della barra da trasparente a vetro a opaco. E trascina qualsiasi widget per riordinarlo o buttarlo in un'altra sezione.
 
+Un widget che vuoi tenere a portata di mano ma non sempre in vista può finire nel cassetto dell'area di notifica: trascinalo sull'area di notifica e il cassetto si apre per accoglierlo. Sta lì dopo le icone delle app, compare ogni volta che compare il cassetto e mantiene il suo cassetto aperto mentre il suo pannello è attivo. Trascinalo di nuovo sulla barra per rimetterlo a posto.
+
 Se preferisci scegliere da un menu, **Azioni → Aspetto → Barra menu** ha la posizione, e **Sfondo barra** sceglie come viene disegnata la barra: **Barra opaca**, **Barra vetro** (trasparente, con ciò che sta dietro sfocato) o **Barra trasparente**.
 
 Le stesse cose hanno comandi, che è ciò che vuoi per una configurazione [dotfiles](31-dotfiles.md):
@@ -91,6 +93,7 @@ Le stesse cose hanno comandi, che è ciò che vuoi per una configurazione [dotfi
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

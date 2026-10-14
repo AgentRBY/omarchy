@@ -83,6 +83,8 @@ Bara se configurează singură. Nu trebuie să deschizi un fișier de configurar
 
 Prinde o zonă goală din bară din jurul centrului și trage-o spre altă margine a ecranului, iar bara se mută acolo — stânga, dreapta, sus sau jos funcționează toate, iar fiecare widget se adaptează (barele verticale revin la forme compacte, doar cu pictograme). Un clic menținut începe aceeași tragere. Fă dublu clic stânga pe același spațiu gol ca să parcurgi fundalul barei de la transparent la sticlos la opac. Și trage orice widget ca să-l rearanjezi sau să-l arunci în altă secțiune.
 
+Un widget pe care îl vrei la îndemână, dar nu mereu la vedere, poate merge în sertarul tăvii: trage-l pe tavă și sertarul se deschide ca să-l primească. Stă acolo după pictogramele aplicațiilor, apare de fiecare dată când apare și sertarul și își ține sertarul deschis cât timp panoul său este deschis. Trage-l înapoi pe bară ca să-l pui la loc.
+
 Dacă preferi să alegi dintr-un meniu, **Declanșator → Aspect → Bară de meniu** are poziția, iar **Fundal bară** alege cum este desenată bara: **Bară opacă**, **Bară sticloasă** (transparentă, cu ce e în spate estompat) sau **Bară transparentă**.
 
 Aceleași lucruri au comenzi, ceea ce vrei pentru o configurare de [fișiere dot](31-dotfiles.md):
@@ -91,6 +93,7 @@ Aceleași lucruri au comenzi, ceea ce vrei pentru o configurare de [fișiere dot
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

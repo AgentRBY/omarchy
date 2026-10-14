@@ -83,6 +83,8 @@ Panel oʻzini sozlaydi. Narsalarni koʻchirish uchun konfiguratsiya faylini ochi
 
 Markaz atrofidagi panelning boʻsh joyini ushlang va uni boshqa ekran chetiga sudrab boring va panel u yerga koʻchadi — chap, oʻng, yuqori yoki past hammasi ishlaydi va har bir vidjet moslashadi (vertikal panellar ixcham faqat ikonka shakllariga qaytadi). Bosib ushlab turish xuddi shu sudrashni boshlaydi. Panel fonini shaffofdan shishasimondan shaffofmasga aylantirish uchun oʻsha boʻsh joyni ikki marta chap bosing. Va istalgan vidjetni qayta tartibga solish yoki boshqa boʻlimga tashlash uchun sudrab boring.
 
+Qoʻl ostingizda boʻlishini, lekin har doim koʻzga tashlanishini xohlamagan vidjet lagandaning tortmasida turishi mumkin: uni lagandaga sudrab boring, tortma uni qabul qilish uchun ochiladi. U u yerda ilova ikonkalaridan keyin joylashadi, tortma qachon ochilsa paydo boʻladi va paneli ochiq boʻlganda tortmani ochiq ushlab turadi. Uni joyiga qaytarish uchun yana panelga sudrab olib chiqing.
+
 Agar menyudan tanlashni afzal koʻrsangiz, **Ishga tushirish → Koʻrinish → Menyu paneli** da joylashuv bor va **Panel foni** panel qanday chizilishini tanlaydi: **Shaffofmas panel**, **Shishasimon panel** (orqasidagi narsa xeralangan holda koʻrinadigan) yoki **Shaffof panel**.
 
 Bir xil narsalarning buyruqlari bor, bu [dotfiles](31-dotfiles.md) sozlamasi uchun siz xohlagan narsadir:
@@ -91,6 +93,7 @@ Bir xil narsalarning buyruqlari bor, bu [dotfiles](31-dotfiles.md) sozlamasi uch
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

@@ -83,6 +83,8 @@ Traka se sama konfigurira. Ne morate otvarati konfiguracijsku datoteku da biste 
 
 Uhvatite prazan komad trake oko sredine i povucite ga prema drugome rubu zaslona i traka se tamo pomiče — lijevo, desno, gore ili dolje sve radi, a svaki widget se prilagođava (okomite trake vraćaju se na kompaktne oblike samo s ikonama). Klik-i-držanje započinje isto povlačenje. Dvaput lijevom tipkom kliknite taj isti prazan prostor da kružite pozadinom trake od prozirne do staklene do neprozirne. I povucite bilo koji widget da ga preuredite ili bacite u drugi odjeljak.
 
+Widget koji želite imati pri ruci, ali ne uvijek na vidiku, može ići u ladicu palete: povucite ga na paletu i ladica će se otvoriti da ga primi. Sjedi ondje iza ikona aplikacija, pojavljuje se kad god se ladica pojavi i drži ladicu otvorenom dok mu je ploča otvorena. Povucite ga natrag na traku da ga vratite.
+
 Ako radije birate iz izbornika, **Pokreni → Izgled → Traka izbornika** ima položaj, a **Pozadina trake** bira kako se traka crta: **Neprozirna traka**, **Staklena traka** (prozirna, s onim što je iza nje zamućenim) ili **Prozirna traka**.
 
 Iste stvari imaju naredbe, što je ono što želite za postavku [dotfiles](31-dotfiles.md):
@@ -91,6 +93,7 @@ Iste stvari imaju naredbe, što je ono što želite za postavku [dotfiles](31-do
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

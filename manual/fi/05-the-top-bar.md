@@ -83,6 +83,8 @@ Palkki määrittää itsensä. Sinun ei tarvitse avata määritystiedostoa siirt
 
 Tartu tyhjään kohtaan palkissa keskustan tienoilla ja vedä sitä kohti toista ruudun reunaa, ja palkki siirtyy sinne — vasen, oikea, ylä- tai alaosa toimivat kaikki, ja jokainen widget mukautuu (pystypalkit palaavat kompakteihin vain kuvakkeita sisältäviin muotoihin). Napsautus ja pohjassa pitäminen käynnistää saman vedon. Kaksoisnapsauta vasemmalla painikkeella samaa tyhjää tilaa kiertääksesi palkin taustaa läpinäkyvästä lasiseen ja peittävään. Ja vedä mitä tahansa widgetiä järjestääksesi sen uudelleen tai heittääksesi sen toiseen osaan.
 
+Widget, jonka haluat pitää saatavilla mutta et aina näkyvissä, voi asua järjestelmärivin laatikossa: vedä se järjestelmärivin päälle, niin laatikko aukeaa ja ottaa sen vastaan. Se istuu siellä sovelluskuvakkeiden jälkeen, näkyy aina kun laatikko näkyy ja pitää laatikkonsa auki niin kauan kuin sen paneeli on auki. Vedä se sieltä takaisin palkkiin palauttaaksesi sen paikalleen.
+
 Jos mieluummin valitset valikosta, kohdassa **Käynnistä → Ulkoasu → Valikkopalkki** on sijainti, ja **Palkin tausta** valitsee, miten palkki piirretään: **Peittävä palkki**, **Lasinen palkki** (läpinäkyvä, sen takana oleva sumennettuna) tai **Läpinäkyvä palkki**.
 
 Samoihin asioihin on komentoja, mikä on se, mitä haluat [dotfiles](31-dotfiles.md)-kokoonpanolle:
@@ -91,6 +93,7 @@ Samoihin asioihin on komentoja, mikä on se, mitä haluat [dotfiles](31-dotfiles
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

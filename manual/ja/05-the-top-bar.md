@@ -83,6 +83,8 @@
 
 中央付近のバーの空白部分をつかんで別の画面端へドラッグすると、バーがそこへ移動します。左、右、上、下のすべてが機能し、すべてのウィジェットが適応します（縦バーはコンパクトなアイコンのみの形式にフォールバックします）。クリックして長押ししても同じドラッグが始まります。その同じ空白部分を左ダブルクリックすると、バーの背景が透明からガラス質、不透明へと切り替わります。そして任意のウィジェットをドラッグして並べ替えたり、別のセクションへ投げ入れたりできます。
 
+手近に置いておきたいけれど常に見えている必要はないウィジェットは、トレイのドロワーに入れられます。トレイの上へドラッグすると、受け入れるためにドロワーが開きます。そこではアプリアイコンの後ろに収まり、ドロワーが開くたびに現れ、パネルが開いている間はドロワーも開いたままになります。バーの上へドラッグし戻すと、元の場所に戻ります。
+
 メニューから選びたい場合は、**実行 → 外観 → メニューバー** に位置があり、**バーの背景** でバーの描画方法を選びます：**不透明バー**、**ガラス質バー**（透けて見え、後ろのものがぼかされます）、**透明バー** です。
 
 同じことにはコマンドもあり、それが [dotfiles](31-dotfiles.md) セットアップで欲しいものです：
@@ -91,6 +93,7 @@
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

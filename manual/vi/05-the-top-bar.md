@@ -83,6 +83,8 @@ Thanh tự cấu hình chính nó. Bạn không cần mở một tệp cấu hì
 
 Lấy một khoảng trống của thanh xung quanh phần giữa và kéo nó về phía một cạnh màn hình khác, và thanh di chuyển tới đó — trái, phải, trên hoặc dưới đều hoạt động, và mọi tiện ích đều thích ứng (các thanh dọc quay lại dạng chỉ có biểu tượng nhỏ gọn). Nhấp và giữ cũng bắt đầu thao tác kéo tương tự. Nhấp đúp chuột trái vào cùng khoảng trống đó để chuyển đổi nền thanh từ trong sang kính sang đặc. Và kéo bất kỳ tiện ích nào để sắp xếp lại nó hoặc ném nó vào một phần khác.
 
+Một tiện ích bạn muốn có sẵn nhưng không cần lúc nào cũng hiện ra có thể đi vào ngăn kéo của khay: kéo nó lên khay, và ngăn kéo mở ra để nhận nó. Nó nằm ở đó sau các biểu tượng ứng dụng, xuất hiện mỗi khi ngăn kéo xuất hiện, và giữ cho ngăn kéo luôn mở trong khi bảng của nó đang hiện. Kéo nó trở ra lên thanh để đưa nó trở lại.
+
 Nếu bạn thích chọn từ một menu hơn, **Kích hoạt → Giao diện → Thanh menu** có vị trí, và **Nền thanh** chọn cách thanh được vẽ: **Thanh đặc**, **Thanh kính** (trong suốt, với những gì phía sau nó bị làm mờ), hoặc **Thanh trong**.
 
 Những điều tương tự cũng có lệnh, đó là điều bạn muốn cho một thiết lập [dotfiles](31-dotfiles.md):
@@ -91,6 +93,7 @@ Những điều tương tự cũng có lệnh, đó là điều bạn muốn cho
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

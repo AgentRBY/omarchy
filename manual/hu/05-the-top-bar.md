@@ -83,6 +83,8 @@ A sáv magától konfigurálódik. Nem kell konfigurációs fájlt nyitnod a dol
 
 Fogj meg egy üres foltot a sávon a középpont körül, és húzd egy másik képernyőél felé, és a sáv odamegy — bal, jobb, fent vagy lent mind működik, és minden widget alkalmazkodik (a függőleges sávok kompakt, csak ikonokat mutató formákra térnek vissza). Ugyanazt a húzást egy kattintás és tartás is elindítja. Kattints duplán ugyanazon az üres helyen, hogy a sáv hátterét átlátszóról üvegesre és átlátszatlanra ciklikusan váltsd. És bármelyik widgetet húzhatod az átrendezéséhez vagy egy másik szakaszba dobásához.
 
+Egy widget, amelyet kéznél tartanál, de nem szeretnél mindig szem előtt tudni, mehet a tálca fiókjába is: húzd rá a tálcára, és a fiók kinyílik, hogy átvegye. Ott ül az appikonok után, megjelenik, valahányszor a fiók megjelenik, és nyitva tartja a fiókot, amíg a panelje nyitva van. Húzd vissza a sávra, hogy visszatedd.
+
 Ha inkább menüből választanál, a **Trigger → Appearance → Menu Bar** pontban ott a pozíció, a **Bar Background** pedig azt választja ki, hogyan rajzolódjon a sáv: **Opaque Bar**, **Glassy Bar** (átlátszó, a mögötte lévő elmosásával) vagy **Clear Bar**.
 
 Ugyanezekhez parancsok is tartoznak, amelyeket egy [dotfiles](31-dotfiles.md) beállításhoz szeretnél:
@@ -91,6 +93,7 @@ Ugyanezekhez parancsok is tartoznak, amelyeket egy [dotfiles](31-dotfiles.md) be
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

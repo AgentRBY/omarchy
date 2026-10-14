@@ -83,6 +83,8 @@ Pasek konfiguruje się sam. Nie musisz otwierać pliku konfiguracyjnego, żeby c
 
 Chwyć pusty obszar paska w pobliżu środka i przeciągnij go ku innej krawędzi ekranu, a pasek tam się przeniesie — lewa, prawa, górna i dolna działają wszystkie, a każdy widget się do tego dopasowuje (paski pionowe wracają do kompaktowych form tylko z ikonami). Kliknięcie i przytrzymanie zaczyna to samo przeciąganie. Kliknij dwukrotnie lewym przyciskiem tę samą pustą przestrzeń, żeby jako tło paska przechodzić od przezroczystego przez szklane do kryjącego. I przeciągnij każdy widget, żeby zmienić jego kolejność albo wrzucić go do innej sekcji.
 
+Widget, który chcesz mieć pod ręką, ale nie zawsze na widoku, może trafić do szuflady zasobnika: przeciągnij go na zasobnik, a szuflada otworzy się, żeby go przyjąć. Siedzi tam za ikonami aplikacji, pokazuje się zawsze, gdy pokazuje się szuflada, i utrzymuje ją otwartą, dopóki jego panel jest otwarty. Przeciągnij go z powrotem na pasek, żeby go przywrócić.
+
 Jeśli wolisz wybrać z menu, **Akcje → Wygląd → Pasek menu** ma położenie, a **Tło paska** wybiera, jak pasek jest rysowany: **Kryjący pasek**, **Szklany pasek** (prześwitujący, z rozmyciem tego, co jest za nim) albo **Przezroczysty pasek**.
 
 Te same rzeczy mają polecenia, co jest potrzebne przy konfiguracji przez [dotfiles](31-dotfiles.md):
@@ -91,6 +93,7 @@ Te same rzeczy mają polecenia, co jest potrzebne przy konfiguracji przez [dotfi
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

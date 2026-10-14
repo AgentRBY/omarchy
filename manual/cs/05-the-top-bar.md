@@ -83,6 +83,8 @@ Panel se konfiguruje sám. Pro přesouvání věcí nemusíte otevírat konfigur
 
 Uchopte prázdný kus panelu kolem středu a přetáhněte ho směrem k jinému okraji obrazovky a panel se tam přesune — vlevo, vpravo, nahoře i dole funguje a každý widget se přizpůsobí (svislé panely se vracejí ke kompaktním formám pouze s ikonami). Kliknutí a podržení zahájí stejné přetažení. Dvojitým levým kliknutím na totéž prázdné místo přepnete pozadí panelu z průhledného na skleněné a neprůhledné. A přetáhněte jakýkoli widget, chcete-li změnit jeho pořadí, nebo ho hoďte do jiné sekce.
 
+Widget, který chcete mít po ruce, ale ne stále na očích, může jít do zásuvky systémové lišty: přetáhněte ho na lištu a zásuvka se otevře, aby ho přijala. Sedí tam za ikonami aplikací, objeví se pokaždé, když se objeví zásuvka, a zásuvku drží otevřenou, dokud je otevřený jeho panel. Přetáhněte ho zpět ven na panel a vrátí se zpět.
+
 Pokud si raději vybíráte z nabídky, **Akce → Vzhled → Panel** má polohu a **Pozadí panelu** vybírá, jak je panel vykreslen: **Neprůhledný panel**, **Skleněný panel** (průhledný, s rozmazáním toho, co je za ním), nebo **Průhledný panel**.
 
 Tytéž věci mají příkazy, což je to, co chcete pro nastavení [dotfiles](31-dotfiles.md):
@@ -91,6 +93,7 @@ Tytéž věci mají příkazy, což je to, co chcete pro nastavení [dotfiles](3
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

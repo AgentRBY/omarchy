@@ -83,6 +83,8 @@ La barra es configura sola. No heu d'obrir un fitxer de configuració per moure 
 
 Agafeu un tros buit de la barra al voltant del centre i arrossegueu-lo cap a una altra vora de la pantalla, i la barra s'hi mourà — esquerra, dreta, dalt o baix, tot funciona, i cada giny s'hi adapta (les barres verticals passen a formes compactes només amb icones). Un clic mantingut inicia el mateix arrossegament. Feu doble clic esquerre en aquest mateix espai buit per fer rotar el fons de la barra de transparent a de vidre a opac. I arrossegueu qualsevol giny per reordenar-lo o llançar-lo a una altra secció.
 
+Un giny que voleu tenir a mà però no sempre a la vista pot anar al calaix de la safata: arrossegueu-lo damunt la safata i el calaix s'obrirà per acollir-lo. S'hi queda darrere les icones de les aplicacions, apareix sempre que el calaix ho fa i manté el calaix obert mentre el seu panell és obert. Arrossegueu-lo de nou cap a la barra per tornar-lo al seu lloc.
+
 Si preferiu triar des d'un menú, **Activa → Aparença → Barra de menú** té la posició, i **Fons de la barra** tria com es dibuixa la barra: **Barra opaca**, **Barra de vidre** (transparència, amb el que hi ha darrere difuminat) o **Barra transparent**.
 
 Les mateixes coses tenen ordres, que és el que voleu per a una configuració de [dotfiles](31-dotfiles.md):
@@ -91,6 +93,7 @@ Les mateixes coses tenen ordres, que és el que voleu per a una configuració de
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

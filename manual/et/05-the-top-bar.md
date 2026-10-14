@@ -83,6 +83,8 @@ Riba seadistab ennast ise. Sa ei pea asjade liigutamiseks seadistusfaili avama.
 
 Haara keske kandis tühja riba kohta ja lohista see teise ekraaniserva poole ja riba liigub sinna — vasak, parem, ülemine või alumine toimivad kõik ja iga vidin kohaneb (vertikaalsed ribad lähevad tagasi kompaktsetele ainult-ikoonidega vormidele). Klõpsa-ja-hoiab alustab sama lohistamist. Tee samal tühjal ruumil topeltvasakklõps, et riba taustal ringi läbi käia läbipaistvast klaasjani läbipaistmatuni. Ja lohista ükskõik millist vidinat, et seda ümber järjestada või teise sektsiooni visata.
 
+Vidina, mida soovid käepärast hoida, kuid mitte kogu aeg silme ees, võid panna aluse sahtlisse: lohista see alusele ja sahtel avaneb, et see vastu võtta. See jääb sinna rakenduste ikoonide järele, ilmub iga kord, kui sahtel avaneb, ja hoiab sahtli avatuna, kuni selle paneel on üleval. Lohista see ribale tagasi, et see oma kohale panna.
+
 Kui eelistad menüüst valida, on **Käivita → Välimus → Menüüriba** all asukoht ja **Riba taust** valib, kuidas riba joonistatakse: **Läbipaistmatu riba**, **Klaasriba** (läbipaistev, taustal olev hägustatud) või **Läbipaistev riba**.
 
 Samadel asjadel on käsud, mida soovid [dotfiles](31-dotfiles.md) seadistuse jaoks:
@@ -91,6 +93,7 @@ Samadel asjadel on käsud, mida soovid [dotfiles](31-dotfiles.md) seadistuse jao
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

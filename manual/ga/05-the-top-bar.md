@@ -83,6 +83,8 @@ Cumraíonn an barra é féin. Ní gá duit comhad cumraíochta a oscailt chun ru
 
 Gabh paiste folamh den bharra timpeall an láir agus tarraing i dtreo imeall scáileáin eile é, agus bogann an barra ann — oibríonn clé, deas, barr, nó bun ar fad, agus oiriúnaíonn gach giuirléid (titeann barraí ingearacha ar ais go foirmeacha dlúth deilbhín-amháin). Tosaíonn cliceáil-agus-coinnigh an tarraingt céanna. Díchliceáil ar chlé an spás folamh céanna sin chun cúlra an bharra a thimthriall ó ghlan go gloineach go teimhneach. Agus tarraing aon ghiuirléid chun í a athordú nó í a chaitheamh isteach i gcuid eile.
 
+Is féidir le giuirléid is mian leat a bheith thart ach nach mbíonn i radharc i gcónaí dul i dtrarraiceán an tráidire: tarraing í ar an tráidire, agus osclaíonn an tarraiceán chun í a ghlacadh. Suíonn sí ann i ndiaidh deilbhíní na n-aip, taispeántar í aon uair a thaispeántar an tarraiceán, agus coinníonn sí a tarraiceán ar oscailt fad is atá a painéal ar oscailt. Tarraing ar ais amach ar an mbarra í chun í a chur ar ais.
+
 Más fearr leat roghnú ó roghchlár, tá an suíomh ag **Spreag → Cuma → Barra Roghchláir**, agus roghnaíonn **Cúlra Barra** conas a tharraingítear an barra: **Barra Teimhneach**, **Barra Gloineach** (trédhearcach, leis an méid atá taobh thiar de doiléirithe), nó **Barra Glan**.
 
 Tá orduithe ag na rudaí céanna, arb é an méid is mian leat do shocrú [dotfiles](31-dotfiles.md):
@@ -91,6 +93,7 @@ Tá orduithe ag na rudaí céanna, arb é an méid is mian leat do shocrú [dotf
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

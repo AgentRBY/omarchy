@@ -83,6 +83,8 @@ De balk configureert zichzelf. Je hoeft geen configbestand te openen om dingen t
 
 Pak een leeg stukje van de balk rond het midden en sleep het naar een andere schermrand, en de balk verplaatst daarheen — links, rechts, boven of onder werken allemaal, en elke widget past zich aan (verticale balken vallen terug op compacte alleen-pictogram vormen). Klikken en vasthouden start dezelfde sleepactie. Dubbel-linksklik op diezelfde lege ruimte om de balkachtergrond te doorlopen van doorzichtig naar glazen naar ondoorzichtig. En sleep elke widget om hem te herschikken of in een andere sectie te gooien.
 
+Een widget die je wel bij de hand wilt hebben maar niet altijd in beeld, kan in de lade van het systeemvak: sleep hem naar het systeemvak, en de lade opent om hem te ontvangen. Daar zit hij achter de app-pictogrammen, verschijnt hij telkens als de lade dat doet, en houdt hij de lade open zolang zijn paneel openstaat. Sleep hem terug naar buiten op de balk om hem terug te zetten.
+
 Als je liever uit een menu kiest, heeft **Activeren → Weergave → Menubalk** de positie, en **Balkachtergrond** kiest hoe de balk wordt getekend: **Ondoorzichtige balk**, **Glazen balk** (doorschijnend, met wat erachter zit vervaagd), of **Doorzichtige balk**.
 
 Dezelfde dingen hebben commando's, wat is wat je wilt voor een [dotfiles](31-dotfiles.md)-setup:
@@ -91,6 +93,7 @@ Dezelfde dingen hebben commando's, wat is wat je wilt voor een [dotfiles](31-dot
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

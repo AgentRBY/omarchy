@@ -83,6 +83,8 @@ Stikan stillir sig sjálf. Þú þarft ekki að opna stillingarskrá til að fæ
 
 Gríptu í tóman blett á stikunni í kringum miðjuna og dragðu hann í átt að öðrum skjájaðri, og stikan færist þangað — vinstri, hægri, efst eða neðst virkar allt, og hver græja aðlagast (lóðréttar stikur falla aftur í þéttar form með aðeins táknum). Smellur-og-halda byrjar sama drag. Tvívinstri-smelltu á sama tóma blettinn til að skipta bakgrunni stikunnar úr tærum í glerkenndan í ógegnsæjan. Og dragðu hvaða græju sem er til að endurraða henni eða kasta henni í annan hluta.
 
+Græja sem þú vilt hafa við höndina en ekki alltaf í augsýn getur farið í skúffu bakkans: dragðu hana á bakkann og skúffan opnast til að taka við henni. Hún situr þar á eftir forritatáknunum, birtist alltaf þegar skúffan gerir það og heldur skúffunni opinni á meðan spjaldið hennar er opið. Dragðu hana aftur út á stikuna til að setja hana til baka.
+
 Ef þú vilt frekar velja úr valmynd hefur **Kveikja → Útlit → Valmyndastika** staðsetninguna, og **Bakgrunnur stiku** velur hvernig stikan er teiknuð: **Ógegnsæ stika**, **Glerstika** (gegnumskyggn, með því sem er á bak við hana þokað) eða **Tær stika**.
 
 Sömu hlutir hafa skipanir, sem er það sem þú vilt fyrir [dotfiles](31-dotfiles.md)-uppsetningu:
@@ -91,6 +93,7 @@ Sömu hlutir hafa skipanir, sem er það sem þú vilt fyrir [dotfiles](31-dotfi
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

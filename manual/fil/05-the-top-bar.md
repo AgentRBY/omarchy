@@ -83,6 +83,8 @@ Ang bar mismo ang nagko-configure. Hindi mo kailangang magbukas ng config file p
 
 Hawakan ang isang bakanteng bahagi ng bar sa paligid ng gitna at i-drag ito papunta sa ibang gilid ng screen, at lilipat ang bar roon — kaliwa, kanan, itaas, o ibaba ay gumagana lahat, at ang bawat widget ay umaangkop (ang mga patayong bar ay bumabalik sa mga compact na anyong icon-only). Sinisimulan ng click-and-hold ang parehong drag. I-double-left-click ang parehong bakanteng espasyong iyon para i-cycle ang background ng bar mula clear papunta sa glassy papunta sa opaque. At i-drag ang anumang widget para muling ayusin ito o ihagis ito sa ibang seksyon.
 
+Ang isang widget na gusto mong nasa paligid ngunit hindi palaging nakikita ay maaaring ilagay sa drawer ng tray: i-drag ito papunta sa tray, at bubukas ang drawer para tanggapin ito. Nakaupo ito roon pagkatapos ng mga icon ng app, lumalabas tuwing lumalabas ang drawer, at pinananatiling bukas ang drawer nito habang nakabukas ang panel nito. I-drag ito pabalik palabas papunta sa bar para ibalik ito.
+
 Kung mas gusto mong pumili mula sa isang menu, ang **Mag-trigger → Hitsura → Menu Bar** ay mayroong posisyon, at ang **Background ng Bar** ang pumipili kung paano iguguhit ang bar: **Opaque na Bar**, **Mala-salaming Bar** (see-through, na naka-blur ang nasa likod nito), o **Malinaw na Bar**.
 
 Ang parehong mga bagay ay may mga command, na siyang gusto mo para sa isang [dotfiles](31-dotfiles.md) na setup:
@@ -91,6 +93,7 @@ Ang parehong mga bagay ay may mga command, na siyang gusto mo para sa isang [dot
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

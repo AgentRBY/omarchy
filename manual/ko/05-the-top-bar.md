@@ -83,6 +83,8 @@
 
 가운데 주변의 빈 바 부분을 잡아 다른 화면 가장자리 쪽으로 드래그하면 바가 그쪽으로 이동합니다 — 왼쪽, 오른쪽, 위쪽, 아래쪽 모두 작동하며, 모든 위젯이 적응합니다(수직 바는 간결한 아이콘 전용 형태로 대체됩니다). 클릭한 채로 길게 누르면 같은 드래그가 시작됩니다. 같은 빈 공간을 왼쪽 버튼으로 두 번 클릭하면 바 배경이 투명 → 유리질 → 불투명 순으로 순환합니다. 그리고 어느 위젯이든 드래그해 순서를 바꾸거나 다른 섹션으로 던질 수 있습니다.
 
+가까이 두고 싶지만 항상 눈에 보일 필요는 없는 위젯은 트레이의 서랍에 넣을 수 있습니다. 트레이 위로 드래그하면 서랍이 열려 위젯을 받아 줍니다. 위젯은 앱 아이콘 뒤에 자리하며, 서랍이 나타날 때마다 함께 표시되고, 자신의 패널이 떠 있는 동안에는 서랍을 열린 채로 유지합니다. 바 위로 다시 드래그해서 꺼내면 되돌릴 수 있습니다.
+
 메뉴에서 고르고 싶다면, **실행 → 모양 → 메뉴 막대**에 위치가 있고, **바 배경**에서 바가 그려지는 방식을 고릅니다: **불투명 바(Opaque Bar)**, **유리질 바(Glassy Bar)**(뒤에 있는 것이 흐려진 반투명), 또는 **투명 바(Clear Bar)**.
 
 같은 항목들에게 명령도 있으며, 이는 [dotfiles](31-dotfiles.md) 설정을 원할 때 필요한 것입니다:
@@ -91,6 +93,7 @@
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

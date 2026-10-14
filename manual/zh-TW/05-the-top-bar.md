@@ -83,6 +83,8 @@
 
 抓住選單列中央附近的一塊空白區域，把它往另一個螢幕邊緣拖，選單列就會移到那裡——左、右、上、下都行，而且每一個小工具都會適應（垂直列會退回到精簡的僅圖示形式）。按住點選也能開始同樣的拖曳。雙擊左鍵那同一塊空白區域，可以把選單列背景從透明循環到玻璃再到不透明。而拖曳任何小工具則可以重新排序它，或把它丟進另一個區段。
 
+你想要留在手邊、卻不想時時看到的小工具，可以放進系統匣的抽屜裡：把它拖到系統匣上，抽屜就會開啟來接住它。它會待在應用程式圖示後面，每次抽屜出現時也跟著出現，而且當它的面板開啟時，會讓抽屜保持開啟。把它拖回選單列上，就能放回原處。
+
 如果你比較喜歡從選單中選，**觸發 → 外觀 → 選單列**裡有位置，而**列背景**則選擇選單列的繪製方式：**不透明列**、**玻璃列**（半透明，背後內容經模糊處理），或**透明列**。
 
 同樣的事情也有指令，這正是你為 [dotfiles](31-dotfiles.md) 設定所需要的：
@@ -91,6 +93,7 @@
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

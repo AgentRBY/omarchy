@@ -83,6 +83,8 @@ Fältet konfigurerar sig själv. Du behöver inte öppna en konfigurationsfil f�
 
 Ta tag i en tom fläck av fältet runt mitten och dra den mot en annan skärmkant, så flyttar fältet dit — vänster, höger, överst eller underst fungerar alla, och varje widget anpassar sig (vertikala fält faller tillbaka till kompakta former med endast ikoner). Ett klick-och-håll startar samma drag. Dubbelvänsterklicka på samma tomma utrymme för att cykla fältbakgrunden från klar till glasig till ogenomskinlig. Och dra valfri widget för att ordna om den eller kasta den i en annan sektion.
 
+En widget du vill ha kvar men inte alltid vill se kan hamna i systemfältets låda: dra den till systemfältet, så öppnas lådan för att ta emot den. Den sitter där efter appikonerna, dyker upp när lådan gör det och håller lådan öppen medan dess panel är uppe. Dra tillbaka den ut på fältet för att sätta tillbaka den.
+
 Om du hellre vill välja från en meny har **Trigger → Appearance → Menu Bar** positionen, och **Bar Background** väljer hur fältet ritas: **Opaque Bar**, **Glassy Bar** (genomskinlig, med det bakom oskarpt) eller **Clear Bar**.
 
 Samma saker har kommandon, vilket är vad du vill ha för en [dotfiles](31-dotfiles.md)-konfiguration:
@@ -91,6 +93,7 @@ Samma saker har kommandon, vilket är vad du vill ha för en [dotfiles](31-dotfi
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

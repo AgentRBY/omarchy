@@ -83,6 +83,8 @@
 
 抓住栏中心周围的一块空白处，将其拖向另一个屏幕边缘，栏就会移到那里——左、右、顶部或底部都可以，每个小组件都会适应（垂直栏会退回到紧凑的仅图标形式）。单击并按住也会开始同样的拖动。双击同一空白处可循环栏背景，从透明到玻璃效果再到不透明。拖动任何小组件可重新排序它或将其扔到另一部分。
 
+想保留但不想始终露在外面的小组件，可以放进托盘的抽屉里：把它拖到托盘上，抽屉就会打开接纳它。它会排在应用图标之后，抽屉展开时随之出现，而且其面板打开期间会让所在的抽屉保持展开。把它拖回栏上即可放回原处。
+
 如果你更喜欢从菜单中选择，**触发 → 外观 → 菜单栏**中有位置，**栏背景**可选择栏的绘制方式：**不透明栏**、**玻璃栏**（半透明，其后面的内容模糊）或**透明栏**。
 
 同样的事情也有命令，这正是你在 [dotfiles](31-dotfiles.md) 设置中想要的：
@@ -91,6 +93,7 @@
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

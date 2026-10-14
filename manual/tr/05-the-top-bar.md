@@ -83,6 +83,8 @@ Her zaman görünür olmalarını tercih ederseniz, widget üzerinde `alwaysShow
 
 Çubuğun merkezinin etrafındaki boş bir yeri tutun ve başka bir ekran kenarına doğru sürükleyin; çubuk oraya taşınır — sol, sağ, üst veya alt hepsi çalışır ve her widget buna uyum sağlar (dikey çubuklar kompakt yalnızca simge biçimlerine döner). T tıklayıp basılı tutmak aynı sürüklemeyi başlatır. Çubuk arka planını şeffaftan camlıya ve opaklıya döndürmek için aynı boş alana çift sol tıklayın. Ve herhangi bir widget'ı sürükleyerek yeniden sıralayın veya başka bir bölüme atın.
 
+El altında olmasını ancak her zaman görünmesini istemediğiniz bir widget tepsinin çekmecesinde durabilir: onu tepsinin üzerine sürükleyin, çekmece açılıp onu içine alır. Orada uygulama simgelerinin arkasında oturur, çekmece her açıldığında görünür ve kendi paneli açık olduğu sürece çekmeceyi de açık tutar. Geri koymak için onu çubuğun üzerine geri sürükleyin.
+
 Bir menüden seçmeyi tercih ederseniz, **Tetikle → Görünüm → Menü Çubuğu** konumuna sahiptir ve **Çubuk Arka Planı** çubuğun nasıl çizileceğini seçer: **Opak Çubuk**, **Cam Çubuk** (arkasındaki bulanıklaştırılmış olarak görülebilen) veya **Şeffaf Çubuk**.
 
 Aynı şeyler komutlara sahiptir; bu bir [dotfiles](31-dotfiles.md) kurulumu için isteyeceğiniz şeydir:
@@ -91,6 +93,7 @@ Aynı şeyler komutlara sahiptir; bu bir [dotfiles](31-dotfiles.md) kurulumu iç
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```

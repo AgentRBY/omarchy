@@ -83,6 +83,8 @@ Juosta susikonfigūruoja pati. Jums nereikia atidaryti konfigūracijos failo, ka
 
 Suimkite tuščią juostos lopinėlį aplink centrą ir vilkite jį link kito ekrano krašto, ir juosta persikels ten — kairė, dešinė, viršus ar apačia visi veikia, o kiekvienas valdiklis prisitaiko (vertikalios juostos pereina prie kompaktiškų, tik piktograminių formų). Spustelėjimas ir laikymas pradeda tą patį vilkimą. Dukart spustelėkite kairiuoju mygtuku tą pačią tuščią vietą, kad cikliškai pakeistumėte juostos foną iš skaidraus į stiklinį ir į nepermatomą. Ir vilkite bet kurį valdiklį, kad jį pertvarkytumėte arba įmestumėte į kitą dalį.
 
+Valdiklis, kurį norite turėti šalia, bet ne visada matyti, gali keliauti į dėklo stalčių: nutempkite jį ant dėklo, ir stalčius atsivers jį priimdamas. Ten jis būna už programų piktogramų, pasirodo kaskart, kai pasirodo stalčius, ir laiko stalčių atidarytą, kol rodomas jo skydelis. Norėdami grąžinti, nutempkite jį atgal į juostą.
+
 Jei mieliau rinktumėtės iš meniu, **Veiksmai → Išvaizda → Meniu juosta** turi padėtį, o **Juostos fonas** pasirenka, kaip juosta piešiama: **Nepermatoma juosta**, **Stiklinė juosta** (permatoma, su sulietu tuo, kas yra už jos) arba **Skaidri juosta**.
 
 Tie patys dalykai turi komandas, o tai yra tai, ko norite [dotfiles](31-dotfiles.md) sąrankai:
@@ -91,6 +93,7 @@ Tie patys dalykai turi komandas, o tai yra tai, ko norite [dotfiles](31-dotfiles
 omarchy bar position bottom
 omarchy bar background glassy  # opaque, glassy, none, or cycle
 omarchy bar move omarchy.clock --section center --index 0
+omarchy bar move omarchy.bluetooth --section tray  # into the tray's drawer
 omarchy bar set omarchy.clock format "HH:mm"
 omarchy bar defaults          # back to the shipped layout
 ```
