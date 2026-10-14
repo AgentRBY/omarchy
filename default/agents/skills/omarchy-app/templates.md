@@ -18,12 +18,14 @@ TEMPLATE = app
 
 HEADERS += \
     src/backend.h \
-    src/theme.h
+    src/theme.h \
+    src/translator.h
 
 SOURCES += \
     src/main.cpp \
     src/backend.cpp \
-    src/theme.cpp
+    src/theme.cpp \
+    src/translator.cpp
 
 RESOURCES += src/resources.qrc
 ```
@@ -85,6 +87,7 @@ exec makepkg -fsi "$@"
 
 #include "backend.h"
 #include "theme.h"
+#include "translator.h"
 
 int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
@@ -98,10 +101,17 @@ int main(int argc, char *argv[]) {
 
     QQuickStyle::setStyle("Material");
 
+    // Installed before anything is translated, and every qsTr() binding is
+    // re-evaluated when the Omarchy language changes.
+    Translator translator;
+    app.installTranslator(&translator);
+
     Theme theme;
     Backend backend;
 
     QQmlApplicationEngine engine;
+    QObject::connect(&translator, &Translator::changed, &engine, &QQmlEngine::retranslate);
+    engine.rootContext()->setContextProperty("translator", &translator);
     engine.rootContext()->setContextProperty("theme", &theme);
     engine.rootContext()->setContextProperty("backend", &backend);
     engine.load(QUrl("qrc:/Main.qml"));
@@ -218,6 +228,137 @@ void Theme::reload() {
 }
 ```
 
+## `src/translator.h` and `src/translator.cpp`
+
+Follows the language picked under Omarchy's Setup > Language, live. QML
+writes `qsTr("Save")` and C++ writes `tr("Save")`; the English text is the
+key, so an untranslated string simply shows in English. Tests construct it
+with a temp language file and catalog directory.
+
+```cpp
+#pragma once
+
+#include <QFileSystemWatcher>
+#include <QHash>
+#include <QTimer>
+#include <QTranslator>
+
+// Follows the language picked under Omarchy's Setup > Language. Catalogs are
+// flat JSON objects from English source text to translation, one per Omarchy
+// language code (i18n/da.json, i18n/pt-BR.json), so QML keeps plain
+// qsTr("Save") and C++ keeps tr("Save").
+class Translator : public QTranslator {
+    Q_OBJECT
+    Q_PROPERTY(QString language READ language NOTIFY changed)
+
+public:
+    explicit Translator(const QString &languageFile = {}, const QString &catalogDirectory = ":/i18n",
+                        QObject *parent = nullptr);
+
+    QString language() const { return m_language; }
+    bool isEmpty() const override { return m_strings.isEmpty(); }
+    QString translate(const char *context, const char *sourceText, const char *disambiguation = nullptr,
+                      int n = -1) const override;
+
+    static QString readLanguage(const QString &path);
+
+signals:
+    void changed();
+
+private:
+    void reload();
+
+    QString m_languageFile;
+    QString m_catalogDirectory;
+    QString m_language = "en";
+    QHash<QString, QString> m_strings;
+    QFileSystemWatcher m_watcher;
+    QTimer m_debounce;
+};
+```
+
+```cpp
+#include "translator.h"
+
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocale>
+#include <QRegularExpression>
+
+Translator::Translator(const QString &languageFile, const QString &catalogDirectory, QObject *parent)
+    : QTranslator(parent),
+      m_languageFile(languageFile.isEmpty() ? QDir::homePath() + "/.config/omarchy/language" : languageFile),
+      m_catalogDirectory(catalogDirectory) {
+    m_debounce.setSingleShot(true);
+    m_debounce.setInterval(80);
+    connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] { m_debounce.start(); });
+    connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this] { m_debounce.start(); });
+    connect(&m_debounce, &QTimer::timeout, this, &Translator::reload);
+    reload();
+}
+
+// One registry code on the first line; anything else, or no file, is English.
+QString Translator::readLanguage(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return "en";
+    const QString code = QString::fromUtf8(file.readLine()).trimmed();
+    static const QRegularExpression valid("^[a-z]{2,3}(-[A-Za-z]{2})?$");
+    return valid.match(code).hasMatch() ? code : "en";
+}
+
+QString Translator::translate(const char *, const char *sourceText, const char *, int) const {
+    // A null string tells Qt there is no translation, so it shows the English.
+    return m_strings.value(QString::fromUtf8(sourceText));
+}
+
+void Translator::reload() {
+    const auto paths = m_watcher.files() + m_watcher.directories();
+    if (!paths.isEmpty())
+        m_watcher.removePaths(paths);
+
+    // omarchy-language replaces the file, which drops it from the watch, and a
+    // first pick creates it; watch its directory too and re-arm every time.
+    const QString directory = QFileInfo(m_languageFile).absolutePath();
+    if (QFileInfo::exists(directory))
+        m_watcher.addPath(directory);
+    if (QFileInfo::exists(m_languageFile))
+        m_watcher.addPath(m_languageFile);
+
+    // Catalogs are compiled in, so only a different language needs a reload.
+    const QString language = readLanguage(m_languageFile);
+    if (language == m_language)
+        return;
+
+    // The base language first, then the regional file over it (pt, then
+    // pt-BR), so a missing string falls back toward English one step at a time.
+    QHash<QString, QString> strings;
+    QStringList codes{language.section('-', 0, 0)};
+    if (codes.first() != language)
+        codes << language;
+    for (const auto &code : codes) {
+        if (code == "en")
+            continue;
+        QFile catalog(m_catalogDirectory + "/" + code + ".json");
+        if (!catalog.open(QIODevice::ReadOnly))
+            continue;
+        const QJsonObject object = QJsonDocument::fromJson(catalog.readAll()).object();
+        for (auto it = object.begin(); it != object.end(); ++it)
+            if (it.value().isString() && !it.value().toString().isEmpty())
+                strings.insert(it.key(), it.value().toString());
+    }
+
+    m_language = language;
+    m_strings = strings;
+    // Dates, numbers, and Qt's own day and month names follow the language too.
+    QLocale::setDefault(QLocale(language));
+    emit changed();
+}
+```
+
 ## `src/backend.h` and `src/backend.cpp`
 
 The C++ side of the app's one job, exposed to QML as `backend`. Start with
@@ -271,7 +412,7 @@ ApplicationWindow {
     minimumWidth: 640
     minimumHeight: 460
     visible: true
-    title: "<name>"
+    title: "<Name>"
     color: "#0e0e10"
 
     Material.theme: Material.Dark
@@ -293,8 +434,26 @@ ApplicationWindow {
 <RCC>
     <qresource prefix="/">
         <file alias="Main.qml">Main.qml</file>
+        <file alias="i18n/da.json">i18n/da.json</file>
     </qresource>
 </RCC>
+```
+
+List one `<file>` line per catalog in `src/i18n/`. English needs no file.
+
+## `src/i18n/<code>.json`
+
+One flat JSON object per language, keyed by the English exactly as it appears
+in `qsTr()`, with Omarchy's language codes as file names
+(`$OMARCHY_PATH/default/i18n/locales.json` lists all 50: `da`, `de`, `pt-BR`,
+`zh-CN`, ...). Keep `%1` placeholders, which `.arg()` fills, so a translation
+can reorder them.
+
+```json
+{
+  "Save": "Gem",
+  "%1 clips": "%1 klip"
+}
 ```
 
 ## `tests/<name>_tests.pro`
@@ -307,14 +466,15 @@ TEMPLATE = app
 
 INCLUDEPATH += ../src
 
-HEADERS += ../src/backend.h ../src/theme.h
-SOURCES += <name>_tests.cpp ../src/backend.cpp ../src/theme.cpp
+HEADERS += ../src/backend.h ../src/theme.h ../src/translator.h
+SOURCES += <name>_tests.cpp ../src/backend.cpp ../src/theme.cpp ../src/translator.cpp
 ```
 
 ## `tests/<name>_tests.cpp`
 
-One `private slots:` case per behavior. These cover the backend and the
-theme fallback and accent read, so a broken theme shows up in `bin/test`.
+One `private slots:` case per behavior. These cover the backend, the theme
+fallback and accent read, and the translator's language file and fallbacks,
+so a broken theme or catalog shows up in `bin/test`.
 
 ```cpp
 #include <QDir>
@@ -324,6 +484,7 @@ theme fallback and accent read, so a broken theme shows up in `bin/test`.
 
 #include "backend.h"
 #include "theme.h"
+#include "translator.h"
 
 class <Name>Tests : public QObject {
     Q_OBJECT
@@ -356,6 +517,36 @@ private slots:
         Theme theme(dir.path());
         QCOMPARE(theme.accent(), QString("#112233"));
         QCOMPARE(theme.accentForeground(), QString("white"));
+    }
+
+    void translatorFallsBackToEnglish()
+    {
+        QTemporaryDir dir;
+        Translator translator(dir.path() + "/language", dir.path());
+        QCOMPARE(translator.language(), QString("en"));
+        QVERIFY(translator.translate("Main", "Save").isNull());
+    }
+
+    void translatorFollowsTheLanguageFile()
+    {
+        QTemporaryDir dir;
+        write(dir.path() + "/language", "pt-BR\n");
+        write(dir.path() + "/pt.json", R"({"Save": "Guardar", "Open": "Abrir"})");
+        write(dir.path() + "/pt-BR.json", R"({"Save": "Salvar"})");
+
+        Translator translator(dir.path() + "/language", dir.path());
+        QCOMPARE(translator.language(), QString("pt-BR"));
+        QCOMPARE(translator.translate("Main", "Save"), QString("Salvar"));
+        QCOMPARE(translator.translate("Main", "Open"), QString("Abrir"));
+        QVERIFY(translator.translate("Main", "Quit").isNull());
+    }
+
+private:
+    static void write(const QString &path, const QByteArray &contents)
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(contents);
     }
 };
 
@@ -409,6 +600,10 @@ Terminal=false
 Categories=Utility;
 StartupWMClass=<name>
 ```
+
+Add `Name[<code>]=` and `Comment[<code>]=` lines for each language the app
+ships, so the launcher shows the translated name (`Name[da]=…`,
+`Comment[pt_BR]=…`; desktop files spell regions with an underscore).
 
 ## `pkgbuild/<name>.svg`
 

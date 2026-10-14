@@ -36,6 +36,34 @@ Text {
 - Keep network access explicit. Use fixed HTTPS sources, timeouts, response-size limits, and validation. For periodic background refreshes, disclose the behavior and let users enable or disable it. Never execute downloaded content or interpolate untrusted values into shell commands.
 - Add regression coverage for markup-shaped input and every shared tooltip or notification sink that receives dynamic text.
 
+## Translations
+
+Omarchy runs in 50 languages, and a plugin should follow the one picked under Setup > Language the way the built-in plugins do: live, without a shell restart. Ship the plugin's strings as flat JSON catalogs in an `i18n/` directory beside its QML, one file per Omarchy language code (`en.json`, `da.json`, `pt-BR.json`; `$OMARCHY_PATH/default/i18n/locales.json` lists all 50), and read them through `Commons.Translations`:
+
+```qml
+import qs.Commons as Commons
+
+Item {
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
+
+  Text {
+    textFormat: Text.PlainText
+    text: strings.t("panel.items").arg(count)
+  }
+}
+```
+
+```json
+{ "panel.items": "%1 items" }
+```
+
+- A string missing from the current language falls back to its base language (`pt-BR` to `pt`), then to `en.json`, then to the key, so a plugin can ship English alone and add languages one file at a time.
+- Keep each string whole with `%1` placeholders filled by `.arg()`; never glue translated fragments into a sentence, since other languages reorder words.
+- Keep calls to `strings.t(...)` inside bindings so a language switch re-renders them. Text built once when something happens keeps the old language until it is rebuilt.
+- Format dates with `Qt.locale(Commons.I18n.formatLocale)`, not `Qt.formatDate` or a bare `Qt.locale()`: those follow the system locale, which only changes at the next login.
+- Keep brand names, units, and keyboard keys as they are, and leave log and diagnostic output in English.
+- Use `strings.t()` only for the plugin's own text. `Commons.I18n` holds Omarchy's catalog, which can rename or drop its keys in any update.
+
 ## Bar Layout
 
 Use the `omarchy bar` group to move and manage widgets:

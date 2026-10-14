@@ -81,6 +81,18 @@ files committed.
   switch replaces files and symlinks, so re-arm the watcher on every change.
   Fall back to `#FFD60A` when Omarchy isn't there. `templates.md` has the
   `Theme` class. Never change Omarchy's config.
+- **Speak the user's language.** Omarchy runs in 50 languages, and the app
+  follows the one picked under Setup > Language, live, like the theme. Write
+  every visible string as `qsTr("Save")` in QML or `tr("Save")` in C++, with
+  `%1` placeholders filled by `.arg()` rather than sentences glued together,
+  and ship translations as `src/i18n/<code>.json` (English text to
+  translation) compiled into the binary. The `Translator` in `templates.md`
+  reads `~/.config/omarchy/language`, falls back from `pt-BR` to `pt` to
+  English per string, and sets the default `QLocale`, so `Qt.locale()` gives
+  day and month names in the same language. A binding that formats a date
+  should read `translator.language` so it re-renders on a switch. Translate
+  the `.desktop` file's `Name` and `Comment` too (`Name[da]=…`). Keep brand
+  names, units, and keyboard keys as they are.
 - **Keyboard first.** `?` shows every shortcut in an overlay, `Q` quits (and
   asks first when there's unsaved or unexported work), Space is the main
   action, Ctrl+Z / Ctrl+Shift+Z undo and redo. The README lists the shortcuts
@@ -101,6 +113,8 @@ files committed.
    reads the disk (the `Theme` takes the theme directory as an argument).
 3. Look at it. Take a screenshot with `omarchy capture screenshot fullscreen
    save` and check the window against the theme before calling it done.
+   Switch the language once (`omarchy language da`) and look again: longer
+   words must not clip, and nothing should still be in English.
 4. `bin/install` builds the package with `makepkg -fsi`, which installs the
    binary, the `.desktop` entry, and the icon. The app then appears in the
    Omarchy app launcher (`Super + Space`). Run it again after every change
