@@ -52,7 +52,7 @@ Svaki od tih direktorija već sadrži datoteku `.sample` koja pokazuje oblik hoo
 Izbornik Omarchy (`Super + Space`) može se proširiti vlastitim retcima uređivanjem `~/.config/omarchy/extensions/omarchy-menu.jsonc`. Unosi su ključani točkastim id-em, a id je ono što ih smješta u stablo, pa se `personal` pojavljuje na korijenskom izborniku, a `personal.notes` unutar njega:
 
 ```jsonc
-"personal": {"icon":"󰎞","label":"Personal"},
+"personal": {"icon":"","label":"Personal"},
 "personal.notes": {"icon":"󰎞","label":"Notes","action":"omarchy-launch-editor ~/notes"},
 ```
 

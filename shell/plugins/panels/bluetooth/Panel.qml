@@ -65,19 +65,19 @@ Panel {
 
   property int phraseIndex: 0
   readonly property var activePhrases: [
-    "Untangling wires",
-    "Streaming vikings",
-    "Pairing mysteries",
-    "Herding headsets",
-    "Taming radios",
-    "Summoning speakers",
-    "Wrangling codecs",
-    "Polishing packets"
+    Commons.I18n.t("bluetooth.phrase1"),
+    Commons.I18n.t("bluetooth.phrase2"),
+    Commons.I18n.t("bluetooth.phrase3"),
+    Commons.I18n.t("bluetooth.phrase4"),
+    Commons.I18n.t("bluetooth.phrase5"),
+    Commons.I18n.t("bluetooth.phrase6"),
+    Commons.I18n.t("bluetooth.phrase7"),
+    Commons.I18n.t("bluetooth.phrase8")
   ]
   readonly property bool rotatingPhrases: adapter && adapter.enabled
   readonly property string heroStatusText: {
-    if (!adapter) return "No adapter"
-    if (!adapter.enabled) return "Turned Off"
+    if (!adapter) return Commons.I18n.t("bluetooth.noAdapter")
+    if (!adapter.enabled) return Commons.I18n.t("bluetooth.turnedOff")
     return activePhrases[phraseIndex % activePhrases.length]
   }
 

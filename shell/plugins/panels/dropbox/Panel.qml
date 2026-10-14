@@ -27,16 +27,16 @@ Panel {
   property int phraseIndex: 0
 
   readonly property var activePhrases: [
-    "Filing files",
-    "Distributing data",
-    "Shuffling folders",
-    "Boxing bytes",
-    "Sorting stuff",
-    "Syncing secrets",
-    "Packing packets",
-    "Moving memories",
-    "Wrangling revisions",
-    "Cataloging chaos"
+    Commons.I18n.t("dropbox.phrase1"),
+    Commons.I18n.t("dropbox.phrase2"),
+    Commons.I18n.t("dropbox.phrase3"),
+    Commons.I18n.t("dropbox.phrase4"),
+    Commons.I18n.t("dropbox.phrase5"),
+    Commons.I18n.t("dropbox.phrase6"),
+    Commons.I18n.t("dropbox.phrase7"),
+    Commons.I18n.t("dropbox.phrase8"),
+    Commons.I18n.t("dropbox.phrase9"),
+    Commons.I18n.t("dropbox.phrase10")
   ]
   readonly property string heroPhraseText: activePhrases[phraseIndex % activePhrases.length]
   readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
@@ -44,7 +44,7 @@ Panel {
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color iconColor: dropbox.authenticated && dropbox.active ? foreground : dim
-  readonly property string toggleHint: dropbox.active ? "Pause syncing" : "Resume syncing"
+  readonly property string toggleHint: dropbox.active ? Commons.I18n.t("dropbox.pauseSyncing") : Commons.I18n.t("dropbox.resumeSyncing")
   readonly property color barIconColor: dropbox.authenticated && dropbox.active ? barForeground : Qt.darker(barForeground, 1.55)
   // Only claim the header cursor when the switch is actually on screen —
   // "header" stays navigable, but an absent CLI leaves nothing to highlight.
@@ -256,8 +256,8 @@ Panel {
             PanelHero {
               id: hero
               width: parent.width
-              title: "Dropbox"
-              meta: dropbox.active ? root.heroPhraseText : "Syncing paused"
+              title: Commons.I18n.t("dropbox.title")
+              meta: dropbox.active ? root.heroPhraseText : Commons.I18n.t("dropbox.syncingPaused")
               foreground: root.foreground
               fontFamily: root.fontFamily
               iconOpacity: dropbox.active ? 1.0 : 0.5

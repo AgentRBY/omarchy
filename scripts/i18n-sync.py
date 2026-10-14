@@ -163,12 +163,18 @@ def cmd_manifest(args):
         done = read_json(args.done_file, {})
     for code in codes:
         section = dict(manifest.get(code, {}))
+        present = translated_units(root, code)
         if done:
             units = done.get(code, [])
+            # A completion record only counts when the unit is real and its
+            # translation actually landed in the tree.
+            for unit in units:
+                if unit not in english or unit not in present:
+                    raise SyncError(f"completion record for {code} lists {unit}, which is not a translated unit in the tree")
         else:
             # Full regeneration trusts the tree: every present translation is
             # recorded against the current English source.
-            units = list(translated_units(root, code))
+            units = list(present)
         for unit in units:
             if unit in english:
                 section[unit] = source_hash(english[unit])
@@ -210,15 +216,14 @@ def allowlisted(root):
 
 def scan_candidates(root):
     allowed_strings, allowed_files = allowlisted(root)
-    en_values = set()
-    for unit, value in english_units(root).items():
-        if not unit.startswith("manual:"):
-            en_values.add(value)
     candidates = []
 
     def consider(kind, rel, lineno, literal):
         literal = literal.strip()
-        if not literal or literal in allowed_strings or literal in en_values:
+        # A literal that happens to equal a catalog value is still a
+        # candidate: membership suggests a reusable key, it does not mean
+        # this call site is translated.
+        if not literal or literal in allowed_strings:
             return
         if not re.search(r"[A-Za-z]{3}", literal):
             return
@@ -233,7 +238,7 @@ def scan_candidates(root):
         if "dev-gallery" in rel or rel in allowed_files:
             continue
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if "I18n.t(" in line:
+            if "I18n.t(" in line or line.lstrip().startswith("//"):
                 continue
             for match in QML_LITERAL.finditer(line):
                 consider("qml", rel, lineno, match.group(1))
@@ -350,15 +355,37 @@ def validate_catalog_value(source, value):
     return value
 
 
+FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
+INLINE_RE = re.compile(r"`([^`\n]+)`")
+REL_DEST_RE = re.compile(r"\]\((?!https?://)([^)\s]+)")
+
+
+def protected_inline(text):
+    # Machine-significant spans only: paths, variables, and omarchy
+    # commands. Prose in backticks (menu paths, placeholder words) may
+    # legitimately be localized, so it is not held verbatim.
+    from collections import Counter
+    kept = []
+    for span in INLINE_RE.findall(text):
+        if any(c in span for c in "/~$") or span.startswith(("omarchy ", "omarchy-")):
+            kept.append(re.sub(r"<[^>]+>", "<>", span))
+    return Counter(kept)
+
+
 def validate_manual(source, value):
+    from collections import Counter
     if not isinstance(value, str) or not value.strip():
         raise SyncError("empty translation")
     if len(HEADING_RE.findall(source)) != len(HEADING_RE.findall(value)):
         raise SyncError("heading count changed")
     if sorted(URL_RE.findall(source)) != sorted(URL_RE.findall(value)):
         raise SyncError("URLs changed")
-    if source.count("```") != value.count("```"):
-        raise SyncError("code fences changed")
+    if Counter(FENCE_RE.findall(source)) != Counter(FENCE_RE.findall(value)):
+        raise SyncError("code block contents changed")
+    if Counter(REL_DEST_RE.findall(source)) != Counter(REL_DEST_RE.findall(value)):
+        raise SyncError("relative link destinations changed")
+    if protected_inline(source) != protected_inline(value):
+        raise SyncError("commands or paths in inline code changed")
     return value if value.endswith("\n") else value + "\n"
 
 
@@ -585,6 +612,15 @@ def cmd_collect(args):
         raise SyncError("unexpected language artifact")
     done = {}
     for patch in patches:
+        # Completion sidecars count even when the patch is empty: an English
+        # edit can legitimately need no change in a language, and its
+        # manifest hash must still advance or it stays pending forever.
+        sidecar = directory / f"{patch.stem}.done.json"
+        if sidecar.exists():
+            recorded = read_json(sidecar, {})
+            if set(recorded) != {patch.stem}:
+                raise SyncError(f"completion sidecar {sidecar.name} must contain exactly its own locale")
+            done.update(recorded)
         if not patch.stat().st_size:
             continue
         result = git(root, "apply", "--numstat", "-z", str(patch), capture_output=True)
@@ -596,9 +632,6 @@ def cmd_collect(args):
             if not any(path == a or path.startswith(a + "/") for a in allowed) or ".." in Path(path).parts:
                 raise SyncError(f"artifact contains a path outside its language: {path}")
         git(root, "apply", "--index", str(patch))
-        sidecar = directory / f"{patch.stem}.done.json"
-        if sidecar.exists():
-            done.update(read_json(sidecar, {}))
     if done:
         manifest_args = argparse.Namespace(root=args.root, locales=",".join(sorted(done)),
                                            done_file=str(directory / "collected-done.json"))

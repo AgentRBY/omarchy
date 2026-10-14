@@ -35,23 +35,33 @@ assert(orphanMenu.length === 0, 'English menu catalog has no orphan ids', JSON.s
 
 // I18N_STRUCTURAL=1 is the pull-request gate: individual PRs only add the
 // English side, so missing translations are pending work for the sync
-// workflow rather than failures. Structure must still hold either way.
+// workflow rather than failures. So are translations the manifest marks
+// stale (their English changed since) and orphans awaiting pruning —
+// an English-only edit must never wedge on 49 other languages. Structure
+// of what IS current must still hold either way.
 const structural = process.env.I18N_STRUCTURAL === '1'
+const crypto = require('crypto')
+const manifest = readJson('translation-manifest.json')
+const sourceHash = (value) => crypto.createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 12)
+const isStale = (code, unit, englishValue) => !manifest[code] || manifest[code][unit] !== sourceHash(englishValue)
 const placeholders = (value) => (String(value).match(/%(\d|s|%)/g) || []).sort().join(' ')
 function assertCatalogMirrors(kind, english, catalog, code) {
   const problems = []
   const enKeys = Object.keys(english).sort()
   if (!structural && JSON.stringify(Object.keys(catalog).sort()) !== JSON.stringify(enKeys)) problems.push('key set differs')
-  for (const key of Object.keys(catalog))
-    if (!Object.hasOwn(english, key)) problems.push(`${key}: not in the English catalog`)
+  if (!structural)
+    for (const key of Object.keys(catalog))
+      if (!Object.hasOwn(english, key)) problems.push(`${key}: not in the English catalog`)
   for (const key of enKeys) {
     if (!Object.hasOwn(catalog, key)) continue
     if (kind === 'menu') {
+      const staleField = (f) => structural && Object.hasOwn(english[key], f) && isStale(code, `menu:${key}.${f}`, english[key][f])
       if (!structural && JSON.stringify(Object.keys(catalog[key]).sort()) !== JSON.stringify(Object.keys(english[key]).sort())) problems.push(`${key}: fields differ`)
-      else if (Object.keys(catalog[key]).some((f) => !Object.hasOwn(english[key], f) || typeof catalog[key][f] !== 'string' || catalog[key][f].length === 0)) problems.push(`${key}: invalid field`)
+      else if (Object.keys(catalog[key]).some((f) => (Object.hasOwn(english[key], f) || !structural) && (typeof catalog[key][f] !== 'string' || catalog[key][f].length === 0))) problems.push(`${key}: invalid field`)
+      else if (Object.keys(catalog[key]).some((f) => Object.hasOwn(english[key], f) && placeholders(catalog[key][f]) !== placeholders(english[key][f]) && !staleField(f))) problems.push(`${key}: placeholders differ`)
       else if (!structural && Object.keys(english[key]).some((f) => typeof catalog[key][f] !== 'string' || catalog[key][f].length === 0)) problems.push(`${key}: untranslated field`)
     } else if (typeof catalog[key] !== 'string' || catalog[key].length === 0) problems.push(`${key}: untranslated`)
-    else if (placeholders(catalog[key]) !== placeholders(english[key])) problems.push(`${key}: placeholders differ`)
+    else if (placeholders(catalog[key]) !== placeholders(english[key]) && !(structural && isStale(code, `${kind}:${key}`, english[key]))) problems.push(`${key}: placeholders differ`)
     if (problems.length > 5) break
   }
   assert(problems.length === 0, `${code}/${kind}.json ${structural ? 'is structurally sound' : 'mirrors the English catalog'}`, JSON.stringify(problems))
@@ -144,7 +154,8 @@ for (const code of codes) {
   const extra = chapters.filter((file) => !englishManual.includes(file))
   const empty = chapters.filter((file) => fs.readFileSync(path.join(dir, file), 'utf8').trim().length === 0)
   if (structural) {
-    assert(extra.length === 0 && empty.length === 0, `manual/${code} chapters are a translated subset of English`, JSON.stringify([...extra, ...empty]))
+    // Extra chapters are prune-pending (their English was deleted or renamed).
+    assert(empty.length === 0, `manual/${code} chapters present are translated`, JSON.stringify(empty))
   } else {
     const missing = englishManual.filter((file) => !chapters.includes(file))
     assert(JSON.stringify(chapters) === JSON.stringify(englishManual) && empty.length === 0, `manual/${code} has every English chapter translated`, JSON.stringify([...missing, ...empty]))
@@ -301,6 +312,34 @@ assert_bash_equal "$pending_units" '["manual:02-new.md","shell:a.one"]' "sync de
 printf 'Text {\n  text: "Brand new string"\n}\n' >"$fix/shell/Panel.qml"
 scan_strings=$(python3 "$ROOT/scripts/i18n-sync.py" --root "$fix" extract-scan | jq -c '[.candidates[].string]')
 assert_bash_equal "$scan_strings" '["Brand new string"]' "extract-scan finds embedded English literals"
+
+# Collect trusts nothing from a runner: a sidecar naming another locale is
+# rejected, while an empty patch with a truthful sidecar still advances
+# the manifest (an English edit may need no change in a language).
+git -C "$fix" init -q
+git -C "$fix" config user.email test@example.com
+git -C "$fix" config user.name Test
+git -C "$fix" add -A && git -C "$fix" commit -qm fixture
+mkdir -p "$work/artifacts"
+: >"$work/artifacts/da.patch"
+printf '{"fr": ["shell:a.two"]}\n' >"$work/artifacts/da.done.json"
+if python3 "$ROOT/scripts/i18n-sync.py" --root "$fix" collect "$work/artifacts" --expected da >/dev/null 2>&1; then
+  fail "collect rejects a sidecar naming another locale"
+else
+  pass "collect rejects a sidecar naming another locale"
+fi
+printf '{"da": ["shell:a.two"]}\n' >"$work/artifacts/da.done.json"
+if python3 "$ROOT/scripts/i18n-sync.py" --root "$fix" collect "$work/artifacts" --expected da >/dev/null 2>&1; then
+  pass "collect accepts an empty patch with a truthful sidecar"
+else
+  fail "collect accepts an empty patch with a truthful sidecar"
+fi
+printf '{"da": ["shell:a.missing"]}\n' >"$work/artifacts/da.done.json"
+if python3 "$ROOT/scripts/i18n-sync.py" --root "$fix" collect "$work/artifacts" --expected da >/dev/null 2>&1; then
+  fail "collect rejects completion for units not in the tree"
+else
+  pass "collect rejects completion for units not in the tree"
+fi
 
 # Every registry locale must be one glibc can actually generate.
 if [[ -f /usr/share/i18n/SUPPORTED ]]; then

@@ -662,16 +662,16 @@ Panel {
     }
 
     var phrases = []
-    if (week > 0) phrases.push(usage.formatTokenCount(week) + " tokens this week")
-    if (today > 0) phrases.push(usage.formatTokenCount(today) + " tokens today")
+    if (week > 0) phrases.push(Commons.I18n.t("agents.tokensThisWeek").arg(usage.formatTokenCount(week)))
+    if (today > 0) phrases.push(Commons.I18n.t("agents.tokensToday").arg(usage.formatTokenCount(today)))
     var topModel = ""
     for (var model in byModel) if (topModel === "" || byModel[model] > byModel[topModel]) topModel = model
-    if (topModel !== "" && byModel[topModel] > 0) phrases.push("Mostly " + topModel)
+    if (topModel !== "" && byModel[topModel] > 0) phrases.push(Commons.I18n.t("agents.mostlyModel").arg(topModel))
     var busiest = ""
     for (var date in byDay) if (busiest === "" || byDay[date] > byDay[busiest]) busiest = date
-    if (busiest !== "" && byDay[busiest] > 0) phrases.push("Busiest day: " + dayName(busiest))
-    if (prompts > 0) phrases.push(prompts + " prompt" + (prompts === 1 ? "" : "s") + " today")
-    if (sessions > 0) phrases.push(sessions + " session" + (sessions === 1 ? "" : "s") + " today")
+    if (busiest !== "" && byDay[busiest] > 0) phrases.push(Commons.I18n.t("agents.busiestDay").arg(dayName(busiest)))
+    if (prompts > 0) phrases.push(Commons.I18n.t("agents.promptsToday").arg(prompts))
+    if (sessions > 0) phrases.push(Commons.I18n.t("agents.sessionsToday").arg(sessions))
     return phrases
   }
   property int phraseIndex: 0
@@ -681,7 +681,7 @@ Panel {
   property string shownPhrase: ""
   readonly property string heroPhrase: addStage !== "" || blankSlate
     ? addHeading
-    : (shownPhrase !== "" ? shownPhrase : "Subscriptions")
+    : (shownPhrase !== "" ? shownPhrase : Commons.I18n.t("agents.subscriptions"))
 
   function showPhrase() {
     var n = summaryPhrases.length
@@ -693,7 +693,7 @@ Panel {
   function dayName(date) {
     var parsed = new Date(String(date || "") + "T00:00:00")
     if (isNaN(parsed.getTime())) return String(date || "")
-    return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][parsed.getDay()]
+    return Qt.locale(Commons.I18n.formatLocale).dayName([7, 1, 2, 3, 4, 5, 6][parsed.getDay()])
   }
 
   // Only speaks up when the numbers cover more than this machine.
@@ -752,8 +752,8 @@ Panel {
 
   // Adding takes over the hero's line, and the cursor starts over.
   readonly property string addHeading: picking || addProvider === ""
-    ? "Add an account"
-    : "Add " + (/^[AEIOU]/.test(addProviderName(addProvider)) ? "an " : "a ") + addProviderName(addProvider) + " account"
+    ? Commons.I18n.t("agents.addAccount")
+    : Commons.I18n.t("agents.addProviderAccount").arg(addProviderName(addProvider))
   onAddStageChanged: {
     phraseSwap.stop()
     if (hero) hero.metaOpacity = 1.0
