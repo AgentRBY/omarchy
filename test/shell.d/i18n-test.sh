@@ -83,7 +83,7 @@ function collectKeys(dir, extensions, pattern) {
   const walk = (current) => {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const full = path.join(current, entry.name)
-      if (entry.isDirectory()) walk(full)
+      if (entry.isDirectory()) { if (entry.name !== '__pycache__') walk(full) }
       else if (extensions.some((ext) => entry.name.endsWith(ext))) {
         for (const match of fs.readFileSync(full, 'utf8').matchAll(pattern)) found.add(match[1])
       }
@@ -374,6 +374,23 @@ assert_bash_equal "$pending_units" '["manual:02-new.md","shell:a.one"]' "sync de
 printf 'Text {\n  text: "Brand new string"\n}\n' >"$fix/shell/Panel.qml"
 scan_strings=$(python3 "$ROOT/scripts/i18n-sync.py" --root "$fix" extract-scan | jq -c '[.candidates[].string]')
 assert_bash_equal "$scan_strings" '["Brand new string"]' "extract-scan finds embedded English literals"
+
+# Any display-text property name counts, both arms of a ternary count, and a
+# bare list item counts; identifiers and lines marked "i18n: ignore" do not.
+cat >"$fix/shell/Panel.qml" <<'QML'
+Item {
+  activeTooltipText: "Allow notifications"
+  leftLabel: busy ? "Working" : "Ready now"
+  readonly property var phrases: [
+    "Hoarding joules",
+    "Braiding packets"
+  ]
+  colorRole: "bar.text"
+  property string statusText: "Checking…"  // i18n: ignore
+}
+QML
+scan_strings=$(python3 "$ROOT/scripts/i18n-sync.py" --root "$fix" extract-scan | jq -c '[.candidates[].string]')
+assert_bash_equal "$scan_strings" '["Allow notifications","Working","Ready now","Hoarding joules","Braiding packets"]' "extract-scan catches any display property, ternaries, and phrase lists"
 
 # Collect trusts nothing from a runner: a sidecar naming another locale is
 # rejected, while an empty patch with a truthful sidecar still advances

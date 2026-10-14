@@ -202,9 +202,18 @@ def cmd_pending(args):
 
 # ------------------------------------------------------------- extract scan
 
-QML_LITERAL = re.compile(
-    r'(?:text|placeholderText|title|label|tooltip|heading|message|confirmText|cancelText)\s*:\s*"([^"]*[A-Za-z]{3}[^"]*)"'
+# Any property whose name ends like display text (text, tooltipText,
+# activeTooltipText, leftLabel, placeholderText, ...), so a new property
+# name cannot slip past; every literal on that line counts, which covers
+# both arms of a ternary.
+QML_DISPLAY_PROPERTY = re.compile(
+    r'^\s*(?:readonly\s+)?(?:property\s+\w+\s+)?[A-Za-z]*(?:[tT]ext|[lL]abel|[tT]itle|[tT]ooltip|[pP]laceholder|[hH]eading|[mM]essage|[hH]int|[cC]aption|[sS]ubtitle)\s*:'
 )
+QML_STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')
+# A bare element of a string list, like a rotating hero phrase.
+QML_LIST_ITEM = re.compile(r'^\s*"([A-Z][a-z][^"]*\s[^"]*)",?\s*$')
+# Marks a line whose English must stay as-is (an IPC or stored value).
+IGNORE_MARK = "i18n: ignore"
 BIN_NOTIFY = re.compile(r'omarchy-notification-send[^\n]*"([A-Z][^"$]{3,})"')
 BIN_PROMPT = re.compile(r'(?:omarchy-menu-select|omarchy-menu-input)\s+"([A-Z][^"$]{2,})"|--title\s+"([A-Z][^"$]{2,})"')
 
@@ -227,6 +236,8 @@ def scan_candidates(root):
             return
         if not re.search(r"[A-Za-z]{3}", literal):
             return
+        if re.fullmatch(r"[a-z][a-z0-9_.\-]*", literal):
+            return  # an identifier, color role, or setting name, not prose
         if re.fullmatch(r"(\\u[0-9a-fA-F]{4})+", literal):
             return  # an escaped icon glyph, not prose
         if "%1" in literal or "I18n" in literal or "omarchy-i18n" in literal:
@@ -238,9 +249,12 @@ def scan_candidates(root):
         if "dev-gallery" in rel or rel in allowed_files:
             continue
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if "I18n.t(" in line or line.lstrip().startswith("//"):
+            if "I18n.t(" in line or IGNORE_MARK in line or line.lstrip().startswith("//"):
                 continue
-            for match in QML_LITERAL.finditer(line):
+            if QML_DISPLAY_PROPERTY.match(line):
+                for match in QML_STRING.finditer(line.split("//")[0]):
+                    consider("qml", rel, lineno, match.group(1))
+            elif match := QML_LIST_ITEM.match(line):
                 consider("qml", rel, lineno, match.group(1))
 
     for path in sorted((root / "bin").iterdir()):
@@ -407,13 +421,42 @@ def batch_catalog(items):
     return batches
 
 
-def translate_batch(batch, code, name, model):
+CATALOG_BRIEF = """Keys name where a string appears: ALL-CAPS English is a section header and stays upper case where the script has case. Keys ending in a number after "phrase" or "Phrase" (bluetooth.phrase3, power.chargingPhrase2) are deliberately playful rotating status lines such as "Spending joules" or "Braiding packets": recreate the playfulness idiomatically in two or three words rather than translating literally, in the spirit of the reference phrases. A value made only of Qt date-format letters (ddd, MMM, MMMM, d, yyyy) is a date pattern: return a valid Qt pattern natural for the language, quoting any literal letters in single quotes and never translating the pattern letters. Short duration suffixes (%1h, %1m, %1d) take the language's usual short abbreviation. A key ending in "One" is the exactly-one form of the sibling key without it. Keep "…" and "..." as given. Reuse the terminology of the reference translations."""
+
+
+def reference_translations(root, code, batch, limit=40):
+    """Existing translations from the batch's namespaces, for consistent terms."""
+    if root is None:
+        return {}
+    prefixes = {unit.rsplit(".", 1)[0] for unit in batch}
+    english = english_units(root)
+    translated = translated_units(root, code)
+    reference = {}
+    for unit, value in sorted(translated.items()):
+        if unit in batch or unit not in english or unit.startswith("manual:"):
+            continue
+        if unit.rsplit(".", 1)[0] in prefixes:
+            reference[unit] = {"en": english[unit], code: value}
+            if len(reference) >= limit:
+                break
+    return reference
+
+
+def translate_batch(batch, code, name, model, root=None):
     note = REGIONAL_NOTES.get(code, "")
+    reference = reference_translations(root, code, batch)
+    reference_block = f"""
+Reference: existing translations from the same areas, for terminology and tone (do not return these):
+<reference>
+{json.dumps(reference, ensure_ascii=False)}
+</reference>
+""" if reference else ""
     prompt = f"""Translate these Omarchy desktop UI strings from English into {name} ({code}).{(" " + note) if note else ""}
 Return ONLY a JSON object mapping each input key to its translated string, with exactly the same keys.
 Short, natural UI language; menu labels one or two words where the language allows.
 {BRIEF}
-<input>
+{CATALOG_BRIEF}
+{reference_block}<input>
 {json.dumps(batch, ensure_ascii=False)}
 </input>
 """
@@ -513,7 +556,7 @@ def cmd_translate(args):
 
     batches = batch_catalog(catalog_pending)
     with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        futures = {pool.submit(translate_batch, batch, code, name, args.model): batch for batch in batches}
+        futures = {pool.submit(translate_batch, batch, code, name, args.model, root): batch for batch in batches}
         for future in as_completed(futures):
             try:
                 translated = future.result()
