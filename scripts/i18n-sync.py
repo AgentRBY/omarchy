@@ -357,18 +357,21 @@ def validate_catalog_value(source, value):
 
 FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
 INLINE_RE = re.compile(r"`([^`\n]+)`")
-REL_DEST_RE = re.compile(r"\]\((?!https?://)([^)\s]+)")
+REL_DEST_RE = re.compile(r"\]\((?!<?https?://)([^)\s]+)")
 
 
 def protected_inline(text):
     # Machine-significant spans only: paths, variables, and omarchy
     # commands. Prose in backticks (menu paths, placeholder words) may
-    # legitimately be localized, so it is not held verbatim.
+    # legitimately be localized, so it is not held verbatim, and synopsis
+    # placeholders in <...> or [...] are erased before comparing for the
+    # same reason (<machine> and [file...] are words, not literals).
     from collections import Counter
     kept = []
     for span in INLINE_RE.findall(text):
         if any(c in span for c in "/~$") or span.startswith(("omarchy ", "omarchy-")):
-            kept.append(re.sub(r"<[^>]+>", "<>", span))
+            span = re.sub(r"<[^>]+>", "<>", span)
+            kept.append(re.sub(r"\[[^\]]+\]", "[]", span))
     return Counter(kept)
 
 

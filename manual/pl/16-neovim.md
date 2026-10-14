@@ -1,6 +1,6 @@
 # Neovim
 
-[Neovim](https://neovim.io/) to nowoczesna implementacja [edytora vi](https://en.wikipedia.org/wiki/Vi_(text_editor)) stworzonego przez Billa Joya już w 1976 roku. To edytor modalny, w którym tryb wstawiania i tryb poleceń są rozdzielone, i jest to w swoim rodzaju supermoc, gdy nauczysz się choćby podzbioru niesamowicie głębokiej listy poleceń klawiszowych. Ale ma też sporą krzywą uczenia się!
+[Neovim](https://neovim.io/) to nowoczesna implementacja [edytora vi](<https://en.wikipedia.org/wiki/Vi_(text_editor)>) stworzonego przez Billa Joya już w 1976 roku. To edytor modalny, w którym tryb wstawiania i tryb poleceń są rozdzielone, i jest to w swoim rodzaju supermoc, gdy nauczysz się choćby podzbioru niesamowicie głębokiej listy poleceń klawiszowych. Ale ma też sporą krzywą uczenia się!
 
 Jeśli jesteś zupełnie nowy w edycji w stylu vim, polecam serię [ThePrimeagen Vim As Your Editor](https://www.youtube.com/watch?v=X6AR2RMB5tE&list=PLm323Lc7iSW_wuxqmKx_xxNtJC_hJbQ7R) na YouTubie. Nauczy cię ona podstaw. Wiedz tylko, że w odróżnieniu od bardziej podobnych, mainstreamowych edytorów, opanowanie podstaw vim zajmie ci dłużej. Ale gdy już to zrobisz, nagroda jest też większa.
 
