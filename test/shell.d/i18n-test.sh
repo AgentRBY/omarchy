@@ -85,11 +85,14 @@ function assertCatalogMirrors(kind, english, catalog, code) {
 
 const enShell = readJson('en/shell.json')
 const enCli = readJson('en/cli.json')
+const enKeybindings = readJson('en/keybindings.json')
+const readOptional = (rel) => fs.existsSync(path.join(i18nDir, rel)) ? readJson(rel) : {}
 for (const code of codes) {
   if (code === 'en') continue
   assertCatalogMirrors('menu', enMenu, readJson(`${code}/menu.json`), code)
   assertCatalogMirrors('shell', enShell, readJson(`${code}/shell.json`), code)
   assertCatalogMirrors('cli', enCli, readJson(`${code}/cli.json`), code)
+  assertCatalogMirrors('keybindings', enKeybindings, readOptional(`${code}/keybindings.json`), code)
 }
 
 // Every catalog key must be referenced by the code that displays it, and
@@ -418,6 +421,8 @@ else
 fi
 
 extract_candidates=$(python3 "$ROOT/scripts/i18n-sync.py" extract-scan | jq -c '.candidates | length')
+keybindings_stale=$(python3 "$ROOT/scripts/i18n-sync.py" extract-scan | jq -c '.keybindingsCatalogStale')
+assert_bash_equal "$keybindings_stale" "false" "the English keybindings catalog matches the Hyprland bindings"
 assert_bash_equal "$extract_candidates" "0" "no embedded English literals await extraction"
 
 # A miniature tree exercises staleness: one key changed in English, one
@@ -453,6 +458,28 @@ assert_bash_equal "$pending_units" '["manual:02-new.md","shell:a.one"]' "sync de
 printf 'Text {\n  text: "Brand new string"\n}\n' >"$fix/shell/Panel.qml"
 scan_strings=$(python3 "$ROOT/scripts/i18n-sync.py" --root "$fix" extract-scan | jq -c '[.candidates[].string]')
 assert_bash_equal "$scan_strings" '["Brand new string"]' "extract-scan finds embedded English literals"
+
+# Keybinding descriptions come from the bind calls: plain strings, a
+# concatenation becomes a %1 pattern, bind_hold describes press and release,
+# and a nil description or a commented-out bind adds nothing.
+mkdir -p "$fix/default/hypr/bindings"
+cat >"$fix/default/hypr/bindings/test.lua" <<'LUA'
+o.bind("SUPER + K", "Keybindings", "omarchy-menu-keybindings")
+for workspace = 1, 9 do
+  o.bind("SUPER + " .. tostring(workspace), "Switch to workspace " .. workspace, hl.dsp.focus({ workspace = tostring(workspace) }))
+end
+o.bind_hold("F9", "Start dictation", "omarchy-dictation start", "Stop dictation", "omarchy-dictation stop")
+o.bind_toggle("SUPER + CTRL + N", "Toggle nightlight", "nightlight")
+o.bind(
+  "SUPER + CTRL + code:10",
+  "Bar panel " .. panel,
+  "omarchy-shell -q shell togglePanelAt right " .. panel
+)
+o.bind("switch:on:Lid Switch", nil, "omarchy-system-lid-close", { locked = true })
+-- o.bind("SUPER + X", "Commented out", "true")
+LUA
+keybinding_texts=$(cd "$fix" && python3 -c 'import importlib.util,json,sys; from pathlib import Path; spec=importlib.util.spec_from_file_location("s", sys.argv[1]); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print(json.dumps(sorted(m.keybinding_descriptions(Path(".")))))' "$ROOT/scripts/i18n-sync.py")
+assert_bash_equal "$keybinding_texts" '["Bar panel %1", "Keybindings", "Start dictation", "Stop dictation", "Switch to workspace %1", "Toggle nightlight"]' "keybinding descriptions are extracted from the bind calls"
 
 # Any display-text property name counts, both arms of a ternary count, and a
 # bare list item counts; identifiers and lines marked "i18n: ignore" do not.

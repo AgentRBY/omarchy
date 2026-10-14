@@ -111,7 +111,7 @@ def english_units(root):
     """Every translatable unit in English: unit id -> source text."""
     units = {}
     i18n = root / "default/i18n/en"
-    for kind in ("shell", "cli"):
+    for kind in ("shell", "cli", "keybindings"):
         for key, value in read_json(i18n / f"{kind}.json", {}).items():
             units[f"{kind}:{key}"] = value
     for mid, fields in read_json(i18n / "menu.json", {}).items():
@@ -125,7 +125,7 @@ def english_units(root):
 def translated_units(root, code):
     units = {}
     i18n = root / "default/i18n" / code
-    for kind in ("shell", "cli"):
+    for kind in ("shell", "cli", "keybindings"):
         for key, value in read_json(i18n / f"{kind}.json", {}).items():
             units[f"{kind}:{key}"] = value
     for mid, fields in read_json(i18n / "menu.json", {}).items():
@@ -297,6 +297,86 @@ def scan_candidates(root):
     return candidates
 
 
+# ------------------------------------------------------------- keybindings
+
+BIND_CALL = re.compile(r"\b(o\.(?:bind|rebind|bind_toggle|bind_hold)|hl\.bind)\(")
+LUA_STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+def lua_call_args(text, start):
+    """Top-level arguments of the call whose "(" is at start, as source text."""
+    args, depth, current, i, quote = [], 0, "", start + 1, None
+    while i < len(text):
+        char = text[i]
+        if quote:
+            current += char
+            if char == "\\":
+                current += text[i + 1]
+                i += 1
+            elif char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+            current += char
+        elif char in "({[":
+            depth += 1
+            current += char
+        elif char in ")}]":
+            if depth == 0:
+                args.append(current.strip())
+                return args
+            depth -= 1
+            current += char
+        elif char == "," and depth == 0:
+            args.append(current.strip())
+            current = ""
+        else:
+            current += char
+        i += 1
+    return args
+
+
+def lua_description(expression):
+    """A description argument as catalog text: literals kept, every other
+    term of a .. concatenation becomes %1, %2, ...; None when not text."""
+    parts = [part.strip() for part in expression.split("..")]
+    if not parts or not any(LUA_STRING.fullmatch(part) for part in parts):
+        return None
+    text, hole = "", 0
+    for part in parts:
+        literal = LUA_STRING.fullmatch(part)
+        if literal:
+            text += literal.group(1)
+        else:
+            hole += 1
+            text += f"%{hole}"
+    return text
+
+
+def keybinding_descriptions(root):
+    """Every description the shipped Hyprland bindings show in the
+    keybindings menu (Super+K), in English."""
+    found = set()
+    for path in sorted((root / "default/hypr/bindings").glob("*.lua")):
+        source = path.read_text(encoding="utf-8")
+        source = re.sub(r"--[^\n]*", "", source)
+        for match in BIND_CALL.finditer(source):
+            args = lua_call_args(source, match.end() - 1)
+            if match.group(1) == "hl.bind":
+                options = args[-1] if args else ""
+                described = re.search(r'description\s*=\s*("(?:[^"\\]|\\.)*"(?:\s*\.\.\s*[^,}]+)*)', options)
+                expressions = [described.group(1)] if described else []
+            elif match.group(1) == "o.bind_hold":
+                expressions = [args[i] for i in (1, 3) if i < len(args)]
+            else:
+                expressions = args[1:2]
+            for expression in expressions:
+                text = lua_description(expression)
+                if text:
+                    found.add(text)
+    return {text: text for text in sorted(found)}
+
+
 def menu_catalog_stale(root):
     """English menu catalog vs the shipped JSONC (the test's freshness rule)."""
     raw = (root / "default/omarchy/omarchy-menu.jsonc").read_text(encoding="utf-8")
@@ -322,9 +402,10 @@ def cmd_extract_scan(args):
     payload = {
         "candidates": candidates,
         "menuCatalogStale": expected_menu != current_menu,
+        "keybindingsCatalogStale": keybinding_descriptions(root) != read_json(root / "default/i18n/en/keybindings.json", {}),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    if args.check and (candidates or payload["menuCatalogStale"]):
+    if args.check and (candidates or payload["menuCatalogStale"] or payload["keybindingsCatalogStale"]):
         return 1
     return 0
 
@@ -459,21 +540,25 @@ def batch_catalog(items):
     return batches
 
 
-CATALOG_BRIEF = """Keys name where a string appears: ALL-CAPS English is a section header and stays upper case where the script has case. Keys ending in a number after "phrase" or "Phrase" (bluetooth.phrase3, power.chargingPhrase2) are deliberately playful rotating status lines such as "Spending joules" or "Braiding packets": recreate the playfulness idiomatically in two or three words rather than translating literally, in the spirit of the reference phrases. A value made only of Qt date-format letters (ddd, MMM, MMMM, d, yyyy) is a date pattern: return a valid Qt pattern natural for the language, quoting any literal letters in single quotes and never translating the pattern letters. Short duration suffixes (%1h, %1m, %1d) take the language's usual short abbreviation. A key ending in "One" is the exactly-one form of the sibling key without it. Keep "…" and "..." as given. Reuse the terminology of the reference translations."""
+CATALOG_BRIEF = """Keys name where a string appears: ALL-CAPS English is a section header and stays upper case where the script has case. Keys ending in a number after "phrase" or "Phrase" (bluetooth.phrase3, power.chargingPhrase2) are deliberately playful rotating status lines such as "Spending joules" or "Braiding packets": recreate the playfulness idiomatically in two or three words rather than translating literally, in the spirit of the reference phrases. A value made only of Qt date-format letters (ddd, MMM, MMMM, d, yyyy) is a date pattern: return a valid Qt pattern natural for the language, quoting any literal letters in single quotes and never translating the pattern letters. Short duration suffixes (%1h, %1m, %1d) take the language's usual short abbreviation. A key ending in "One" is the exactly-one form of the sibling key without it. Keep "…" and "..." as given. Keys starting with "keybindings:" are what a keyboard shortcut does, listed beside the shortcut in a searchable list: a short label in the style of a menu command, where %1 is a workspace, group, or panel number. Reuse the terminology of the reference translations."""
 
 
 def reference_translations(root, code, batch, limit=40):
     """Existing translations from the batch's namespaces, for consistent terms."""
     if root is None:
         return {}
-    prefixes = {unit.rsplit(".", 1)[0] for unit in batch}
+    def area(unit):
+        # Keybinding descriptions are keyed by their English text, not a
+        # dotted namespace; they all reference each other.
+        return "keybindings" if unit.startswith("keybindings:") else unit.rsplit(".", 1)[0]
+    prefixes = {area(unit) for unit in batch}
     english = english_units(root)
     translated = translated_units(root, code)
     reference = {}
     for unit, value in sorted(translated.items()):
         if unit in batch or unit not in english or unit.startswith("manual:"):
             continue
-        if unit.rsplit(".", 1)[0] in prefixes:
+        if area(unit) in prefixes:
             reference[unit] = {"en": english[unit], code: value}
             if len(reference) >= limit:
                 break
@@ -534,13 +619,13 @@ def split_unit(unit):
 
 def apply_catalog_translations(root, code, translated):
     """Merge {unit: value} into the locale's catalog files."""
-    by_kind = {"shell": {}, "cli": {}, "menu": {}}
+    by_kind = {"shell": {}, "cli": {}, "keybindings": {}, "menu": {}}
     for unit, value in translated.items():
         kind, rest = split_unit(unit)
         if kind in by_kind:
             by_kind[kind][rest] = value
     base = root / "default/i18n" / code
-    for kind in ("shell", "cli"):
+    for kind in ("shell", "cli", "keybindings"):
         if by_kind[kind]:
             path = base / f"{kind}.json"
             data = read_json(path, {})
@@ -557,11 +642,11 @@ def apply_catalog_translations(root, code, translated):
 
 def apply_prune(root, code, prune):
     base = root / "default/i18n" / code
-    data = {kind: read_json(base / f"{kind}.json", {}) for kind in ("shell", "cli", "menu")}
+    data = {kind: read_json(base / f"{kind}.json", {}) for kind in ("shell", "cli", "keybindings", "menu")}
     changed = set()
     for unit in prune:
         kind, rest = split_unit(unit)
-        if kind in ("shell", "cli") and rest in data[kind]:
+        if kind in ("shell", "cli", "keybindings") and rest in data[kind]:
             del data[kind][rest]
             changed.add(kind)
         elif kind == "menu":
@@ -640,6 +725,10 @@ def cmd_extract_apply(args):
     if expected_menu != current_menu:
         write_json(root / "default/i18n/en/menu.json", expected_menu, sort_keys=False)
         print("refreshed default/i18n/en/menu.json from the menu definition")
+    keybindings = keybinding_descriptions(root)
+    if keybindings != read_json(root / "default/i18n/en/keybindings.json", {}):
+        write_json(root / "default/i18n/en/keybindings.json", keybindings)
+        print("refreshed default/i18n/en/keybindings.json from the Hyprland bindings")
     candidates = scan_candidates(root)
     if not candidates:
         print("no embedded English literals found")
