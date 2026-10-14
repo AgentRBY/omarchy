@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell.Io
+import "Plural.js" as Plural
 
 // Strings for a plugin that ships its own catalogs, following the language
 // picked under Setup > Language the same way the shell's I18n does. Point it
@@ -8,7 +9,10 @@ import Quickshell.Io
 //
 //   Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
 //   Text { text: strings.t("panel.title") }
-//   Text { text: strings.t("panel.items").arg(count) }
+//   Text { text: strings.tn("panel.items", count).arg(Commons.I18n.formatNumber(count)) }
+//
+// A catalog value is a string, or an object of plural forms keyed by CLDR
+// category ({"one": "%1 item", "other": "%1 items"}) for strings that count.
 //
 // A string missing from the current language falls back to its base
 // language (pt-BR to pt), then to en.json, then to the key itself, so a
@@ -33,7 +37,19 @@ QtObject {
 
   function t(key, fallback) {
     var value = root.strings[key]
+    if (value && typeof value === "object") value = value.other
     if (typeof value === "string" && value.length > 0) return value
+    return fallback !== undefined ? fallback : key
+  }
+
+  // The form of a plural entry for count, by the language's plural rules.
+  // The layer that carries the entry decides which language's rules apply.
+  function tn(key, count, fallback) {
+    var layers = [[root.languageStrings, root.language], [root.baseStrings, root.baseLanguage], [root.englishStrings, "en"]]
+    for (var i = 0; i < layers.length; i++) {
+      var value = Plural.pick(layers[i][0][key], layers[i][1], count)
+      if (typeof value === "string" && value.length > 0) return value
+    }
     return fallback !== undefined ? fallback : key
   }
 
@@ -51,7 +67,7 @@ QtObject {
     var layers = [root.englishStrings, root.baseStrings, root.languageStrings]
     for (var i = 0; i < layers.length; i++)
       for (var key in layers[i])
-        if (typeof layers[i][key] === "string") merged[key] = layers[i][key]
+        if (typeof layers[i][key] === "string" || (layers[i][key] && typeof layers[i][key] === "object")) merged[key] = layers[i][key]
     root.strings = merged
   }
 

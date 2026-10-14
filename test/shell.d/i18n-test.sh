@@ -42,7 +42,11 @@ assert(orphanMenu.length === 0, 'English menu catalog has no orphan ids', JSON.s
 const structural = process.env.I18N_STRUCTURAL === '1'
 const crypto = require('crypto')
 const manifest = readJson('translation-manifest.json')
-const sourceHash = (value) => crypto.createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 12)
+// A plural entry hashes as Python's json.dumps(sort_keys=True) writes it.
+const canonical = (value) => typeof value === 'string' ? value
+  : '{' + Object.keys(value).sort().map((k) => `${JSON.stringify(k)}: ${JSON.stringify(value[k])}`).join(', ') + '}'
+const sourceHash = (value) => crypto.createHash('sha256').update(canonical(value), 'utf8').digest('hex').slice(0, 12)
+const Plural = requireFromRoot('shell/Commons/Plural.js')
 const isStale = (code, unit, englishValue) => !manifest[code] || manifest[code][unit] !== sourceHash(englishValue)
 // Only %1-style tokens count, as in scripts/i18n-sync.py: nothing escapes a
 // percent sign, and Turkish writes it before the number ("%%2" shows "%80").
@@ -62,6 +66,16 @@ function assertCatalogMirrors(kind, english, catalog, code) {
       else if (Object.keys(catalog[key]).some((f) => (Object.hasOwn(english[key], f) || !structural) && (typeof catalog[key][f] !== 'string' || catalog[key][f].length === 0))) problems.push(`${key}: invalid field`)
       else if (Object.keys(catalog[key]).some((f) => Object.hasOwn(english[key], f) && placeholders(catalog[key][f]) !== placeholders(english[key][f]) && !staleField(f))) problems.push(`${key}: placeholders differ`)
       else if (!structural && Object.keys(english[key]).some((f) => typeof catalog[key][f] !== 'string' || catalog[key][f].length === 0)) problems.push(`${key}: untranslated field`)
+    } else if (english[key] && typeof english[key] === 'object') {
+      // A plural entry: the language's categories, "other" with every
+      // placeholder, and no form inventing one.
+      const stale = structural && isStale(code, `${kind}:${key}`, english[key])
+      const forms = catalog[key]
+      const expected = placeholders(english[key].other)
+      if (!forms || typeof forms !== 'object') { if (!stale) problems.push(`${key}: not plural forms`) }
+      else if (!structural && JSON.stringify(Object.keys(forms).sort()) !== JSON.stringify(Plural.categories(code).slice().sort())) problems.push(`${key}: plural categories differ`)
+      else if (Object.values(forms).some((form) => typeof form !== 'string' || form.length === 0)) problems.push(`${key}: empty plural form`)
+      else if (!stale && (placeholders(forms.other || '') !== expected || Object.values(forms).some((form) => placeholders(form).split(' ').some((p) => p && !expected.split(' ').includes(p))))) problems.push(`${key}: placeholders differ`)
     } else if (typeof catalog[key] !== 'string' || catalog[key].length === 0) problems.push(`${key}: untranslated`)
     else if (placeholders(catalog[key]) !== placeholders(english[key]) && !(structural && isStale(code, `${kind}:${key}`, english[key]))) problems.push(`${key}: placeholders differ`)
     if (problems.length > 5) break
@@ -94,13 +108,13 @@ function collectKeys(dir, extensions, pattern) {
   walk(dir)
   return found
 }
-const shellKeys = collectKeys(path.join(root, 'shell'), ['.qml', '.js'], /(?:I18n\.t|[^a-zA-Z_.]t|translator\(tr\))\("([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)"/g)
+const shellKeys = collectKeys(path.join(root, 'shell'), ['.qml', '.js'], /(?:I18n\.tn?|[^a-zA-Z_.]tn?|translator\(tr\))\("([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)"/g)
 const unreferencedShell = Object.keys(enShell).filter((key) => !shellKeys.has(key))
 assert(unreferencedShell.length === 0, 'every shell catalog key is referenced', JSON.stringify(unreferencedShell))
 const unknownShell = [...shellKeys].filter((key) => !Object.hasOwn(enShell, key))
 assert(unknownShell.length === 0, 'every referenced shell key exists in the English catalog', JSON.stringify(unknownShell))
 
-const cliKeys = collectKeys(path.join(root, 'bin'), [''], /omarchy-i18n ([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)/g)
+const cliKeys = collectKeys(path.join(root, 'bin'), [''], /omarchy-i18n (?:--count \S+ )?([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)/g)
 const unreferencedCli = Object.keys(enCli).filter((key) => !cliKeys.has(key))
 assert(unreferencedCli.length === 0, 'every cli catalog key is referenced', JSON.stringify(unreferencedCli))
 const unknownCli = [...cliKeys].filter((key) => !Object.hasOwn(enCli, key))
@@ -207,6 +221,46 @@ for (const code of codes) {
 }
 JS
 
+# --- Plural rules and number formatting agree between shell and CLI ---
+
+# Plural.js (shell) and plural.jq (omarchy-i18n) hold the same CLDR rules;
+# compare every language over every count a UI is likely to show, and the
+# number formatting the two sides share.
+require_command jq
+counts='[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,19,20,21,22,25,100,101,102,103,111,112,121,1000,1001,1000000,2000000]'
+codes_json=$(jq -c 'keys' "$ROOT/default/i18n/locales.json")
+jq_categories=$(jq -c -n -L "$ROOT/default/i18n" --argjson codes "$codes_json" --argjson counts "$counts" \
+  'include "plural"; [$codes[] as $c | $counts[] as $n | plural_category($c; $n)]')
+jq_numbers=$(jq -c -n -L "$ROOT/default/i18n" --slurpfile registry "$ROOT/default/i18n/locales.json" \
+  'include "plural"; [$registry[0] | to_entries[] | .value as $r | ("13.1", "2026", "-0.5") | localize_number($r.decimal; $r.zeroDigit)]')
+JQ_CATEGORIES=$jq_categories JQ_NUMBERS=$jq_numbers CODES=$codes_json COUNTS=$counts run_node_test <<'JS'
+const fs = require('fs')
+const Plural = requireFromRoot('shell/Commons/Plural.js')
+const Numbers = requireFromRoot('shell/Commons/Numbers.js')
+const codes = JSON.parse(process.env.CODES)
+const counts = JSON.parse(process.env.COUNTS)
+const shell = codes.flatMap((code) => counts.map((n) => Plural.category(code, n)))
+const cli = JSON.parse(process.env.JQ_CATEGORIES)
+const disagree = shell.map((c, i) => c === cli[i] ? null : `${codes[Math.floor(i / counts.length)]}:${counts[i % counts.length]} ${c}/${cli[i]}`).filter(Boolean)
+assert(disagree.length === 0, 'shell and CLI plural rules agree for every language', JSON.stringify(disagree.slice(0, 5)))
+
+assertEqual(['one', 'few', 'many'].map((_, i) => Plural.category('ru', [21, 22, 25][i])).join(), 'one,few,many', 'Russian counts take one, few, and many')
+assertEqual([0, 1, 2, 3, 11, 100].map((n) => Plural.category('ar', n)).join(), 'zero,one,two,few,many,other', 'Arabic counts take all six forms')
+assertEqual(Plural.category('fr', 1000000), 'many', 'French millions take their own form')
+assertEqual(Plural.categories('ja').join(), 'other', 'Japanese has one form')
+assertEqual(Plural.categories('pl').join(), 'one,few,many,other', 'Polish needs one, few, many, and other')
+assertEqual(Plural.pick({ one: '%1 file', other: '%1 files' }, 'en', 1), '%1 file', 'pick chooses the form for the count')
+assertEqual(Plural.pick({ other: '%1 files' }, 'ru', 2), '%1 files', 'a missing form falls back to other')
+assertEqual(Plural.pick('plain', 'ru', 2), 'plain', 'a plain string ignores the count')
+
+const registry = JSON.parse(fs.readFileSync(path.join(root, 'default/i18n/locales.json'), 'utf8'))
+const shellNumbers = Object.values(registry).flatMap((r) => ['13.1', '2026', '-0.5'].map((v) => Numbers.format(v, undefined, r.decimal, r.zeroDigit)))
+assertDeepEqual(shellNumbers, JSON.parse(process.env.JQ_NUMBERS), 'shell and CLI write numbers the same way in every language')
+assertEqual(Numbers.format(13.14, 1, ',', '0'), '13,1', 'formatNumber rounds and uses the decimal separator')
+assertEqual(Numbers.format(13.5, 1, '٫', '۰'), '۱۳٫۵', 'formatNumber writes native digits')
+assertEqual(Object.values(registry).filter((r) => typeof r.decimal !== 'string' || typeof r.zeroDigit !== 'string').length, 0, 'every registry entry says how it writes numbers')
+JS
+
 # --- omarchy-language and omarchy-i18n behavior ---
 
 work=$(mktemp -d)
@@ -289,6 +343,29 @@ grep -q "$da_changed" "$NOTIFY_LOG" && pass "the language-change notification ar
 
 da_battery=$(jq -r '."battery.lowBody"' "$ROOT/default/i18n/da/cli.json" | sed 's/%1/12/')
 assert_bash_equal "$(omarchy-i18n battery.lowBody 12)" "$da_battery" "omarchy-i18n substitutes %1 and keeps a literal percent sign"
+
+# Plural entries pick their form by count, and plain-number arguments take
+# the language's decimal separator and digits.
+plural_root=$work/plural-root
+mkdir -p "$plural_root/default/i18n/en" "$plural_root/default/i18n/ru" "$plural_root/default/i18n/fa"
+cp "$ROOT/default/i18n/plural.jq" "$ROOT/default/i18n/locales.json" "$plural_root/default/i18n/"
+printf '{"files.count": {"one": "%%1 file", "other": "%%1 files"}, "power.rate": "%%1 W"}\n' >"$plural_root/default/i18n/en/cli.json"
+printf '{"files.count": {"one": "%%1 файл", "few": "%%1 файла", "many": "%%1 файлов", "other": "%%1 файла"}, "power.rate": "%%1 Вт"}\n' >"$plural_root/default/i18n/ru/cli.json"
+printf '{}\n' >"$plural_root/default/i18n/fa/cli.json"
+plural() { echo "$1" >"$work/plural-language"; OMARCHY_PATH=$plural_root OMARCHY_LANGUAGE_FILE=$work/plural-language omarchy-i18n "${@:2}"; }
+assert_bash_equal "$(plural en --count 1 files.count 1)" "1 file" "omarchy-i18n --count picks the English singular"
+assert_bash_equal "$(plural en --count 3 files.count 3)" "3 files" "omarchy-i18n --count picks the English plural"
+assert_bash_equal "$(plural ru --count 21 files.count 21) / $(plural ru --count 22 files.count 22) / $(plural ru --count 25 files.count 25)" "21 файл / 22 файла / 25 файлов" "omarchy-i18n --count follows Russian plural rules"
+assert_bash_equal "$(plural ru files.count 5)" "5 файла" "a plural entry without --count reads its other form"
+assert_bash_equal "$(plural ru power.rate 13.1)" "13,1 Вт" "a number argument takes the language's decimal separator"
+assert_bash_equal "$(plural fa --count 2 files.count 13.5)" "۱۳٫۵ files" "a number argument takes the language's digits, with the English entry as fallback"
+assert_bash_equal "$(plural ru power.rate 10.0.0.1)" "10.0.0.1 Вт" "an argument that is not a plain number passes through"
+assert_bash_equal "$(plural ru --number 13.1) $(plural fa --number 13.5)" "13,1 ۱۳٫۵" "omarchy-i18n --number writes one number in the language"
+if plural en --count many files.count 2>/dev/null; then
+  fail "omarchy-i18n rejects a non-numeric count"
+else
+  pass "omarchy-i18n rejects a non-numeric count"
+fi
 
 da_changed_raw=$(jq -r '."language.changed"' "$ROOT/default/i18n/da/cli.json")
 assert_bash_equal "$(omarchy-i18n language.changed 'Research & Development')" "${da_changed_raw//%1/"Research & Development"}" "omarchy-i18n keeps ampersands in arguments literal"
