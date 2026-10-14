@@ -56,8 +56,12 @@ BarWidget {
       root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
+  // Day and month names follow the Omarchy language, not the system locale,
+  // which only catches up at the next login.
+  readonly property var formatLocale: Qt.locale(I18n.formatLocale)
+
   function formatted(date) {
-    return Qt.formatDateTime(date, activeFormat.replace(/ww/g, Model.isoWeekLiteral(date.getFullYear(), date.getMonth(), date.getDate())))
+    return date.toLocaleString(root.formatLocale, activeFormat.replace(/ww/g, Model.isoWeekLiteral(date.getFullYear(), date.getMonth(), date.getDate())))
   }
 
   // ---- Calendar popup. Shape contract for shell.summon/hide/toggle
@@ -153,7 +157,7 @@ BarWidget {
     fixedHeight: root.vertical ? root.verticalLines.length * Style.bar.iconSlot : -1
     horizontalMargin: 8.75
     verticalPadding: 8.75
-    tooltipText: "Right-click to toggle format"
+    tooltipText: I18n.t("clock.toggleFormat")
 
     onPressed: function(b) {
       if (b === Qt.RightButton) root.cycleFormat()
