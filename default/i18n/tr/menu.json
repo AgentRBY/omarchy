@@ -1146,7 +1146,7 @@
     "title": "Yeniden Başlat"
   },
   "update.firmware": {
-    "label": "Firmware"
+    "label": "Bellenim"
   },
   "update.password": {
     "label": "Parola"
@@ -1173,7 +1173,7 @@
     "label": "Hyprsunset"
   },
   "update.process.shell": {
-    "label": "Shell"
+    "label": "Kabuk"
   },
   "update.config.hyprland": {
     "label": "Hyprland"
@@ -1188,7 +1188,7 @@
     "label": "Tmux"
   },
   "update.config.shell": {
-    "label": "Shell"
+    "label": "Kabuk"
   },
   "update.hardware.audio": {
     "label": "Ses"

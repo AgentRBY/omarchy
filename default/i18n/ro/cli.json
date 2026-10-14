@@ -59,6 +59,8 @@
   "clipboard.urlCopied": "URL copiat în clipboard",
   "common.disabled": "Dezactivat",
   "common.enabled": "Activat",
+  "common.no": "Nu",
+  "common.yes": "Da",
   "config.editing": "Se editează fișierul de configurare",
   "corners.followTheme": "Colțuri după temă",
   "corners.rounded": "Colțuri rotunjite pentru toate temele",
@@ -122,8 +124,11 @@
   "lock.didNotLock": "Ecranul nu s-a blocat înainte de suspendare",
   "lock.unlockedNoLockScreen": "Sesiunea a rămas deblocată (nu este configurat niciun ecran de blocare).",
   "lock.unlockedTimeout": "Sesiunea a rămas deblocată (shell-ul nu a securizat sesiunea în %1ms).",
-  "migrate.clickToRun": "Apasă pentru a rula %1 migrări în așteptare.",
-  "migrate.clickToRunOne": "Apasă pentru a rula 1 migrare în așteptare.",
+  "migrate.clickToRun": {
+    "few": "Clic pentru a rula %1 migrări în așteptare.",
+    "one": "Clic pentru a rula %1 migrare în așteptare.",
+    "other": "Clic pentru a rula %1 de migrări în așteptare."
+  },
   "migrate.pending": "Migrări Omarchy în așteptare",
   "monitor.extendedRestored": "Mod extins restabilit",
   "monitor.laptopDisabled": "Ecran laptop dezactivat",
@@ -158,16 +163,31 @@
   "preinstalls.confirmRemove": "Sigur vrei să elimini toate aplicațiile web preinstalate, wrapper-ele TUI și aplicațiile desktop?",
   "preinstalls.confirmRestore": "Sigur vrei să restaurezi toate aplicațiile web preinstalate, wrapper-ele TUI și aplicațiile desktop?",
   "reminder.cleared": "Toate memento-urile au fost șterse",
-  "reminder.count": "%1 memento-uri",
-  "reminder.countOne": "1 memento",
-  "reminder.customInMinutes": "%1 în %2 minute",
+  "reminder.count": {
+    "few": "%1 memento-uri",
+    "one": "%1 memento",
+    "other": "%1 de memento-uri"
+  },
+  "reminder.customInMinutes": {
+    "few": "%1 în %2 minute",
+    "one": "%1 în %2 minut",
+    "other": "%1 în %2 de minute"
+  },
   "reminder.durationMinutesSeconds": "%1min %2s",
   "reminder.durationSeconds": "%1s",
   "reminder.inRemaining": "%1 în %2 (%3)",
   "reminder.minuteLabel": "Memento de %1 min",
-  "reminder.minutesUp": "Cele %1 minute au expirat",
+  "reminder.minutesUp": {
+    "few": "%1 minute au expirat",
+    "one": "%1 minut a expirat",
+    "other": "%1 de minute au expirat"
+  },
   "reminder.none": "Niciun memento în așteptare",
-  "reminder.setForMinutes": "Memento setat pentru %1 minute",
+  "reminder.setForMinutes": {
+    "few": "Memento setat pentru %1 minute",
+    "one": "Memento setat pentru %1 minut",
+    "other": "Memento setat pentru %1 de minute"
+  },
   "reminder.setTooltip": "Setează memento",
   "reminder.title": "Memento",
   "reminder.upcoming": "Memento-uri viitoare",
@@ -216,6 +236,11 @@
   "system.shutdownFailed": "Oprirea a eșuat",
   "system.shutdownRetry": "Nu s-a putut finaliza oprirea. Încearcă din nou.",
   "system.shuttingDown": "Se oprește",
+  "tailscale.fileCount": {
+    "few": "%1 fișiere",
+    "one": "%1 fișier",
+    "other": "%1 de fișiere"
+  },
   "tailscale.received": "Primit %1",
   "tailscale.savedTo": "Salvat în %1",
   "tailscale.sendFailed": "Nu s-a putut trimite la %1",
@@ -261,7 +286,11 @@
   "update.kernelReboot": "Kernelul Linux a fost actualizat. Repornești?",
   "update.ready": "Gata de actualizare?",
   "update.rebootRequired": "Actualizările necesită repornire. Gata?",
-  "update.removeOrphans": "Elimini %1 pachet(e) orfan(e)?",
+  "update.removeOrphans": {
+    "few": "Elimini %1 pachete orfane?",
+    "one": "Elimini %1 pachet orfan?",
+    "other": "Elimini %1 de pachete orfane?"
+  },
   "update.whatsNew": "Noutăți: %1",
   "webapp.iconPlaceholder": "Nu s-a putut prelua automat faviconul. Introdu URL-ul pictogramei PNG sau numele pictogramei",
   "webapp.intro": "Hai să creăm o aplicație web nouă pe care o poți porni din lansatorul de aplicații.",

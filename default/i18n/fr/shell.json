@@ -17,19 +17,36 @@
   "agents.durationHoursMinutes": "%1 h %2 min",
   "agents.durationMinutes": "%1 min",
   "agents.durationNow": "maintenant",
-  "agents.freeResetOne": "1 réinitialisation gratuite",
-  "agents.freeResetOneExpires": "1 réinitialisation gratuite · la prochaine expire dans %1",
-  "agents.freeResets": "%1 réinitialisations gratuites",
-  "agents.freeResetsExpires": "%1 réinitialisations gratuites · la prochaine expire dans %2",
+  "agents.freeResets": {
+    "many": "%1 de réinitialisations gratuites",
+    "one": "%1 réinitialisation gratuite",
+    "other": "%1 réinitialisations gratuites"
+  },
+  "agents.freeResetsExpires": {
+    "many": "%1 de réinitialisations gratuites · prochaine expiration dans %2",
+    "one": "%1 réinitialisation gratuite · prochaine expiration dans %2",
+    "other": "%1 réinitialisations gratuites · prochaine expiration dans %2"
+  },
+  "agents.helpFireworksSignIn": "Définissez %1, exécutez %2, ou connectez-vous à Fireworks dans pi ou opencode.",
+  "agents.helpNotInPath": "%1 introuvable dans PATH",
+  "agents.helpRunToAuthenticate": "Exécutez %1 pour vous authentifier.",
+  "agents.helpRunToRestoreUsage": "Exécutez %1 pour restaurer l'utilisation officielle.",
+  "agents.helpScanFailed": "Échec de l'analyse d'utilisation de %1",
+  "agents.helpSignInExpired": "La connexion enregistrée de %1 a expiré. Lancez %1 pour la renouveler.",
+  "agents.helpStartOrRunToSignIn": "Lancez %1, ou exécutez %2, pour vous connecter.",
+  "agents.helpStartToSeeLimits": "Lancez %1 pour voir ses limites ; inutile de vous reconnecter.",
   "agents.lastUpdatedAgo": "Mis à jour il y a %1",
   "agents.lastUpdatedJustNow": "Mis à jour il y a moins d'une minute",
   "agents.lastUpdatedUnknown": "Heure de dernière mise à jour indisponible",
   "agents.limitsPaused": "Limites en pause",
   "agents.makeSomethingCool": "CRÉEZ QUELQUE CHOSE DE GÉNIAL",
-  "agents.merged": "Fusionné à partir de %1 appareils",
-  "agents.mergedOne": "Fusionné à partir d'1 appareil",
+  "agents.merged": {
+    "many": "Fusionné depuis %1 d’appareils",
+    "one": "Fusionné depuis %1 appareil",
+    "other": "Fusionné depuis %1 appareils"
+  },
   "agents.modelMonthly": "%1 Mensuel",
-  "agents.modelSession": "%1 Session",
+  "agents.modelSession": "Session %1",
   "agents.modelWeekly": "%1 hebdomadaire",
   "agents.mostlyModel": "Surtout %1",
   "agents.nameAccount": "Nommez ce compte. Il se connecte via une fenêtre privée, donc le compte actuel de votre navigateur n'est pas repris.",
@@ -37,7 +54,11 @@
   "agents.placeholderCode": "Code",
   "agents.placeholderWork": "Travail",
   "agents.plugin": "Plugin",
-  "agents.promptsToday": "%1 prompts aujourd'hui",
+  "agents.promptsToday": {
+    "many": "%1 de prompts aujourd’hui",
+    "one": "%1 prompt aujourd’hui",
+    "other": "%1 prompts aujourd’hui"
+  },
   "agents.providerLimitsUnavailable": "Limites %1 indisponibles",
   "agents.providerUnavailable": "%1 indisponible",
   "agents.reopenSignIn": "Rouvrir la page de connexion",
@@ -45,7 +66,11 @@
   "agents.scopedOther": "%1 : %2 % de son quota %3",
   "agents.scopedSession": "%1 : %2 % de son quota de session",
   "agents.scopedWeekly": "%1 : %2 % de son quota hebdomadaire",
-  "agents.sessionsToday": "%1 sessions aujourd'hui",
+  "agents.sessionsToday": {
+    "many": "%1 de sessions aujourd’hui",
+    "one": "%1 session aujourd’hui",
+    "other": "%1 sessions aujourd’hui"
+  },
   "agents.signInAgainAccount": "Se reconnecter à ce compte",
   "agents.signInAgainProvider": "Se reconnecter à %1",
   "agents.signInExpired": "Connexion expirée",
@@ -61,9 +86,18 @@
   "agents.syncMkdirFailed": "Échec mkdir de la synchronisation de l'utilisation",
   "agents.syncScanFailed": "Échec du scan de la synchronisation de l'utilisation",
   "agents.theme": "Thème",
+  "agents.tierPrepaid": "Prépayé",
   "agents.title": "Agents",
-  "agents.tokensThisWeek": "%1 jetons cette semaine",
-  "agents.tokensToday": "%1 jetons aujourd'hui",
+  "agents.tokensThisWeek": {
+    "many": "%1 de tokens cette semaine",
+    "one": "%1 token cette semaine",
+    "other": "%1 tokens cette semaine"
+  },
+  "agents.tokensToday": {
+    "many": "%1 de tokens aujourd’hui",
+    "one": "%1 token aujourd’hui",
+    "other": "%1 tokens aujourd’hui"
+  },
   "agents.unknownModel": "Inconnu",
   "agents.usageNotUpdated": "L'utilisation n'a pas encore été mise à jour.",
   "agents.usageUnavailable": "Utilisation indisponible",
@@ -142,7 +176,11 @@
   "bluetooth.turnedOff": "Désactivé",
   "clipboard.deleteHistory": "Supprimer tout l'historique du presse-papiers ?",
   "clipboard.empty": "Le presse-papiers est vide",
-  "clipboard.files": "%1 fichiers",
+  "clipboard.files": {
+    "many": "%1 de fichiers",
+    "one": "%1 fichier",
+    "other": "%1 fichiers"
+  },
   "clipboard.image": "Image",
   "clipboard.imageFrom": "Image de %1",
   "clipboard.screenshotFrom": "Capture d'écran de %1",
@@ -228,8 +266,16 @@
   "elsewhen.badgeTracked": "suivie",
   "elsewhen.clock": "Horloge",
   "elsewhen.dateFormat": "ddd d MMM",
-  "elsewhen.daysAhead": "+%1 jours",
-  "elsewhen.daysBehind": "-%1 jours",
+  "elsewhen.daysAhead": {
+    "many": "+%1 de jours",
+    "one": "+%1 jour",
+    "other": "+%1 jours"
+  },
+  "elsewhen.daysBehind": {
+    "many": "-%1 de jours",
+    "one": "-%1 jour",
+    "other": "-%1 jours"
+  },
   "elsewhen.daysShort": "%1 j",
   "elsewhen.here": "Il est %1 ici",
   "elsewhen.hereIn": "Il est %1 ici à %2",
@@ -267,7 +313,11 @@
   "menu.powerProfilePerformance": "performance",
   "menu.powerProfilePowerSaver": "économie d’énergie",
   "menu.selectPrompt": "Sélectionner",
-  "menu.selectedCount": "%1 sélectionnés",
+  "menu.selectedCount": {
+    "many": "%1 sélectionnés",
+    "one": "%1 sélectionné",
+    "other": "%1 sélectionnés"
+  },
   "monitor.brightness": "LUMINOSITÉ",
   "monitor.display": "Écran",
   "monitor.displayFocused": "%1 · actif",
@@ -285,6 +335,11 @@
   "monitor.textSize": "TAILLE DU TEXTE",
   "multiSelect.exited": "La commande d’options s’est terminée : %1",
   "multiSelect.invalidJson": "La commande d’options a produit un JSON invalide",
+  "multiSelect.selectedCount": {
+    "many": "%1 sélectionnés",
+    "one": "%1 sélectionné",
+    "other": "%1 sélectionnés"
+  },
   "multiSelect.timedOut": "La commande d’options a expiré",
   "network.automatic": "AUTOMATIQUE",
   "network.bandAuto": "Auto",
@@ -299,7 +354,7 @@
   "network.copyToClipboard": "Copier dans le presse-papiers",
   "network.disconnected": "Déconnecté",
   "network.disconnecting": "Déconnexion…",
-  "network.dnsCustom": "Personnalisé",
+  "network.dnsCustom": "Manuel",
   "network.dnsFromDhcp": "Utiliser le DNS du DHCP",
   "network.dnsProvider": "FOURNISSEUR DNS",
   "network.downloaded": "Téléchargé",
@@ -389,7 +444,7 @@
   "power.powerProfile": "PROFIL D'ALIMENTATION",
   "power.profileBalanced": "Équilibré",
   "power.profilePerformance": "Performance",
-  "power.profilePowerSaver": "Économie d'énergie",
+  "power.profilePowerSaver": "Économie",
   "power.threshold": "Seuil",
   "power.timeLeft": "Temps restant",
   "power.timeToFull": "Temps avant charge complète",

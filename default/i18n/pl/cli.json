@@ -59,6 +59,8 @@
   "clipboard.urlCopied": "URL skopiowany do schowka",
   "common.disabled": "Wyłączone",
   "common.enabled": "Włączone",
+  "common.no": "Nie",
+  "common.yes": "Tak",
   "config.editing": "Edycja pliku konfiguracyjnego",
   "corners.followTheme": "Narożniki zgodne z motywem",
   "corners.rounded": "Zaokrąglone narożniki dla wszystkich motywów",
@@ -122,8 +124,12 @@
   "lock.didNotLock": "Ekran nie zablokował się przed uśpieniem",
   "lock.unlockedNoLockScreen": "Sesja pozostała odblokowana (brak skonfigurowanego ekranu blokady).",
   "lock.unlockedTimeout": "Sesja pozostała odblokowana (powłoka nie zabezpieczyła sesji w ciągu %1ms).",
-  "migrate.clickToRun": "Kliknij, aby uruchomić %1 oczekujących migracji.",
-  "migrate.clickToRunOne": "Kliknij, aby uruchomić 1 oczekującą migrację.",
+  "migrate.clickToRun": {
+    "few": "Kliknij, aby uruchomić %1 oczekujące migracje.",
+    "many": "Kliknij, aby uruchomić %1 oczekujących migracji.",
+    "one": "Kliknij, aby uruchomić %1 oczekującą migrację.",
+    "other": "Kliknij, aby uruchomić %1 oczekującej migracji."
+  },
   "migrate.pending": "Oczekujące migracje Omarchy",
   "monitor.extendedRestored": "Przywrócono tryb rozszerzony",
   "monitor.laptopDisabled": "Ekran laptopa wyłączony",
@@ -158,16 +164,35 @@
   "preinstalls.confirmRemove": "Czy na pewno chcesz usunąć wszystkie preinstalowane aplikacje internetowe, nakładki TUI i aplikacje pulpitu?",
   "preinstalls.confirmRestore": "Czy na pewno chcesz przywrócić wszystkie preinstalowane aplikacje internetowe, nakładki TUI i aplikacje pulpitu?",
   "reminder.cleared": "Wszystkie przypomnienia wyczyszczono",
-  "reminder.count": "%1 przypomnień",
-  "reminder.countOne": "1 przypomnienie",
-  "reminder.customInMinutes": "%1 za %2 minut",
+  "reminder.count": {
+    "few": "%1 przypomnienia",
+    "many": "%1 przypomnień",
+    "one": "%1 przypomnienie",
+    "other": "%1 przypomnienia"
+  },
+  "reminder.customInMinutes": {
+    "few": "%1 za %2 minuty",
+    "many": "%1 za %2 minut",
+    "one": "%1 za %2 minutę",
+    "other": "%1 za %2 minuty"
+  },
   "reminder.durationMinutesSeconds": "%1 min %2 s",
   "reminder.durationSeconds": "%1 s",
   "reminder.inRemaining": "%1 za %2 (%3)",
   "reminder.minuteLabel": "%1-minutowe przypomnienie",
-  "reminder.minutesUp": "Twoje %1 minut minęło",
+  "reminder.minutesUp": {
+    "few": "Upłynęły %1 minuty",
+    "many": "Upłynęło %1 minut",
+    "one": "Upłynęła %1 minuta",
+    "other": "Upłynęło %1 minuty"
+  },
   "reminder.none": "Brak oczekujących przypomnień",
-  "reminder.setForMinutes": "Przypomnienie ustawione na %1 minut",
+  "reminder.setForMinutes": {
+    "few": "Ustawiono przypomnienie na %1 minuty",
+    "many": "Ustawiono przypomnienie na %1 minut",
+    "one": "Ustawiono przypomnienie na %1 minutę",
+    "other": "Ustawiono przypomnienie na %1 minuty"
+  },
   "reminder.setTooltip": "Ustaw przypomnienie",
   "reminder.title": "Przypomnienie",
   "reminder.upcoming": "Nadchodzące przypomnienia",
@@ -216,6 +241,12 @@
   "system.shutdownFailed": "Wyłączanie nie powiodło się",
   "system.shutdownRetry": "Nie udało się wyłączyć. Spróbuj ponownie.",
   "system.shuttingDown": "Wyłączanie",
+  "tailscale.fileCount": {
+    "few": "%1 pliki",
+    "many": "%1 plików",
+    "one": "%1 plik",
+    "other": "%1 pliku"
+  },
   "tailscale.received": "Otrzymano %1",
   "tailscale.savedTo": "Zapisano w %1",
   "tailscale.sendFailed": "Nie udało się wysłać do %1",
@@ -261,7 +292,12 @@
   "update.kernelReboot": "Jądro Linux zaktualizowane. Uruchomić ponownie?",
   "update.ready": "Gotowy do aktualizacji?",
   "update.rebootRequired": "Aktualizacje wymagają ponownego uruchomienia. Gotowy?",
-  "update.removeOrphans": "Usunąć osierocone pakiety (%1)?",
+  "update.removeOrphans": {
+    "few": "Usunąć %1 osierocone pakiety?",
+    "many": "Usunąć %1 osieroconych pakietów?",
+    "one": "Usunąć %1 osierocony pakiet?",
+    "other": "Usunąć %1 osieroconego pakietu?"
+  },
   "update.whatsNew": "Nowości: %1",
   "webapp.iconPlaceholder": "Nie udało się pobrać favikony automatycznie. Podaj URL ikony PNG lub nazwę ikony",
   "webapp.intro": "Utwórzmy nową aplikację webową do uruchamiania z launchera aplikacji.",

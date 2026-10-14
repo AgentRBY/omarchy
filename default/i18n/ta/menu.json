@@ -174,7 +174,7 @@
     "label": "வலது பட்டை"
   },
   "trigger.appearance.dock": {
-    "label": "Dock"
+    "label": "டாக்"
   },
   "trigger.appearance.dock.autohide": {
     "label": "தானாக மறையும் Dock"
@@ -262,7 +262,7 @@
     "label": "செயலிழப்பு பதிவு"
   },
   "trigger.emoji": {
-    "label": "Emoji"
+    "label": "எமோஜி"
   },
   "trigger.clipboard-history": {
     "label": "கிளிப்போர்டு வரலாறு"
@@ -322,7 +322,7 @@
     "label": "பிரதிபலிப்பு திரை"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "கலப்பின GPU"
   },
   "trigger.hardware.touchpad": {
     "label": "தொடுதளம்"
@@ -454,7 +454,7 @@
     "label": "இயல்புநிலைகள்"
   },
   "setup.default.agent": {
-    "label": "Agent",
+    "label": "ஏஜென்ட்",
     "title": "இயல்புநிலை Agent"
   },
   "setup.default.agent.agy": {
@@ -1146,7 +1146,7 @@
     "title": "மறுதொடக்கம்"
   },
   "update.firmware": {
-    "label": "Firmware"
+    "label": "நிலைபொருள்"
   },
   "update.password": {
     "label": "கடவுச்சொல்"

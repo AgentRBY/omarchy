@@ -3,7 +3,7 @@
     "label": "Gå"
   },
   "apps": {
-    "label": "Apps"
+    "label": "Appar"
   },
   "learn": {
     "label": "Lär"
@@ -310,7 +310,7 @@
     "label": "Dela"
   },
   "trigger.hardware": {
-    "label": "Hardware"
+    "label": "Hårdvara"
   },
   "trigger.tests": {
     "label": "Hastighetstest"
@@ -415,7 +415,7 @@
     "label": "Tangentgenvägar"
   },
   "setup.input": {
-    "label": "Input"
+    "label": "Inmatning"
   },
   "setup.typing": {
     "label": "Inmatning"
@@ -500,7 +500,7 @@
     "label": "Pi"
   },
   "setup.default.browser": {
-    "label": "Browser",
+    "label": "Webbläsare",
     "title": "Standardwebbläsare"
   },
   "setup.default.browser.chromium": {
@@ -551,7 +551,7 @@
     "label": "Kitty"
   },
   "setup.default.editor": {
-    "label": "Editor",
+    "label": "Redigerare",
     "title": "Standardredigerare"
   },
   "setup.default.editor.neovim": {
@@ -579,7 +579,7 @@
     "label": "Emacs"
   },
   "setup.plugin": {
-    "label": "Plugins"
+    "label": "Insticksmoduler"
   },
   "setup.plugin.enable": {
     "label": "Aktivera plugin"
@@ -612,7 +612,7 @@
     "label": "SSHD"
   },
   "setup.security.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "SSH-agent"
   },
   "setup.security.sudoless-docker": {
     "label": "Docker utan sudo"
@@ -648,7 +648,7 @@
     "label": "Utveckling"
   },
   "install.editor": {
-    "label": "Editor"
+    "label": "Redigerare"
   },
   "install.style": {
     "label": "Stil"
@@ -684,7 +684,7 @@
     "label": "Spel"
   },
   "install.browser": {
-    "label": "Browser"
+    "label": "Webbläsare"
   },
   "install.webapp": {
     "label": "Webbapp"
@@ -937,7 +937,7 @@
     "title": "Ta bort"
   },
   "remove.browser": {
-    "label": "Browser",
+    "label": "Webbläsare",
     "title": "Ta bort"
   },
   "remove.webapp": {
@@ -1142,11 +1142,11 @@
     "title": "Starta om"
   },
   "update.hardware": {
-    "label": "Hardware",
+    "label": "Maskinvara",
     "title": "Starta om"
   },
   "update.firmware": {
-    "label": "Firmware"
+    "label": "Fast programvara"
   },
   "update.password": {
     "label": "Lösenord"
@@ -1173,7 +1173,7 @@
     "label": "Hyprsunset"
   },
   "update.process.shell": {
-    "label": "Shell"
+    "label": "Skal"
   },
   "update.config.hyprland": {
     "label": "Hyprland"
@@ -1188,7 +1188,7 @@
     "label": "Tmux"
   },
   "update.config.shell": {
-    "label": "Shell"
+    "label": "Skal"
   },
   "update.hardware.audio": {
     "label": "Ljud"

@@ -322,7 +322,7 @@
     "label": "Spegla skjá"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "Blendings-GPU"
   },
   "trigger.hardware.touchpad": {
     "label": "Snertiflötur"
@@ -454,7 +454,7 @@
     "label": "Sjálfgildi"
   },
   "setup.default.agent": {
-    "label": "Agent",
+    "label": "Fulltrúi",
     "title": "Sjálfgefinn agent"
   },
   "setup.default.agent.agy": {
@@ -535,7 +535,7 @@
     "label": "Voxtype"
   },
   "setup.default.terminal": {
-    "label": "Terminal",
+    "label": "Útstöð",
     "title": "Sjálfgefinn terminal"
   },
   "setup.default.terminal.alacritty": {
@@ -690,7 +690,7 @@
     "label": "Vefforrit"
   },
   "install.terminal": {
-    "label": "Terminal"
+    "label": "Útstöð"
   },
   "install.tui": {
     "label": "TUI"

@@ -174,7 +174,7 @@
     "label": "Juosta dešinėje"
   },
   "trigger.appearance.dock": {
-    "label": "Dock"
+    "label": "Dokas"
   },
   "trigger.appearance.dock.autohide": {
     "label": "Slėpti Dock automatiškai"
@@ -262,7 +262,7 @@
     "label": "Strigčių fiksavimas"
   },
   "trigger.emoji": {
-    "label": "Emoji"
+    "label": "Jaustukai"
   },
   "trigger.clipboard-history": {
     "label": "Iškarpinės istorija"
@@ -286,7 +286,7 @@
     "label": "Tekstas"
   },
   "trigger.capture.qr": {
-    "label": "QR Code"
+    "label": "QR kodas"
   },
   "trigger.capture.color": {
     "label": "Spalva"
@@ -322,7 +322,7 @@
     "label": "Dubliuoti ekraną"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "Hibridinis GPU"
   },
   "trigger.hardware.touchpad": {
     "label": "Jutiklinis kilimėlis"
@@ -448,7 +448,7 @@
     "label": "Pasirinktinis"
   },
   "setup.network.qr": {
-    "label": "QR Code"
+    "label": "QR kodas"
   },
   "setup.default": {
     "label": "Numatytosios"
@@ -612,7 +612,7 @@
     "label": "SSHD"
   },
   "setup.security.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "SSH agentas"
   },
   "setup.security.sudoless-docker": {
     "label": "Docker be sudo"
@@ -1158,7 +1158,7 @@
     "label": "Laikas"
   },
   "update.channel.stable": {
-    "label": "Stable"
+    "label": "Stabilus"
   },
   "update.channel.rc": {
     "label": "RC"
@@ -1173,7 +1173,7 @@
     "label": "Hyprsunset"
   },
   "update.process.shell": {
-    "label": "Shell"
+    "label": "Apvalkalas"
   },
   "update.config.hyprland": {
     "label": "Hyprland"
@@ -1188,7 +1188,7 @@
     "label": "Tmux"
   },
   "update.config.shell": {
-    "label": "Shell"
+    "label": "Apvalkalas"
   },
   "update.hardware.audio": {
     "label": "Garsas"

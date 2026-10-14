@@ -59,6 +59,8 @@
   "clipboard.urlCopied": "URL nukopijuotas į iškarpinę",
   "common.disabled": "Išjungta",
   "common.enabled": "Įjungta",
+  "common.no": "Ne",
+  "common.yes": "Taip",
   "config.editing": "Redaguojamas konfigūracijos failas",
   "corners.followTheme": "Kampai pagal temą",
   "corners.rounded": "Užapvalinti kampai visoms temoms",
@@ -122,8 +124,11 @@
   "lock.didNotLock": "Ekranas neužsirakino prieš pristabdymą",
   "lock.unlockedNoLockScreen": "Seansas liko neužrakintas (nenustatytas užrakinimo ekranas).",
   "lock.unlockedTimeout": "Sesija liko neužrakinta (apvalkalas per %1ms neapsaugojo sesijos).",
-  "migrate.clickToRun": "Spustelėkite, kad paleistumėte %1 laukiančių perkėlimų.",
-  "migrate.clickToRunOne": "Spustelėkite, kad paleistumėte 1 laukiantį perkėlimą.",
+  "migrate.clickToRun": {
+    "few": "Spustelėkite, kad paleistumėte %1 laukiančius perkėlimus.",
+    "one": "Spustelėkite, kad paleistumėte %1 laukiantį perkėlimą.",
+    "other": "Spustelėkite, kad paleistumėte %1 laukiančių perkėlimų."
+  },
   "migrate.pending": "Laukiantys Omarchy perkėlimai",
   "monitor.extendedRestored": "Išplėstinis režimas atkurtas",
   "monitor.laptopDisabled": "Nešiojamojo ekranas išjungtas",
@@ -158,16 +163,31 @@
   "preinstalls.confirmRemove": "Ar tikrai norite pašalinti visas iš anksto įdiegtas žiniatinklio programas, TUI apvalkalus ir darbalaukio programas?",
   "preinstalls.confirmRestore": "Ar tikrai norite atkurti visas iš anksto įdiegtas žiniatinklio programas, TUI apvalkalus ir darbalaukio programas?",
   "reminder.cleared": "Visi priminimai išvalyti",
-  "reminder.count": "%1 priminimai",
-  "reminder.countOne": "1 priminimas",
-  "reminder.customInMinutes": "%1 po %2 minučių",
+  "reminder.count": {
+    "few": "%1 priminimai",
+    "one": "%1 priminimas",
+    "other": "%1 priminimų"
+  },
+  "reminder.customInMinutes": {
+    "few": "%1 po %2 minučių",
+    "one": "%1 po %2 minutės",
+    "other": "%1 po %2 minučių"
+  },
   "reminder.durationMinutesSeconds": "%1 min %2 s",
   "reminder.durationSeconds": "%1 s",
   "reminder.inRemaining": "%1 po %2 (%3)",
   "reminder.minuteLabel": "%1 min priminimas",
-  "reminder.minutesUp": "Jūsų %1 minučių laikas baigėsi",
+  "reminder.minutesUp": {
+    "few": "Jūsų %1 minutės baigėsi",
+    "one": "Jūsų %1 minutė baigėsi",
+    "other": "Jūsų %1 minučių baigėsi"
+  },
   "reminder.none": "Nėra aktyvių priminimų",
-  "reminder.setForMinutes": "Priminimas nustatytas po %1 minučių",
+  "reminder.setForMinutes": {
+    "few": "Priminimas nustatytas po %1 minučių",
+    "one": "Priminimas nustatytas po %1 minutės",
+    "other": "Priminimas nustatytas po %1 minučių"
+  },
   "reminder.setTooltip": "Nustatyti priminimą",
   "reminder.title": "Priminimas",
   "reminder.upcoming": "Artėjantys priminimai",
@@ -216,6 +236,11 @@
   "system.shutdownFailed": "Išjungimas nepavyko",
   "system.shutdownRetry": "Nepavyko išjungti. Bandykite dar kartą.",
   "system.shuttingDown": "Išjungiama",
+  "tailscale.fileCount": {
+    "few": "%1 failai",
+    "one": "%1 failas",
+    "other": "%1 failų"
+  },
   "tailscale.received": "Gauta %1",
   "tailscale.savedTo": "Įrašyta į %1",
   "tailscale.sendFailed": "Nepavyko išsiųsti į %1",
@@ -261,7 +286,11 @@
   "update.kernelReboot": "Linux branduolys atnaujintas. Paleisti iš naujo?",
   "update.ready": "Pasiruošę atnaujinti?",
   "update.rebootRequired": "Atnaujinimams reikia paleisti iš naujo. Pasiruošę?",
-  "update.removeOrphans": "Pašalinti %1 našlaiščių paketą (-us)?",
+  "update.removeOrphans": {
+    "few": "Pašalinti %1 našlaitinius paketus?",
+    "one": "Pašalinti %1 našlaitinį paketą?",
+    "other": "Pašalinti %1 našlaitinių paketų?"
+  },
   "update.whatsNew": "Kas naujo: %1",
   "webapp.iconPlaceholder": "Nepavyko automatiškai gauti favicon. Įveskite PNG piktogramos URL arba piktogramos pavadinimą",
   "webapp.intro": "Sukurkime naują žiniatinklio programą, kurią galėsite paleisti per programų paleidyklę.",

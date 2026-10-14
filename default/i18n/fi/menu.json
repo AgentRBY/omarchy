@@ -174,7 +174,7 @@
     "label": "Oikea palkki"
   },
   "trigger.appearance.dock": {
-    "label": "Dock"
+    "label": "Telakka"
   },
   "trigger.appearance.dock.autohide": {
     "label": "Piilota Dock automaattisesti"
@@ -1146,7 +1146,7 @@
     "title": "Käynnistä uudelleen"
   },
   "update.firmware": {
-    "label": "Firmware"
+    "label": "Laiteohjelmisto"
   },
   "update.password": {
     "label": "Salasana"

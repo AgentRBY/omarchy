@@ -17,17 +17,34 @@
   "agents.durationHoursMinutes": "%1 שע׳ %2 דק׳",
   "agents.durationMinutes": "%1 דק׳",
   "agents.durationNow": "עכשיו",
-  "agents.freeResetOne": "איפוס חינמי אחד",
-  "agents.freeResetOneExpires": "איפוס חינמי אחד · הבא יפוג בעוד %1",
-  "agents.freeResets": "%1 איפוסים חינמיים",
-  "agents.freeResetsExpires": "%1 איפוסים חינמיים · הבא יפוג בעוד %2",
+  "agents.freeResets": {
+    "one": "איפוס חינמי אחד",
+    "other": "%1 איפוסים חינמיים",
+    "two": "שני איפוסים חינמיים"
+  },
+  "agents.freeResetsExpires": {
+    "one": "איפוס חינמי אחד · הבא יפוג בעוד %2",
+    "other": "%1 איפוסים חינמיים · הבא יפוג בעוד %2",
+    "two": "שני איפוסים חינמיים · הבא יפוג בעוד %2"
+  },
+  "agents.helpFireworksSignIn": "הגדירו את %1, הריצו את %2, או התחברו ל-Fireworks ב-pi או ב-opencode.",
+  "agents.helpNotInPath": "%1 לא נמצא ב-PATH",
+  "agents.helpRunToAuthenticate": "הריצו את %1 כדי לבצע אימות.",
+  "agents.helpRunToRestoreUsage": "הריצו את %1 כדי לשחזר את נתוני השימוש הרשמיים.",
+  "agents.helpScanFailed": "סריקת השימוש של %1 נכשלה",
+  "agents.helpSignInExpired": "ההתחברות השמורה של %1 פגה. הפעילו את %1 כדי לרענן אותה.",
+  "agents.helpStartOrRunToSignIn": "הפעילו את %1, או הריצו את %2, כדי להתחבר.",
+  "agents.helpStartToSeeLimits": "הפעילו את %1 כדי לראות את מגבלותיו; אין צורך להתחבר שוב.",
   "agents.lastUpdatedAgo": "עודכן לאחרונה לפני %1",
   "agents.lastUpdatedJustNow": "עודכן לאחרונה לפני פחות מדקה",
   "agents.lastUpdatedUnknown": "שעת העדכון האחרון אינה זמינה",
   "agents.limitsPaused": "המגבלות מושהות",
   "agents.makeSomethingCool": "צרו משהו מגניב",
-  "agents.merged": "מוזג מ-%1 מכשירים",
-  "agents.mergedOne": "מוזג ממכשיר אחד",
+  "agents.merged": {
+    "one": "מוזג ממכשיר אחד",
+    "other": "מוזג מ-%1 מכשירים",
+    "two": "מוזג משני מכשירים"
+  },
   "agents.modelMonthly": "%1 חודשי",
   "agents.modelSession": "%1 הפעלה",
   "agents.modelWeekly": "%1 שבועי",
@@ -37,7 +54,11 @@
   "agents.placeholderCode": "קוד",
   "agents.placeholderWork": "עבודה",
   "agents.plugin": "תוסף",
-  "agents.promptsToday": "%1 הנחיות היום",
+  "agents.promptsToday": {
+    "one": "הנחיה אחת היום",
+    "other": "%1 הנחיות היום",
+    "two": "שתי הנחיות היום"
+  },
   "agents.providerLimitsUnavailable": "מגבלות %1 אינן זמינות",
   "agents.providerUnavailable": "%1 אינו זמין",
   "agents.reopenSignIn": "פתחו שוב את דף ההתחברות",
@@ -45,7 +66,11 @@
   "agents.scopedOther": "%1: %2% ממכסת %3",
   "agents.scopedSession": "%1: %2% ממכסת ההפעלה",
   "agents.scopedWeekly": "%1: %2% מהמכסה השבועית",
-  "agents.sessionsToday": "%1 הפעלות היום",
+  "agents.sessionsToday": {
+    "one": "הפעלה אחת היום",
+    "other": "%1 הפעלות היום",
+    "two": "שתי הפעלות היום"
+  },
   "agents.signInAgainAccount": "התחברו שוב לחשבון זה",
   "agents.signInAgainProvider": "התחברו שוב ל-%1",
   "agents.signInExpired": "ההתחברות פגה",
@@ -61,9 +86,18 @@
   "agents.syncMkdirFailed": "mkdir של סנכרון השימוש נכשל",
   "agents.syncScanFailed": "סריקת סנכרון השימוש נכשלה",
   "agents.theme": "ערכת נושא",
+  "agents.tierPrepaid": "שולם מראש",
   "agents.title": "סוכנים",
-  "agents.tokensThisWeek": "%1 טוקנים השבוע",
-  "agents.tokensToday": "%1 טוקנים היום",
+  "agents.tokensThisWeek": {
+    "one": "טוקן אחד השבוע",
+    "other": "%1 טוקנים השבוע",
+    "two": "שני טוקנים השבוע"
+  },
+  "agents.tokensToday": {
+    "one": "טוקן אחד היום",
+    "other": "%1 טוקנים היום",
+    "two": "שני טוקנים היום"
+  },
   "agents.unknownModel": "לא ידוע",
   "agents.usageNotUpdated": "השימוש טרם עודכן.",
   "agents.usageUnavailable": "השימוש אינו זמין",
@@ -142,7 +176,11 @@
   "bluetooth.turnedOff": "כבוי",
   "clipboard.deleteHistory": "למחוק את כל היסטוריית הלוח?",
   "clipboard.empty": "הלוח ריק",
-  "clipboard.files": "%1 קבצים",
+  "clipboard.files": {
+    "one": "קובץ אחד",
+    "other": "%1 קבצים",
+    "two": "שני קבצים"
+  },
   "clipboard.image": "תמונה",
   "clipboard.imageFrom": "תמונה מתוך %1",
   "clipboard.screenshotFrom": "צילום מסך מתוך %1",
@@ -228,8 +266,16 @@
   "elsewhen.badgeTracked": "במעקב",
   "elsewhen.clock": "שעון",
   "elsewhen.dateFormat": "ddd d MMM",
-  "elsewhen.daysAhead": "+%1 ימים",
-  "elsewhen.daysBehind": "-%1 ימים",
+  "elsewhen.daysAhead": {
+    "one": "+יום אחד",
+    "other": "+%1 ימים",
+    "two": "+יומיים"
+  },
+  "elsewhen.daysBehind": {
+    "one": "-יום אחד",
+    "other": "-%1 ימים",
+    "two": "-יומיים"
+  },
   "elsewhen.daysShort": "%1י",
   "elsewhen.here": "השעה כאן %1",
   "elsewhen.hereIn": "השעה כאן ב%2 היא %1",
@@ -267,7 +313,11 @@
   "menu.powerProfilePerformance": "ביצועים",
   "menu.powerProfilePowerSaver": "חיסכון בחשמל",
   "menu.selectPrompt": "בחירה",
-  "menu.selectedCount": "%1 נבחרו",
+  "menu.selectedCount": {
+    "one": "נבחר אחד",
+    "other": "%1 נבחרו",
+    "two": "נבחרו שניים"
+  },
   "monitor.brightness": "בהירות",
   "monitor.display": "תצוגה",
   "monitor.displayFocused": "%1 · במוקד",
@@ -285,6 +335,11 @@
   "monitor.textSize": "גודל טקסט",
   "multiSelect.exited": "פקודת האפשרויות הסתיימה עם %1",
   "multiSelect.invalidJson": "פקודת האפשרויות הפיקה JSON לא תקין",
+  "multiSelect.selectedCount": {
+    "one": "נבחר אחד",
+    "other": "%1 נבחרו",
+    "two": "נבחרו שניים"
+  },
   "multiSelect.timedOut": "תם הזמן הקצוב לפקודת האפשרויות",
   "network.automatic": "אוטומטי",
   "network.bandAuto": "אוטומטי",
@@ -389,7 +444,7 @@
   "power.powerProfile": "פרופיל חשמל",
   "power.profileBalanced": "מאוזן",
   "power.profilePerformance": "ביצועים",
-  "power.profilePowerSaver": "חיסכון בחשמל",
+  "power.profilePowerSaver": "חיסכון",
   "power.threshold": "סף",
   "power.timeLeft": "זמן נותר",
   "power.timeToFull": "זמן לטעינה מלאה",

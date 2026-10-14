@@ -241,7 +241,7 @@
     "label": "ลอย"
   },
   "trigger.appearance.theme-sync": {
-    "label": "Herdr Theme Sync"
+    "label": "ซิงก์ธีม Herdr"
   },
   "trigger.toggle": {
     "label": "สลับ"
@@ -286,7 +286,7 @@
     "label": "ข้อความ"
   },
   "trigger.capture.qr": {
-    "label": "QR Code"
+    "label": "รหัส QR"
   },
   "trigger.capture.color": {
     "label": "สี"
@@ -322,7 +322,7 @@
     "label": "สะท้อนจอ"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "GPU ไฮบริด"
   },
   "trigger.hardware.touchpad": {
     "label": "ทัชแพด"
@@ -448,7 +448,7 @@
     "label": "กำหนดเอง"
   },
   "setup.network.qr": {
-    "label": "QR Code"
+    "label": "รหัส QR"
   },
   "setup.default": {
     "label": "ค่าเริ่มต้น"

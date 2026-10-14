@@ -59,6 +59,8 @@
   "clipboard.urlCopied": "URL nokopēts starpliktuvē",
   "common.disabled": "Izslēgts",
   "common.enabled": "Ieslēgts",
+  "common.no": "Nē",
+  "common.yes": "Jā",
   "config.editing": "Rediģē konfigurācijas failu",
   "corners.followTheme": "Stūri seko tēmai",
   "corners.rounded": "Noapaļoti stūri visām tēmām",
@@ -122,8 +124,11 @@
   "lock.didNotLock": "Ekrāns nebloķējās pirms iemidzināšanas",
   "lock.unlockedNoLockScreen": "Sesija palika nebloķēta (nav konfigurēts bloķēšanas ekrāns).",
   "lock.unlockedTimeout": "Sesija palika nebloķēta (čaula nebloķēja sesiju %1ms laikā).",
-  "migrate.clickToRun": "Noklikšķiniet, lai palaistu %1 gaidāmas migrācijas.",
-  "migrate.clickToRunOne": "Noklikšķiniet, lai palaistu 1 gaidāmo migrāciju.",
+  "migrate.clickToRun": {
+    "one": "Noklikšķini, lai palaistu %1 gaidāmo migrāciju.",
+    "other": "Noklikšķini, lai palaistu %1 gaidāmās migrācijas.",
+    "zero": "Noklikšķini, lai palaistu %1 gaidāmo migrāciju."
+  },
   "migrate.pending": "Gaidāmas Omarchy migrācijas",
   "monitor.extendedRestored": "Paplašinātais režīms atjaunots",
   "monitor.laptopDisabled": "Klēpjdatora ekrāns izslēgts",
@@ -158,16 +163,31 @@
   "preinstalls.confirmRemove": "Vai tiešām noņemt visas sākotnēji instalētās tīmekļa lietotnes, TUI apvalkus un darbvirsmas lietotnes?",
   "preinstalls.confirmRestore": "Vai tiešām atjaunot visas sākotnēji instalētās tīmekļa lietotnes, TUI apvalkus un darbvirsmas lietotnes?",
   "reminder.cleared": "Visi atgādinājumi ir notīrīti",
-  "reminder.count": "%1 atgādinājumi",
-  "reminder.countOne": "1 atgādinājums",
-  "reminder.customInMinutes": "%1 pēc %2 minūtēm",
+  "reminder.count": {
+    "one": "%1 atgādinājums",
+    "other": "%1 atgādinājumi",
+    "zero": "%1 atgādinājumu"
+  },
+  "reminder.customInMinutes": {
+    "one": "%1 pēc %2 minūtes",
+    "other": "%1 pēc %2 minūtēm",
+    "zero": "%1 pēc %2 minūtēm"
+  },
   "reminder.durationMinutesSeconds": "%1 min %2 s",
   "reminder.durationSeconds": "%1 s",
   "reminder.inRemaining": "%1 pēc %2 (%3)",
   "reminder.minuteLabel": "%1 minūšu atgādinājums",
-  "reminder.minutesUp": "Tavas %1 minūtes ir beigušās",
+  "reminder.minutesUp": {
+    "one": "Tavas %1 minūtes laiks ir beidzies",
+    "other": "Tavu %1 minūšu laiks ir beidzies",
+    "zero": "Tavu %1 minūšu laiks ir beidzies"
+  },
   "reminder.none": "Nav neizpildītu atgādinājumu",
-  "reminder.setForMinutes": "Atgādinājums uzlikts pēc %1 minūtēm",
+  "reminder.setForMinutes": {
+    "one": "Atgādinājums uzlikts pēc %1 minūtes",
+    "other": "Atgādinājums uzlikts pēc %1 minūtēm",
+    "zero": "Atgādinājums uzlikts pēc %1 minūtēm"
+  },
   "reminder.setTooltip": "Uzlikt atgādinājumu",
   "reminder.title": "Atgādinājums",
   "reminder.upcoming": "Gaidāmie atgādinājumi",
@@ -216,6 +236,11 @@
   "system.shutdownFailed": "Izslēgšana neizdevās",
   "system.shutdownRetry": "Neizdevās pabeigt izslēgšanu. Mēģini vēlreiz.",
   "system.shuttingDown": "Izslēdzas",
+  "tailscale.fileCount": {
+    "one": "%1 fails",
+    "other": "%1 faili",
+    "zero": "%1 failu"
+  },
   "tailscale.received": "Saņemts %1",
   "tailscale.savedTo": "Saglabāts: %1",
   "tailscale.sendFailed": "Neizdevās nosūtīt uz %1",
@@ -261,7 +286,11 @@
   "update.kernelReboot": "Linux kodols atjaunināts. Pārstartēt?",
   "update.ready": "Gatavs atjaunināt?",
   "update.rebootRequired": "Atjauninājumiem nepieciešama pārstartēšana. Gatavs?",
-  "update.removeOrphans": "Noņemt %1 bāreņpakotni(-es)?",
+  "update.removeOrphans": {
+    "one": "Noņemt %1 bāreņpakotni?",
+    "other": "Noņemt %1 bāreņpakotnes?",
+    "zero": "Noņemt %1 bāreņpakotņu?"
+  },
   "update.whatsNew": "Jaunumi: %1",
   "webapp.iconPlaceholder": "Neizdevās automātiski iegūt favicon. Ievadi PNG ikonas URL vai ikonas nosaukumu",
   "webapp.intro": "Izveidosim jaunu tīmekļa lietotni, ko vari palaist no lietotņu palaidēja.",

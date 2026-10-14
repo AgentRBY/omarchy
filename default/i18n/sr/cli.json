@@ -124,8 +124,11 @@
   "lock.didNotLock": "Екран се није закључао пре суспензије",
   "lock.unlockedNoLockScreen": "Сесија је остала откључана (екран за закључавање није подешен).",
   "lock.unlockedTimeout": "Сесија је остала откључана (шел није обезбедио сесију у року од %1ms).",
-  "migrate.clickToRun": "Кликните да покренете %1 миграција на чекању.",
-  "migrate.clickToRunOne": "Кликните да покренете 1 миграцију на чекању.",
+  "migrate.clickToRun": {
+    "few": "Кликните да покренете %1 миграције на чекању.",
+    "one": "Кликните да покренете %1 миграцију на чекању.",
+    "other": "Кликните да покренете %1 миграција на чекању."
+  },
   "migrate.pending": "Omarchy миграције на чекању",
   "monitor.extendedRestored": "Проширени режим враћен",
   "monitor.laptopDisabled": "Екран лаптопа онемогућен",
@@ -160,16 +163,31 @@
   "preinstalls.confirmRemove": "Да ли сте сигурни да желите да уклоните све унапред инсталиране веб апликације, TUI омотаче и десктоп апликације?",
   "preinstalls.confirmRestore": "Да ли сте сигурни да желите да вратите све унапред инсталиране веб апликације, TUI омотаче и десктоп апликације?",
   "reminder.cleared": "Сви подсетници су обрисани",
-  "reminder.count": "%1 подсетника",
-  "reminder.countOne": "1 подсетник",
-  "reminder.customInMinutes": "%1 за %2 минута",
+  "reminder.count": {
+    "few": "%1 подсетника",
+    "one": "%1 подсетник",
+    "other": "%1 подсетника"
+  },
+  "reminder.customInMinutes": {
+    "few": "%1 за %2 минута",
+    "one": "%1 за %2 минут",
+    "other": "%1 за %2 минута"
+  },
   "reminder.durationMinutesSeconds": "%1 мин %2 сек",
   "reminder.durationSeconds": "%1 сек",
   "reminder.inRemaining": "%1 за %2 (%3)",
   "reminder.minuteLabel": "%1-минутни подсетник",
-  "reminder.minutesUp": "Ваших %1 минута је истекло",
+  "reminder.minutesUp": {
+    "few": "Ваша %1 минута су истекла",
+    "one": "Ваш %1 минут је истекао",
+    "other": "Ваших %1 минута је истекло"
+  },
   "reminder.none": "Нема активних подсетника",
-  "reminder.setForMinutes": "Подсетник подешен за %1 минута",
+  "reminder.setForMinutes": {
+    "few": "Подсетник је подешен за %1 минута",
+    "one": "Подсетник је подешен за %1 минут",
+    "other": "Подсетник је подешен за %1 минута"
+  },
   "reminder.setTooltip": "Подеси подсетник",
   "reminder.title": "Подсетник",
   "reminder.upcoming": "Надолазећи подсетници",
@@ -218,6 +236,11 @@
   "system.shutdownFailed": "Гашење није успело",
   "system.shutdownRetry": "Није могуће довршити гашење. Покушајте поново.",
   "system.shuttingDown": "Гашење",
+  "tailscale.fileCount": {
+    "few": "%1 датотеке",
+    "one": "%1 датотека",
+    "other": "%1 датотека"
+  },
   "tailscale.received": "Примљено %1",
   "tailscale.savedTo": "Сачувано у %1",
   "tailscale.sendFailed": "Није могуће послати на %1",
@@ -263,7 +286,11 @@
   "update.kernelReboot": "Linux језгро је ажурирано. Поново покренути?",
   "update.ready": "Спремни за ажурирање?",
   "update.rebootRequired": "Ажурирања захтевају поновно покретање. Спремни?",
-  "update.removeOrphans": "Уклонити %1 напуштен(и) пакет(а)?",
+  "update.removeOrphans": {
+    "few": "Уклонити %1 осиротела пакета?",
+    "one": "Уклонити %1 осиротели пакет?",
+    "other": "Уклонити %1 осиротелих пакета?"
+  },
   "update.whatsNew": "Шта је ново: %1",
   "webapp.iconPlaceholder": "Није могуће аутоматски преузети favicon. Унесите URL PNG иконе или назив иконе",
   "webapp.intro": "Направимо нову веб апликацију коју можете да покренете преко покретача апликација.",

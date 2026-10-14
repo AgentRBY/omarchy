@@ -59,6 +59,8 @@
   "clipboard.urlCopied": "Vefslóð afrituð á klippiborð",
   "common.disabled": "Óvirkt",
   "common.enabled": "Virkt",
+  "common.no": "Nei",
+  "common.yes": "Já",
   "config.editing": "Breyti stillingaskrá",
   "corners.followTheme": "Horn fylgja þema",
   "corners.rounded": "Rúnnuð horn í öllum þemum",
@@ -122,8 +124,10 @@
   "lock.didNotLock": "Skjárinn læsti sig ekki fyrir svefn",
   "lock.unlockedNoLockScreen": "Setan var skilin eftir ólæst (enginn læsiskjár er stilltur).",
   "lock.unlockedTimeout": "Setan var skilin eftir ólæst (skelin tryggði setuna ekki innan %1ms).",
-  "migrate.clickToRun": "Smelltu til að keyra %1 flutninga í bið.",
-  "migrate.clickToRunOne": "Smelltu til að keyra 1 flutning í bið.",
+  "migrate.clickToRun": {
+    "one": "Smelltu til að keyra %1 flutning í bið.",
+    "other": "Smelltu til að keyra %1 flutninga í bið."
+  },
   "migrate.pending": "Omarchy-flutningar í bið",
   "monitor.extendedRestored": "Útvíkkaður hamur endurheimtur",
   "monitor.laptopDisabled": "Fartölvuskjár óvirkur",
@@ -158,16 +162,27 @@
   "preinstalls.confirmRemove": "Ertu viss um að þú viljir fjarlægja öll fyrirfram uppsett vefforrit, TUI-umbúðir og skjáborðsforrit?",
   "preinstalls.confirmRestore": "Ertu viss um að þú viljir endurheimta öll fyrirfram uppsett vefforrit, TUI-umbúðir og skjáborðsforrit?",
   "reminder.cleared": "Öllum áminningum hefur verið eytt",
-  "reminder.count": "%1 áminningar",
-  "reminder.countOne": "1 áminning",
-  "reminder.customInMinutes": "%1 eftir %2 mínútur",
+  "reminder.count": {
+    "one": "%1 áminning",
+    "other": "%1 áminningar"
+  },
+  "reminder.customInMinutes": {
+    "one": "%1 eftir %2 mínútu",
+    "other": "%1 eftir %2 mínútur"
+  },
   "reminder.durationMinutesSeconds": "%1 mín %2 sek",
   "reminder.durationSeconds": "%1 sek",
   "reminder.inRemaining": "%1 eftir %2 (%3)",
   "reminder.minuteLabel": "%1 mínútna áminning",
-  "reminder.minutesUp": "%1 mínúturnar þínar eru liðnar",
+  "reminder.minutesUp": {
+    "one": "%1 mínúta þín er liðin",
+    "other": "%1 mínútur þínar eru liðnar"
+  },
   "reminder.none": "Engar áminningar í bið",
-  "reminder.setForMinutes": "Áminning sett eftir %1 mínútur",
+  "reminder.setForMinutes": {
+    "one": "Áminning stillt á %1 mínútu",
+    "other": "Áminning stillt á %1 mínútur"
+  },
   "reminder.setTooltip": "Setja áminningu",
   "reminder.title": "Áminning",
   "reminder.upcoming": "Komandi áminningar",
@@ -216,6 +231,10 @@
   "system.shutdownFailed": "Slökkvun mistókst",
   "system.shutdownRetry": "Ekki tókst að ljúka slökkvun. Reyndu aftur.",
   "system.shuttingDown": "Slekkur á",
+  "tailscale.fileCount": {
+    "one": "%1 skrá",
+    "other": "%1 skrár"
+  },
   "tailscale.received": "Móttekið %1",
   "tailscale.savedTo": "Vistað í %1",
   "tailscale.sendFailed": "Ekki tókst að senda til %1",
@@ -261,7 +280,10 @@
   "update.kernelReboot": "Linux-kjarninn hefur verið uppfærður. Endurræsa?",
   "update.ready": "Tilbúið að uppfæra?",
   "update.rebootRequired": "Uppfærslur krefjast endurræsingar. Tilbúið?",
-  "update.removeOrphans": "Fjarlægja %1 pakka sem ekki er lengur þörf á?",
+  "update.removeOrphans": {
+    "one": "Fjarlægja %1 munaðarlausan pakka?",
+    "other": "Fjarlægja %1 munaðarlausa pakka?"
+  },
   "update.whatsNew": "Hvað er nýtt: %1",
   "webapp.iconPlaceholder": "Ekki tókst að sækja favicon sjálfkrafa. Sláðu inn URL á PNG-tákn eða táknheiti",
   "webapp.intro": "Búum til nýtt vefforrit sem þú getur opnað með forritalistanum.",

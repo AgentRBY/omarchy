@@ -124,8 +124,11 @@
   "lock.didNotLock": "Obrazovka sa pred uspaním nezamkla",
   "lock.unlockedNoLockScreen": "Relácia zostala odomknutá (nie je nakonfigurovaná zamykacia obrazovka).",
   "lock.unlockedTimeout": "Relácia zostala odomknutá (shell nezabezpečil reláciu do %1ms).",
-  "migrate.clickToRun": "Kliknutím spustíte %1 čakajúcich migrácií.",
-  "migrate.clickToRunOne": "Kliknutím spustíte 1 čakajúcu migráciu.",
+  "migrate.clickToRun": {
+    "few": "Kliknutím spustíte %1 čakajúce migrácie.",
+    "one": "Kliknutím spustíte %1 čakajúcu migráciu.",
+    "other": "Kliknutím spustíte %1 čakajúcich migrácií."
+  },
   "migrate.pending": "Čakajúce migrácie Omarchy",
   "monitor.extendedRestored": "Rozšírený režim obnovený",
   "monitor.laptopDisabled": "Displej notebooku vypnutý",
@@ -160,16 +163,31 @@
   "preinstalls.confirmRemove": "Naozaj chcete odstrániť všetky predinštalované webové aplikácie, TUI wrappery a desktopové aplikácie?",
   "preinstalls.confirmRestore": "Naozaj chcete obnoviť všetky predinštalované webové aplikácie, TUI wrappery a desktopové aplikácie?",
   "reminder.cleared": "Všetky pripomienky boli vymazané",
-  "reminder.count": "%1 pripomienok",
-  "reminder.countOne": "1 pripomienka",
-  "reminder.customInMinutes": "%1 o %2 minút",
+  "reminder.count": {
+    "few": "%1 pripomienky",
+    "one": "%1 pripomienka",
+    "other": "%1 pripomienok"
+  },
+  "reminder.customInMinutes": {
+    "few": "%1 o %2 minúty",
+    "one": "%1 o %2 minútu",
+    "other": "%1 o %2 minút"
+  },
   "reminder.durationMinutesSeconds": "%1 min %2 s",
   "reminder.durationSeconds": "%1 s",
   "reminder.inRemaining": "%1 o %2 (%3)",
   "reminder.minuteLabel": "%1-minútová pripomienka",
-  "reminder.minutesUp": "Vašich %1 minút uplynulo",
+  "reminder.minutesUp": {
+    "few": "Vaše %1 minúty uplynuli",
+    "one": "Vaša %1 minúta uplynula",
+    "other": "Vašich %1 minút uplynulo"
+  },
   "reminder.none": "Žiadne nevybavené pripomienky",
-  "reminder.setForMinutes": "Pripomienka nastavená o %1 minút",
+  "reminder.setForMinutes": {
+    "few": "Pripomienka nastavená na %1 minúty",
+    "one": "Pripomienka nastavená na %1 minútu",
+    "other": "Pripomienka nastavená na %1 minút"
+  },
   "reminder.setTooltip": "Nastaviť pripomienku",
   "reminder.title": "Pripomienka",
   "reminder.upcoming": "Nadchádzajúce pripomienky",
@@ -218,6 +236,11 @@
   "system.shutdownFailed": "Vypnutie zlyhalo",
   "system.shutdownRetry": "Nepodarilo sa dokončiť vypnutie. Prosím, skúste to znova.",
   "system.shuttingDown": "Vypína sa",
+  "tailscale.fileCount": {
+    "few": "%1 súbory",
+    "one": "%1 súbor",
+    "other": "%1 súborov"
+  },
   "tailscale.received": "Prijaté %1",
   "tailscale.savedTo": "Uložené do %1",
   "tailscale.sendFailed": "Nepodarilo sa odoslať na %1",
@@ -263,7 +286,11 @@
   "update.kernelReboot": "Linuxové jadro bolo aktualizované. Reštartovať?",
   "update.ready": "Pripravení na aktualizáciu?",
   "update.rebootRequired": "Aktualizácie vyžadujú reštart. Pripravení?",
-  "update.removeOrphans": "Odstrániť %1 osirelý(ých) balík(ov)?",
+  "update.removeOrphans": {
+    "few": "Odstrániť %1 osirelé balíčky?",
+    "one": "Odstrániť %1 osirelý balíček?",
+    "other": "Odstrániť %1 osirelých balíčkov?"
+  },
   "update.whatsNew": "Čo je nové: %1",
   "webapp.iconPlaceholder": "Nepodarilo sa automaticky stiahnuť favicon. Zadajte URL PNG ikony alebo názov ikony",
   "webapp.intro": "Vytvorme novú webovú aplikáciu, ktorú spustíte cez spúšťač aplikácií.",

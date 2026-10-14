@@ -322,7 +322,7 @@
     "label": "Phản chiếu màn hình"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "GPU lai"
   },
   "trigger.hardware.touchpad": {
     "label": "Bàn di chuột"

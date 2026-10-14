@@ -3,7 +3,7 @@
     "label": "Start"
   },
   "apps": {
-    "label": "Apps"
+    "label": "Aplicații"
   },
   "learn": {
     "label": "Învață"
@@ -30,7 +30,7 @@
     "label": "Despre"
   },
   "system": {
-    "label": "System"
+    "label": "Sistem"
   },
   "system.screensaver": {
     "label": "Economizor ecran"
@@ -322,7 +322,7 @@
     "label": "Oglindește ecranul"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "GPU hibrid"
   },
   "trigger.hardware.touchpad": {
     "label": "Touchpad"
@@ -415,7 +415,7 @@
     "label": "Scurtături"
   },
   "setup.input": {
-    "label": "Input"
+    "label": "Intrare"
   },
   "setup.typing": {
     "label": "Tastare"
@@ -579,7 +579,7 @@
     "label": "Emacs"
   },
   "setup.plugin": {
-    "label": "Plugins"
+    "label": "Pluginuri"
   },
   "setup.plugin.enable": {
     "label": "Activează plugin"

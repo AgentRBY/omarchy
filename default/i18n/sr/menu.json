@@ -174,7 +174,7 @@
     "label": "Десна трака"
   },
   "trigger.appearance.dock": {
-    "label": "Dock"
+    "label": "Док"
   },
   "trigger.appearance.dock.autohide": {
     "label": "Аутоматски сакриј Dock"
@@ -612,7 +612,7 @@
     "label": "SSHD"
   },
   "setup.security.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "SSH агент"
   },
   "setup.security.sudoless-docker": {
     "label": "Docker без sudo"

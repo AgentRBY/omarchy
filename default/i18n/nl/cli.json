@@ -59,6 +59,8 @@
   "clipboard.urlCopied": "URL gekopieerd naar klembord",
   "common.disabled": "Uitgeschakeld",
   "common.enabled": "Ingeschakeld",
+  "common.no": "Nee",
+  "common.yes": "Ja",
   "config.editing": "Configuratiebestand bewerken",
   "corners.followTheme": "Hoeken volgen het thema",
   "corners.rounded": "Afgeronde hoeken voor alle thema's",
@@ -122,8 +124,10 @@
   "lock.didNotLock": "Scherm is niet vergrendeld vóór slaapstand",
   "lock.unlockedNoLockScreen": "De sessie is ontgrendeld gebleven (er is geen vergrendelscherm ingesteld).",
   "lock.unlockedTimeout": "De sessie bleef onvergrendeld (de shell heeft de sessie niet binnen %1ms beveiligd).",
-  "migrate.clickToRun": "Klik om %1 openstaande migraties uit te voeren.",
-  "migrate.clickToRunOne": "Klik om 1 openstaande migratie uit te voeren.",
+  "migrate.clickToRun": {
+    "one": "Klik om %1 openstaande migratie uit te voeren.",
+    "other": "Klik om %1 openstaande migraties uit te voeren."
+  },
   "migrate.pending": "Openstaande Omarchy-migraties",
   "monitor.extendedRestored": "Uitgebreide modus hersteld",
   "monitor.laptopDisabled": "Laptopscherm uitgeschakeld",
@@ -158,16 +162,27 @@
   "preinstalls.confirmRemove": "Weet je zeker dat je alle vooraf geïnstalleerde webapps, TUI-wrappers en desktopapplicaties wilt verwijderen?",
   "preinstalls.confirmRestore": "Weet je zeker dat je alle vooraf geïnstalleerde webapps, TUI-wrappers en desktopapplicaties wilt herstellen?",
   "reminder.cleared": "Alle herinneringen zijn gewist",
-  "reminder.count": "%1 herinneringen",
-  "reminder.countOne": "1 herinnering",
-  "reminder.customInMinutes": "%1 over %2 minuten",
+  "reminder.count": {
+    "one": "%1 herinnering",
+    "other": "%1 herinneringen"
+  },
+  "reminder.customInMinutes": {
+    "one": "%1 over %2 minuut",
+    "other": "%1 over %2 minuten"
+  },
   "reminder.durationMinutesSeconds": "%1m %2s",
   "reminder.durationSeconds": "%1s",
   "reminder.inRemaining": "%1 over %2 (%3)",
   "reminder.minuteLabel": "Herinnering over %1 min",
-  "reminder.minutesUp": "Je %1 minuten zijn om",
+  "reminder.minutesUp": {
+    "one": "Je %1 minuut is om",
+    "other": "Je %1 minuten zijn om"
+  },
   "reminder.none": "Geen openstaande herinneringen",
-  "reminder.setForMinutes": "Herinnering ingesteld over %1 minuten",
+  "reminder.setForMinutes": {
+    "one": "Herinnering ingesteld over %1 minuut",
+    "other": "Herinnering ingesteld over %1 minuten"
+  },
   "reminder.setTooltip": "Herinnering instellen",
   "reminder.title": "Herinnering",
   "reminder.upcoming": "Komende herinneringen",
@@ -216,6 +231,10 @@
   "system.shutdownFailed": "Afsluiten mislukt",
   "system.shutdownRetry": "Kon afsluiten niet voltooien. Probeer het opnieuw.",
   "system.shuttingDown": "Afsluiten",
+  "tailscale.fileCount": {
+    "one": "%1 bestand",
+    "other": "%1 bestanden"
+  },
   "tailscale.received": "%1 ontvangen",
   "tailscale.savedTo": "Opgeslagen in %1",
   "tailscale.sendFailed": "Kon niet verzenden naar %1",
@@ -261,7 +280,10 @@
   "update.kernelReboot": "Linux-kernel is bijgewerkt. Herstarten?",
   "update.ready": "Klaar om bij te werken?",
   "update.rebootRequired": "Updates vereisen een herstart. Klaar?",
-  "update.removeOrphans": "%1 verweesd(e) pakket(ten) verwijderen?",
+  "update.removeOrphans": {
+    "one": "%1 verweesd pakket verwijderen?",
+    "other": "%1 verweesde pakketten verwijderen?"
+  },
   "update.whatsNew": "Wat is er nieuw: %1",
   "webapp.iconPlaceholder": "Kon favicon niet automatisch ophalen. Voer PNG-pictogram-URL of pictogramnaam in",
   "webapp.intro": "Laten we een nieuwe webapp maken die je met de appstarter kunt openen.",

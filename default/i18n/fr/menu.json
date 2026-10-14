@@ -612,7 +612,7 @@
     "label": "SSHD"
   },
   "setup.security.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "Agent SSH"
   },
   "setup.security.sudoless-docker": {
     "label": "Docker sans sudo"
@@ -1146,7 +1146,7 @@
     "title": "Redémarrer"
   },
   "update.firmware": {
-    "label": "Firmware"
+    "label": "Micrologiciel"
   },
   "update.password": {
     "label": "Mot de passe"

@@ -17,17 +17,31 @@
   "agents.durationHoursMinutes": "%1 Std. %2 Min.",
   "agents.durationMinutes": "%1 Min.",
   "agents.durationNow": "jetzt",
-  "agents.freeResetOne": "1 kostenloser Reset",
-  "agents.freeResetOneExpires": "1 kostenloser Reset · nächster läuft in %1 ab",
-  "agents.freeResets": "%1 kostenlose Resets",
-  "agents.freeResetsExpires": "%1 kostenlose Resets · nächster läuft in %2 ab",
+  "agents.freeResets": {
+    "one": "%1 kostenloser Reset",
+    "other": "%1 kostenlose Resets"
+  },
+  "agents.freeResetsExpires": {
+    "one": "%1 kostenloser Reset · nächster verfällt in %2",
+    "other": "%1 kostenlose Resets · nächster verfällt in %2"
+  },
+  "agents.helpFireworksSignIn": "Setze %1, führe %2 aus oder melde dich bei Fireworks in pi oder opencode an.",
+  "agents.helpNotInPath": "%1 nicht in PATH gefunden",
+  "agents.helpRunToAuthenticate": "Führe %1 aus, um dich zu authentifizieren.",
+  "agents.helpRunToRestoreUsage": "Führe %1 aus, um die verbindlichen Nutzungsdaten wiederherzustellen.",
+  "agents.helpScanFailed": "%1-Nutzungsprüfung fehlgeschlagen",
+  "agents.helpSignInExpired": "Die gespeicherte Anmeldung von %1 ist abgelaufen. Starte %1, um sie zu aktualisieren.",
+  "agents.helpStartOrRunToSignIn": "Starte %1 oder führe %2 aus, um dich anzumelden.",
+  "agents.helpStartToSeeLimits": "Starte %1, um seine Limits zu sehen; eine erneute Anmeldung ist nicht nötig.",
   "agents.lastUpdatedAgo": "Zuletzt vor %1 aktualisiert",
   "agents.lastUpdatedJustNow": "Zuletzt vor weniger als einer Minute aktualisiert",
   "agents.lastUpdatedUnknown": "Zeit der letzten Aktualisierung nicht verfügbar",
   "agents.limitsPaused": "Limits pausiert",
   "agents.makeSomethingCool": "BAU ETWAS COOLES",
-  "agents.merged": "Von %1 Geräten zusammengeführt",
-  "agents.mergedOne": "Von 1 Gerät zusammengeführt",
+  "agents.merged": {
+    "one": "Von %1 Gerät zusammengeführt",
+    "other": "Von %1 Geräten zusammengeführt"
+  },
   "agents.modelMonthly": "%1 monatlich",
   "agents.modelSession": "%1 Sitzung",
   "agents.modelWeekly": "%1 wöchentlich",
@@ -37,7 +51,10 @@
   "agents.placeholderCode": "Code",
   "agents.placeholderWork": "Arbeit",
   "agents.plugin": "Plugin",
-  "agents.promptsToday": "%1 Prompts heute",
+  "agents.promptsToday": {
+    "one": "%1 Prompt heute",
+    "other": "%1 Prompts heute"
+  },
   "agents.providerLimitsUnavailable": "%1-Limits nicht verfügbar",
   "agents.providerUnavailable": "%1 nicht verfügbar",
   "agents.reopenSignIn": "Anmeldeseite erneut öffnen",
@@ -45,7 +62,10 @@
   "agents.scopedOther": "%1: %2% des Kontingents für %3",
   "agents.scopedSession": "%1: %2% des Sitzungskontingents",
   "agents.scopedWeekly": "%1: %2% des wöchentlichen Kontingents",
-  "agents.sessionsToday": "%1 Sitzungen heute",
+  "agents.sessionsToday": {
+    "one": "%1 Sitzung heute",
+    "other": "%1 Sitzungen heute"
+  },
   "agents.signInAgainAccount": "Erneut bei diesem Konto anmelden",
   "agents.signInAgainProvider": "Erneut bei %1 anmelden",
   "agents.signInExpired": "Anmeldung abgelaufen",
@@ -61,9 +81,16 @@
   "agents.syncMkdirFailed": "Nutzungs-Sync: mkdir fehlgeschlagen",
   "agents.syncScanFailed": "Nutzungs-Sync: Scan fehlgeschlagen",
   "agents.theme": "Design",
+  "agents.tierPrepaid": "Prepaid",
   "agents.title": "Agenten",
-  "agents.tokensThisWeek": "%1 Token diese Woche",
-  "agents.tokensToday": "%1 Token heute",
+  "agents.tokensThisWeek": {
+    "one": "%1 Token diese Woche",
+    "other": "%1 Tokens diese Woche"
+  },
+  "agents.tokensToday": {
+    "one": "%1 Token heute",
+    "other": "%1 Tokens heute"
+  },
   "agents.unknownModel": "Unbekannt",
   "agents.usageNotUpdated": "Nutzung wurde noch nicht aktualisiert.",
   "agents.usageUnavailable": "Nutzung nicht verfügbar",
@@ -77,7 +104,7 @@
   "agents.windowWeekly": "Wöchentlich",
   "appLibrary.launching": "Starte %1…",
   "appLibrary.launchingApp": "Starte Anwendung…",
-  "audio.input": "INPUT",
+  "audio.input": "EINGABE",
   "audio.level.concertHall": "Konzertsaal",
   "audio.level.crankedUp": "Aufgedreht",
   "audio.level.easyListening": "Leichtes Hören",
@@ -88,7 +115,7 @@
   "audio.level.steadyGroove": "Stabiler Groove",
   "audio.level.whisper": "Flüstern",
   "audio.mute": "Stummschalten",
-  "audio.output": "OUTPUT",
+  "audio.output": "AUSGABE",
   "audio.sources": "QUELLEN",
   "audio.stream": "Stream",
   "audio.title": "Audio",
@@ -142,7 +169,10 @@
   "bluetooth.turnedOff": "Ausgeschaltet",
   "clipboard.deleteHistory": "Gesamten Zwischenablageverlauf löschen?",
   "clipboard.empty": "Zwischenablage ist leer",
-  "clipboard.files": "%1 Dateien",
+  "clipboard.files": {
+    "one": "%1 Datei",
+    "other": "%1 Dateien"
+  },
   "clipboard.image": "Bild",
   "clipboard.imageFrom": "Bild von %1",
   "clipboard.screenshotFrom": "Screenshot von %1",
@@ -228,8 +258,14 @@
   "elsewhen.badgeTracked": "beobachtet",
   "elsewhen.clock": "Uhr",
   "elsewhen.dateFormat": "ddd d. MMM",
-  "elsewhen.daysAhead": "+%1 Tage",
-  "elsewhen.daysBehind": "-%1 Tage",
+  "elsewhen.daysAhead": {
+    "one": "+%1 Tag",
+    "other": "+%1 Tage"
+  },
+  "elsewhen.daysBehind": {
+    "one": "-%1 Tag",
+    "other": "-%1 Tage"
+  },
   "elsewhen.daysShort": "%1 T.",
   "elsewhen.here": "Hier ist es %1",
   "elsewhen.hereIn": "Hier in %2 ist es %1",
@@ -267,11 +303,14 @@
   "menu.powerProfilePerformance": "Leistung",
   "menu.powerProfilePowerSaver": "Energiesparend",
   "menu.selectPrompt": "Auswählen",
-  "menu.selectedCount": "%1 ausgewählt",
+  "menu.selectedCount": {
+    "one": "%1 ausgewählt",
+    "other": "%1 ausgewählt"
+  },
   "monitor.brightness": "HELLIGKEIT",
-  "monitor.display": "Display",
+  "monitor.display": "Bildschirm",
   "monitor.displayFocused": "%1 · fokussiert",
-  "monitor.displays": "DISPLAYS",
+  "monitor.displays": "BILDSCHIRME",
   "monitor.fixedBrightness": "FESTE HELLIGKEIT",
   "monitor.level.candlelit": "Kerzenlicht",
   "monitor.level.evenDay": "Gleichmäßiger Tag",
@@ -285,9 +324,13 @@
   "monitor.textSize": "TEXTGRÖSSE",
   "multiSelect.exited": "Optionenbefehl mit %1 beendet",
   "multiSelect.invalidJson": "Optionenbefehl gab ungültiges JSON aus",
+  "multiSelect.selectedCount": {
+    "one": "%1 ausgewählt",
+    "other": "%1 ausgewählt"
+  },
   "multiSelect.timedOut": "Optionenbefehl: Zeitüberschreitung",
   "network.automatic": "AUTOMATISCH",
-  "network.bandAuto": "Auto",
+  "network.bandAuto": "Automatisch",
   "network.bandAutoTooltip": "Wi-Fi das Band wählen lassen",
   "network.captivePortalHelp": "Melde dich an oder akzeptiere die Bedingungen dieses Netzwerks, um ins Internet zu gelangen.",
   "network.connect": "Verbinden",
@@ -299,7 +342,7 @@
   "network.copyToClipboard": "In Zwischenablage kopieren",
   "network.disconnected": "Getrennt",
   "network.disconnecting": "Trennen…",
-  "network.dnsCustom": "Benutzerdefiniert",
+  "network.dnsCustom": "Manuell",
   "network.dnsFromDhcp": "DNS von DHCP verwenden",
   "network.dnsProvider": "DNS-ANBIETER",
   "network.downloaded": "Heruntergeladen",
@@ -387,9 +430,9 @@
   "power.holding": "Hält Ladestand",
   "power.onBattery": "Im Akkubetrieb",
   "power.powerProfile": "ENERGIEPROFIL",
-  "power.profileBalanced": "Ausgeglichen",
+  "power.profileBalanced": "Ausgewogen",
   "power.profilePerformance": "Leistung",
-  "power.profilePowerSaver": "Energiesparen",
+  "power.profilePowerSaver": "Sparmodus",
   "power.threshold": "Schwellenwert",
   "power.timeLeft": "Restzeit",
   "power.timeToFull": "Zeit bis voll",

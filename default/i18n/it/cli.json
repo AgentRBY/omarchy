@@ -59,6 +59,8 @@
   "clipboard.urlCopied": "URL copiato negli appunti",
   "common.disabled": "Disattivato",
   "common.enabled": "Attivato",
+  "common.no": "No",
+  "common.yes": "Sì",
   "config.editing": "Modifica file di configurazione",
   "corners.followTheme": "Angoli in base al tema",
   "corners.rounded": "Angoli arrotondati per tutti i temi",
@@ -122,8 +124,11 @@
   "lock.didNotLock": "Lo schermo non si è bloccato prima della sospensione",
   "lock.unlockedNoLockScreen": "La sessione è rimasta sbloccata (non è configurata alcuna schermata di blocco).",
   "lock.unlockedTimeout": "La sessione è rimasta sbloccata (la shell non ha bloccato la sessione entro %1ms).",
-  "migrate.clickToRun": "Fai clic per eseguire %1 migrazioni in sospeso.",
-  "migrate.clickToRunOne": "Fai clic per eseguire 1 migrazione in sospeso.",
+  "migrate.clickToRun": {
+    "many": "Fai clic per eseguire %1 migrazioni in sospeso.",
+    "one": "Fai clic per eseguire %1 migrazione in sospeso.",
+    "other": "Fai clic per eseguire %1 migrazioni in sospeso."
+  },
   "migrate.pending": "Migrazioni Omarchy in sospeso",
   "monitor.extendedRestored": "Modalità estesa ripristinata",
   "monitor.laptopDisabled": "Schermo portatile disattivato",
@@ -158,16 +163,31 @@
   "preinstalls.confirmRemove": "Vuoi davvero rimuovere tutte le web app, i wrapper TUI e le applicazioni desktop preinstallate?",
   "preinstalls.confirmRestore": "Vuoi davvero ripristinare tutte le web app, i wrapper TUI e le applicazioni desktop preinstallate?",
   "reminder.cleared": "Tutti i promemoria sono stati cancellati",
-  "reminder.count": "%1 promemoria",
-  "reminder.countOne": "1 promemoria",
-  "reminder.customInMinutes": "%1 tra %2 minuti",
+  "reminder.count": {
+    "many": "%1 promemoria",
+    "one": "%1 promemoria",
+    "other": "%1 promemoria"
+  },
+  "reminder.customInMinutes": {
+    "many": "%1 tra %2 minuti",
+    "one": "%1 tra %2 minuto",
+    "other": "%1 tra %2 minuti"
+  },
   "reminder.durationMinutesSeconds": "%1min %2s",
   "reminder.durationSeconds": "%1s",
   "reminder.inRemaining": "%1 tra %2 (%3)",
   "reminder.minuteLabel": "Promemoria tra %1 min",
-  "reminder.minutesUp": "I tuoi %1 minuti sono scaduti",
+  "reminder.minutesUp": {
+    "many": "I tuoi %1 minuti sono scaduti",
+    "one": "Il tuo %1 minuto è scaduto",
+    "other": "I tuoi %1 minuti sono scaduti"
+  },
   "reminder.none": "Nessun promemoria in sospeso",
-  "reminder.setForMinutes": "Promemoria impostato per tra %1 minuti",
+  "reminder.setForMinutes": {
+    "many": "Promemoria impostato per %1 minuti",
+    "one": "Promemoria impostato per %1 minuto",
+    "other": "Promemoria impostato per %1 minuti"
+  },
   "reminder.setTooltip": "Imposta promemoria",
   "reminder.title": "Promemoria",
   "reminder.upcoming": "Promemoria imminenti",
@@ -216,6 +236,11 @@
   "system.shutdownFailed": "Spegnimento non riuscito",
   "system.shutdownRetry": "Impossibile completare lo spegnimento. Riprova.",
   "system.shuttingDown": "Spegnimento in corso",
+  "tailscale.fileCount": {
+    "many": "%1 file",
+    "one": "%1 file",
+    "other": "%1 file"
+  },
   "tailscale.received": "Ricevuto %1",
   "tailscale.savedTo": "Salvato in %1",
   "tailscale.sendFailed": "Impossibile inviare a %1",
@@ -261,7 +286,11 @@
   "update.kernelReboot": "Il kernel Linux è stato aggiornato. Riavviare?",
   "update.ready": "Pronto per l'aggiornamento?",
   "update.rebootRequired": "Gli aggiornamenti richiedono un riavvio. Pronto?",
-  "update.removeOrphans": "Rimuovere %1 pacchetto(i) orfano(i)?",
+  "update.removeOrphans": {
+    "many": "Rimuovere %1 pacchetti orfani?",
+    "one": "Rimuovere %1 pacchetto orfano?",
+    "other": "Rimuovere %1 pacchetti orfani?"
+  },
   "update.whatsNew": "Novità: %1",
   "webapp.iconPlaceholder": "Impossibile recuperare automaticamente la favicon. Inserisci URL icona PNG o nome icona",
   "webapp.intro": "Creiamo una nuova app web che potrai avviare dal launcher.",

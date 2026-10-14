@@ -322,7 +322,7 @@
     "label": "Ekranni aks ettirish"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "Gibrid GPU"
   },
   "trigger.hardware.touchpad": {
     "label": "Sensor panel"
@@ -615,7 +615,7 @@
     "label": "SSH Agent"
   },
   "setup.security.sudoless-docker": {
-    "label": "Sudoless Docker"
+    "label": "Sudosiz Docker"
   },
   "setup.security.passwordless-sudo": {
     "label": "Parolsiz Sudo"
@@ -966,7 +966,7 @@
     "label": "SSHD"
   },
   "remove.security.sudoless-docker": {
-    "label": "Sudoless Docker"
+    "label": "Sudosiz Docker"
   },
   "remove.ai.hermes": {
     "label": "Hermes Desktop"
@@ -999,7 +999,7 @@
     "label": "Microsoft"
   },
   "remove.service.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "SSH agenti"
   },
   "remove.ai.chatgpt": {
     "label": "ChatGPT Desktop"

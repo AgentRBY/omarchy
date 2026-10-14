@@ -17,10 +17,12 @@
   "agents.durationHoursMinutes": "%1小时 %2分钟",
   "agents.durationMinutes": "%1分钟",
   "agents.durationNow": "现在",
-  "agents.freeResetOne": "1 次免费重置",
-  "agents.freeResetOneExpires": "1 次免费重置 · 下一次 %1 后过期",
-  "agents.freeResets": "%1 次免费重置",
-  "agents.freeResetsExpires": "%1 次免费重置 · 下一次 %2 后过期",
+  "agents.freeResets": {
+    "other": "%1 次免费重置"
+  },
+  "agents.freeResetsExpires": {
+    "other": "%1 次免费重置 · 下一次将在 %2 后过期"
+  },
   "agents.helpFireworksSignIn": "设置 %1，运行 %2，或在 pi 或 opencode 中登录 Fireworks。",
   "agents.helpNotInPath": "在 PATH 中未找到 %1",
   "agents.helpRunToAuthenticate": "运行 %1 进行认证。",
@@ -34,8 +36,9 @@
   "agents.lastUpdatedUnknown": "上次更新时间不可用",
   "agents.limitsPaused": "额度已暂停",
   "agents.makeSomethingCool": "做点酷的东西",
-  "agents.merged": "合并自 %1 台设备",
-  "agents.mergedOne": "合并自 1 台设备",
+  "agents.merged": {
+    "other": "合并自 %1 台设备"
+  },
   "agents.modelMonthly": "%1 每月",
   "agents.modelSession": "%1 会话",
   "agents.modelWeekly": "%1 每周",
@@ -45,7 +48,9 @@
   "agents.placeholderCode": "代码",
   "agents.placeholderWork": "工作",
   "agents.plugin": "插件",
-  "agents.promptsToday": "今天 %1 条提示",
+  "agents.promptsToday": {
+    "other": "今天 %1 条提示"
+  },
   "agents.providerLimitsUnavailable": "%1 额度不可用",
   "agents.providerUnavailable": "%1 不可用",
   "agents.reopenSignIn": "重新打开登录页面",
@@ -53,7 +58,9 @@
   "agents.scopedOther": "%1：已用其 %3 额度的 %2%",
   "agents.scopedSession": "%1：已用其会话额度的 %2%",
   "agents.scopedWeekly": "%1：已用其每周额度的 %2%",
-  "agents.sessionsToday": "今天 %1 个会话",
+  "agents.sessionsToday": {
+    "other": "今天 %1 个会话"
+  },
   "agents.signInAgainAccount": "重新登录此账户",
   "agents.signInAgainProvider": "重新登录 %1",
   "agents.signInExpired": "登录已过期",
@@ -71,8 +78,12 @@
   "agents.theme": "主题",
   "agents.tierPrepaid": "预付费",
   "agents.title": "智能体",
-  "agents.tokensThisWeek": "本周 %1 个令牌",
-  "agents.tokensToday": "今天 %1 个令牌",
+  "agents.tokensThisWeek": {
+    "other": "本周 %1 个 token"
+  },
+  "agents.tokensToday": {
+    "other": "今天 %1 个 token"
+  },
   "agents.unknownModel": "未知",
   "agents.usageNotUpdated": "用量尚未更新。",
   "agents.usageUnavailable": "用量不可用",
@@ -144,14 +155,16 @@
   "bluetooth.phrase7": "摆弄编解码",
   "bluetooth.phrase8": "擦亮数据包",
   "bluetooth.scanning": "正在扫描设备…",
-  "bluetooth.title": "Bluetooth",
+  "bluetooth.title": "蓝牙",
   "bluetooth.turnOff": "关闭 Bluetooth",
   "bluetooth.turnOn": "打开 Bluetooth",
   "bluetooth.turnOnToScan": "打开 Bluetooth 以扫描",
   "bluetooth.turnedOff": "已关闭",
   "clipboard.deleteHistory": "删除整个剪贴板历史？",
   "clipboard.empty": "剪贴板为空",
-  "clipboard.files": "%1 个文件",
+  "clipboard.files": {
+    "other": "%1 个文件"
+  },
   "clipboard.image": "图片",
   "clipboard.imageFrom": "来自 %1 的图片",
   "clipboard.screenshotFrom": "来自 %1 的截图",
@@ -237,8 +250,12 @@
   "elsewhen.badgeTracked": "已跟踪",
   "elsewhen.clock": "时钟",
   "elsewhen.dateFormat": "MMM d'日' ddd",
-  "elsewhen.daysAhead": "+%1天",
-  "elsewhen.daysBehind": "-%1天",
+  "elsewhen.daysAhead": {
+    "other": "+%1 天"
+  },
+  "elsewhen.daysBehind": {
+    "other": "-%1 天"
+  },
   "elsewhen.daysShort": "%1天",
   "elsewhen.here": "这里现在是 %1",
   "elsewhen.hereIn": "这里在 %2，现在是 %1",
@@ -276,7 +293,9 @@
   "menu.powerProfilePerformance": "性能",
   "menu.powerProfilePowerSaver": "节能",
   "menu.selectPrompt": "选择",
-  "menu.selectedCount": "已选 %1 项",
+  "menu.selectedCount": {
+    "other": "已选 %1 项"
+  },
   "monitor.brightness": "亮度",
   "monitor.display": "显示器",
   "monitor.displayFocused": "%1 · 已聚焦",
@@ -294,6 +313,9 @@
   "monitor.textSize": "文字大小",
   "multiSelect.exited": "选项命令已退出 %1",
   "multiSelect.invalidJson": "选项命令输出了无效的 JSON",
+  "multiSelect.selectedCount": {
+    "other": "已选 %1 项"
+  },
   "multiSelect.timedOut": "选项命令超时",
   "network.automatic": "自动",
   "network.bandAuto": "自动",

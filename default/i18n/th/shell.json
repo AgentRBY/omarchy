@@ -17,10 +17,12 @@
   "agents.durationHoursMinutes": "%1 ชม. %2 น.",
   "agents.durationMinutes": "%1 น.",
   "agents.durationNow": "ตอนนี้",
-  "agents.freeResetOne": "รีเซ็ตฟรี 1 ครั้ง",
-  "agents.freeResetOneExpires": "รีเซ็ตฟรี 1 ครั้ง · ครั้งถัดไปหมดอายุใน %1",
-  "agents.freeResets": "รีเซ็ตฟรี %1 ครั้ง",
-  "agents.freeResetsExpires": "รีเซ็ตฟรี %1 ครั้ง · ครั้งถัดไปหมดอายุใน %2",
+  "agents.freeResets": {
+    "other": "รีเซ็ตฟรี %1 ครั้ง"
+  },
+  "agents.freeResetsExpires": {
+    "other": "รีเซ็ตฟรี %1 ครั้ง · ครั้งถัดไปหมดอายุใน %2"
+  },
   "agents.helpFireworksSignIn": "ตั้งค่า %1, รัน %2 หรือเข้าสู่ระบบ Fireworks ใน pi หรือ opencode",
   "agents.helpNotInPath": "ไม่พบ %1 ใน PATH",
   "agents.helpRunToAuthenticate": "รัน %1 เพื่อยืนยันตัวตน",
@@ -34,8 +36,9 @@
   "agents.lastUpdatedUnknown": "ไม่มีข้อมูลเวลาอัปเดตล่าสุด",
   "agents.limitsPaused": "ขีดจำกัดหยุดชั่วคราว",
   "agents.makeSomethingCool": "สร้างสิ่งเจ๋งๆ",
-  "agents.merged": "รวมจาก %1 อุปกรณ์",
-  "agents.mergedOne": "รวมจาก 1 อุปกรณ์",
+  "agents.merged": {
+    "other": "รวมจาก %1 อุปกรณ์"
+  },
   "agents.modelMonthly": "%1 รายเดือน",
   "agents.modelSession": "%1 รายเซสชัน",
   "agents.modelWeekly": "%1 รายสัปดาห์",
@@ -45,7 +48,9 @@
   "agents.placeholderCode": "รหัส",
   "agents.placeholderWork": "งาน",
   "agents.plugin": "ปลั๊กอิน",
-  "agents.promptsToday": "%1 พรอมต์วันนี้",
+  "agents.promptsToday": {
+    "other": "วันนี้ %1 พรอมต์"
+  },
   "agents.providerLimitsUnavailable": "ไม่มีขีดจำกัดของ %1",
   "agents.providerUnavailable": "%1 ไม่พร้อมใช้งาน",
   "agents.reopenSignIn": "เปิดหน้าเข้าสู่ระบบอีกครั้ง",
@@ -53,7 +58,9 @@
   "agents.scopedOther": "%1: %2% ของโควตา %3",
   "agents.scopedSession": "%1: %2% ของโควตาเซสชัน",
   "agents.scopedWeekly": "%1: %2% ของโควตารายสัปดาห์",
-  "agents.sessionsToday": "%1 เซสชันวันนี้",
+  "agents.sessionsToday": {
+    "other": "วันนี้ %1 เซสชัน"
+  },
   "agents.signInAgainAccount": "เข้าสู่ระบบบัญชีนี้อีกครั้ง",
   "agents.signInAgainProvider": "เข้าสู่ระบบ %1 อีกครั้ง",
   "agents.signInExpired": "การเข้าสู่ระบบหมดอายุ",
@@ -71,8 +78,12 @@
   "agents.theme": "ธีม",
   "agents.tierPrepaid": "เติมเงิน",
   "agents.title": "เอเจนต์",
-  "agents.tokensThisWeek": "%1 โทเคนสัปดาห์นี้",
-  "agents.tokensToday": "%1 โทเคนวันนี้",
+  "agents.tokensThisWeek": {
+    "other": "สัปดาห์นี้ %1 โทเค็น"
+  },
+  "agents.tokensToday": {
+    "other": "วันนี้ %1 โทเค็น"
+  },
   "agents.unknownModel": "ไม่ทราบ",
   "agents.usageNotUpdated": "ยังไม่อัปเดตยอดใช้งาน",
   "agents.usageUnavailable": "ไม่มียอดใช้งาน",
@@ -151,7 +162,9 @@
   "bluetooth.turnedOff": "ปิดอยู่",
   "clipboard.deleteHistory": "ลบประวัติคลิปบอร์ดทั้งหมดไหม?",
   "clipboard.empty": "คลิปบอร์ดว่าง",
-  "clipboard.files": "%1 ไฟล์",
+  "clipboard.files": {
+    "other": "%1 ไฟล์"
+  },
   "clipboard.image": "รูปภาพ",
   "clipboard.imageFrom": "รูปภาพจาก %1",
   "clipboard.screenshotFrom": "ภาพหน้าจอจาก %1",
@@ -237,8 +250,12 @@
   "elsewhen.badgeTracked": "ติดตาม",
   "elsewhen.clock": "นาฬิกา",
   "elsewhen.dateFormat": "ddd d MMM",
-  "elsewhen.daysAhead": "+%1 วัน",
-  "elsewhen.daysBehind": "-%1 วัน",
+  "elsewhen.daysAhead": {
+    "other": "+%1 วัน"
+  },
+  "elsewhen.daysBehind": {
+    "other": "-%1 วัน"
+  },
   "elsewhen.daysShort": "%1 วัน",
   "elsewhen.here": "ที่นี่ตอนนี้ %1",
   "elsewhen.hereIn": "ที่ %2 ตอนนี้ %1",
@@ -276,7 +293,9 @@
   "menu.powerProfilePerformance": "ประสิทธิภาพสูง",
   "menu.powerProfilePowerSaver": "ประหยัดพลังงาน",
   "menu.selectPrompt": "เลือก",
-  "menu.selectedCount": "เลือกแล้ว %1",
+  "menu.selectedCount": {
+    "other": "เลือกแล้ว %1"
+  },
   "monitor.brightness": "ความสว่าง",
   "monitor.display": "จอภาพ",
   "monitor.displayFocused": "%1 · โฟกัสอยู่",
@@ -294,6 +313,9 @@
   "monitor.textSize": "ขนาดข้อความ",
   "multiSelect.exited": "คำสั่งตัวเลือกออกด้วย %1",
   "multiSelect.invalidJson": "คำสั่งตัวเลือกส่ง JSON ที่ไม่ถูกต้อง",
+  "multiSelect.selectedCount": {
+    "other": "เลือกแล้ว %1"
+  },
   "multiSelect.timedOut": "คำสั่งตัวเลือกหมดเวลา",
   "network.automatic": "อัตโนมัติ",
   "network.bandAuto": "อัตโนมัติ",
@@ -398,7 +420,7 @@
   "power.powerProfile": "โปรไฟล์พลังงาน",
   "power.profileBalanced": "สมดุล",
   "power.profilePerformance": "ประสิทธิภาพ",
-  "power.profilePowerSaver": "ประหยัดพลังงาน",
+  "power.profilePowerSaver": "ประหยัดไฟ",
   "power.threshold": "ขีดจำกัด",
   "power.timeLeft": "เวลาที่เหลือ",
   "power.timeToFull": "เวลาจนชาร์จเต็ม",

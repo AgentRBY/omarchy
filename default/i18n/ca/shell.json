@@ -17,17 +17,34 @@
   "agents.durationHoursMinutes": "%1h %2min",
   "agents.durationMinutes": "%1min",
   "agents.durationNow": "ara",
-  "agents.freeResetOne": "1 restabliment gratuït",
-  "agents.freeResetOneExpires": "1 restabliment gratuït · el següent caduca d'aquí a %1",
-  "agents.freeResets": "%1 restabliments gratuïts",
-  "agents.freeResetsExpires": "%1 restabliments gratuïts · el següent caduca d'aquí a %2",
+  "agents.freeResets": {
+    "many": "%1 restabliments gratuïts",
+    "one": "%1 restabliment gratuït",
+    "other": "%1 restabliments gratuïts"
+  },
+  "agents.freeResetsExpires": {
+    "many": "%1 restabliments gratuïts · el proper caduca d'aquí a %2",
+    "one": "%1 restabliment gratuït · el proper caduca d'aquí a %2",
+    "other": "%1 restabliments gratuïts · el proper caduca d'aquí a %2"
+  },
+  "agents.helpFireworksSignIn": "Defineix %1, executa %2 o inicia sessió a Fireworks des de pi o opencode.",
+  "agents.helpNotInPath": "%1 no s'ha trobat al PATH",
+  "agents.helpRunToAuthenticate": "Executa %1 per autenticar-te.",
+  "agents.helpRunToRestoreUsage": "Executa %1 per restablir l'ús autoritatiu.",
+  "agents.helpScanFailed": "L'escaneig d'ús de %1 ha fallat",
+  "agents.helpSignInExpired": "L'inici de sessió desat de %1 ha caducat. Inicia %1 per actualitzar-lo.",
+  "agents.helpStartOrRunToSignIn": "Inicia %1 o executa %2 per iniciar sessió.",
+  "agents.helpStartToSeeLimits": "Inicia %1 per veure'n els límits; no cal tornar a iniciar sessió.",
   "agents.lastUpdatedAgo": "Actualitzat fa %1",
   "agents.lastUpdatedJustNow": "Actualitzat fa menys d'un minut",
   "agents.lastUpdatedUnknown": "Hora d'última actualització no disponible",
   "agents.limitsPaused": "Límits en pausa",
   "agents.makeSomethingCool": "CREA ALGUNA COSA GENIAL",
-  "agents.merged": "Combinat a partir de %1 dispositius",
-  "agents.mergedOne": "Combinat a partir d'1 dispositiu",
+  "agents.merged": {
+    "many": "Fusionat de %1 dispositius",
+    "one": "Fusionat de %1 dispositiu",
+    "other": "Fusionat de %1 dispositius"
+  },
   "agents.modelMonthly": "%1 mensual",
   "agents.modelSession": "%1 per sessió",
   "agents.modelWeekly": "%1 setmanal",
@@ -37,7 +54,11 @@
   "agents.placeholderCode": "Codi",
   "agents.placeholderWork": "Feina",
   "agents.plugin": "Complement",
-  "agents.promptsToday": "%1 indicacions avui",
+  "agents.promptsToday": {
+    "many": "%1 indicacions avui",
+    "one": "%1 indicació avui",
+    "other": "%1 indicacions avui"
+  },
   "agents.providerLimitsUnavailable": "Límits de %1 no disponibles",
   "agents.providerUnavailable": "%1 no disponible",
   "agents.reopenSignIn": "Torna a obrir la pàgina d'inici de sessió",
@@ -45,7 +66,11 @@
   "agents.scopedOther": "%1: %2% de la seva assignació %3",
   "agents.scopedSession": "%1: %2% de la seva assignació de sessió",
   "agents.scopedWeekly": "%1: %2% de la seva assignació setmanal",
-  "agents.sessionsToday": "%1 sessions avui",
+  "agents.sessionsToday": {
+    "many": "%1 sessions avui",
+    "one": "%1 sessió avui",
+    "other": "%1 sessions avui"
+  },
   "agents.signInAgainAccount": "Torna a iniciar sessió en aquest compte",
   "agents.signInAgainProvider": "Torna a iniciar sessió a %1",
   "agents.signInExpired": "Inici de sessió caducat",
@@ -61,9 +86,18 @@
   "agents.syncMkdirFailed": "Ha fallat el mkdir de sincronització d'ús",
   "agents.syncScanFailed": "Ha fallat l'escaneig de sincronització d'ús",
   "agents.theme": "Tema",
+  "agents.tierPrepaid": "Prepagament",
   "agents.title": "Agents",
-  "agents.tokensThisWeek": "%1 tokens aquesta setmana",
-  "agents.tokensToday": "%1 tokens avui",
+  "agents.tokensThisWeek": {
+    "many": "%1 tokens aquesta setmana",
+    "one": "%1 token aquesta setmana",
+    "other": "%1 tokens aquesta setmana"
+  },
+  "agents.tokensToday": {
+    "many": "%1 tokens avui",
+    "one": "%1 token avui",
+    "other": "%1 tokens avui"
+  },
   "agents.unknownModel": "Desconegut",
   "agents.usageNotUpdated": "L'ús encara no s'ha actualitzat.",
   "agents.usageUnavailable": "Ús no disponible",
@@ -142,7 +176,11 @@
   "bluetooth.turnedOff": "Desactivat",
   "clipboard.deleteHistory": "Vols suprimir tot l'historial del porta-retalls?",
   "clipboard.empty": "El porta-retalls és buit",
-  "clipboard.files": "%1 fitxers",
+  "clipboard.files": {
+    "many": "%1 fitxers",
+    "one": "%1 fitxer",
+    "other": "%1 fitxers"
+  },
   "clipboard.image": "Imatge",
   "clipboard.imageFrom": "Imatge de %1",
   "clipboard.screenshotFrom": "Captura de %1",
@@ -228,8 +266,16 @@
   "elsewhen.badgeTracked": "seguida",
   "elsewhen.clock": "Rellotge",
   "elsewhen.dateFormat": "ddd d MMM",
-  "elsewhen.daysAhead": "+%1 dies",
-  "elsewhen.daysBehind": "-%1 dies",
+  "elsewhen.daysAhead": {
+    "many": "+%1 dies",
+    "one": "+%1 dia",
+    "other": "+%1 dies"
+  },
+  "elsewhen.daysBehind": {
+    "many": "-%1 dies",
+    "one": "-%1 dia",
+    "other": "-%1 dies"
+  },
   "elsewhen.daysShort": "%1 d",
   "elsewhen.here": "És %1 aquí",
   "elsewhen.hereIn": "És %1 aquí, a %2",
@@ -267,7 +313,11 @@
   "menu.powerProfilePerformance": "rendiment",
   "menu.powerProfilePowerSaver": "estalvi d'energia",
   "menu.selectPrompt": "Selecciona",
-  "menu.selectedCount": "%1 seleccionats",
+  "menu.selectedCount": {
+    "many": "%1 seleccionats",
+    "one": "%1 seleccionat",
+    "other": "%1 seleccionats"
+  },
   "monitor.brightness": "LLUMINOSITAT",
   "monitor.display": "Pantalla",
   "monitor.displayFocused": "%1 · enfocada",
@@ -285,6 +335,11 @@
   "monitor.textSize": "MIDA DEL TEXT",
   "multiSelect.exited": "L'ordre d'opcions ha finalitzat amb %1",
   "multiSelect.invalidJson": "L'ordre d'opcions ha emès JSON no vàlid",
+  "multiSelect.selectedCount": {
+    "many": "%1 seleccionats",
+    "one": "%1 seleccionat",
+    "other": "%1 seleccionats"
+  },
   "multiSelect.timedOut": "S'ha esgotat el temps de l'ordre d'opcions",
   "network.automatic": "AUTOMÀTIC",
   "network.bandAuto": "Automàtic",
@@ -299,7 +354,7 @@
   "network.copyToClipboard": "Copia al porta-retalls",
   "network.disconnected": "Desconnectat",
   "network.disconnecting": "S'està desconnectant…",
-  "network.dnsCustom": "Personalitzat",
+  "network.dnsCustom": "Manual",
   "network.dnsFromDhcp": "Utilitza el DNS del DHCP",
   "network.dnsProvider": "PROVEÏDOR DNS",
   "network.downloaded": "Baixat",
@@ -389,7 +444,7 @@
   "power.powerProfile": "PERFIL D'ENERGIA",
   "power.profileBalanced": "Equilibrat",
   "power.profilePerformance": "Rendiment",
-  "power.profilePowerSaver": "Estalvi d'energia",
+  "power.profilePowerSaver": "Estalvi",
   "power.threshold": "Llindar",
   "power.timeLeft": "Temps restant",
   "power.timeToFull": "Temps fins a plena càrrega",

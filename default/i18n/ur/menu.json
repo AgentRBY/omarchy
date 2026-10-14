@@ -174,7 +174,7 @@
     "label": "دائیں بار"
   },
   "trigger.appearance.dock": {
-    "label": "Dock"
+    "label": "ڈاک"
   },
   "trigger.appearance.dock.autohide": {
     "label": "خودکار چھپتا Dock"
@@ -262,7 +262,7 @@
     "label": "کریش کیپچر"
   },
   "trigger.emoji": {
-    "label": "Emoji"
+    "label": "ایموجی"
   },
   "trigger.clipboard-history": {
     "label": "کلپ بورڈ تاریخ"
@@ -322,7 +322,7 @@
     "label": "ڈسپلے عکس"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "ہائبرڈ GPU"
   },
   "trigger.hardware.touchpad": {
     "label": "ٹچ پیڈ"

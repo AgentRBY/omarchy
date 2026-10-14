@@ -124,8 +124,10 @@
   "lock.didNotLock": "Ekran kutishdan oldin qulflanmadi",
   "lock.unlockedNoLockScreen": "Sessiya qulflanmagan holda qoldi (qulf ekrani sozlanmagan).",
   "lock.unlockedTimeout": "Sessiya qulflanmagan holda qoldi (qobiq %1ms ichida sessiyani himoya qilmadi).",
-  "migrate.clickToRun": "Kutilayotgan %1 migratsiyani ishga tushirish uchun bosing.",
-  "migrate.clickToRunOne": "Kutilayotgan 1 migratsiyani ishga tushirish uchun bosing.",
+  "migrate.clickToRun": {
+    "one": "%1 ta kutilayotgan migratsiyani ishga tushirish uchun bosing.",
+    "other": "%1 ta kutilayotgan migratsiyani ishga tushirish uchun bosing."
+  },
   "migrate.pending": "Kutilayotgan Omarchy migratsiyalari",
   "monitor.extendedRestored": "Kengaytirilgan rejim tiklandi",
   "monitor.laptopDisabled": "Noutbuk ekrani oʻchirildi",
@@ -160,16 +162,27 @@
   "preinstalls.confirmRemove": "Barcha oldindan oʻrnatilgan veb ilovalar, TUI oʻramlari va ish stoli ilovalarini olib tashlashga ishonchingiz komilmi?",
   "preinstalls.confirmRestore": "Barcha oldindan oʻrnatilgan veb ilovalar, TUI oʻramlari va ish stoli ilovalarini tiklashga ishonchingiz komilmi?",
   "reminder.cleared": "Barcha eslatmalar tozalandi",
-  "reminder.count": "%1 ta eslatma",
-  "reminder.countOne": "1 ta eslatma",
-  "reminder.customInMinutes": "%1 %2 daqiqada",
+  "reminder.count": {
+    "one": "%1 ta eslatma",
+    "other": "%1 ta eslatma"
+  },
+  "reminder.customInMinutes": {
+    "one": "%1 %2 daqiqadan keyin",
+    "other": "%1 %2 daqiqadan keyin"
+  },
   "reminder.durationMinutesSeconds": "%1 daq %2 son",
   "reminder.durationSeconds": "%1 son",
   "reminder.inRemaining": "%1 %2 dan keyin (%3)",
   "reminder.minuteLabel": "%1 daqiqalik eslatma",
-  "reminder.minutesUp": "%1 daqiqangiz tugadi",
+  "reminder.minutesUp": {
+    "one": "%1 daqiqangiz tugadi",
+    "other": "%1 daqiqangiz tugadi"
+  },
   "reminder.none": "Kutilayotgan eslatmalar yoʻq",
-  "reminder.setForMinutes": "Eslatma %1 daqiqaga oʻrnatildi",
+  "reminder.setForMinutes": {
+    "one": "Eslatma %1 daqiqaga oʻrnatildi",
+    "other": "Eslatma %1 daqiqaga oʻrnatildi"
+  },
   "reminder.setTooltip": "Eslatma oʻrnatish",
   "reminder.title": "Eslatma",
   "reminder.upcoming": "Kelgusi eslatmalar",
@@ -218,6 +231,10 @@
   "system.shutdownFailed": "Oʻchirish muvaffaqiyatsiz",
   "system.shutdownRetry": "Oʻchirishni yakunlab boʻlmadi. Qayta urining.",
   "system.shuttingDown": "Oʻchirilmoqda",
+  "tailscale.fileCount": {
+    "one": "%1 ta fayl",
+    "other": "%1 ta fayl"
+  },
   "tailscale.received": "%1 qabul qilindi",
   "tailscale.savedTo": "%1 ga saqlandi",
   "tailscale.sendFailed": "%1 ga yuborib boʻlmadi",
@@ -263,7 +280,10 @@
   "update.kernelReboot": "Linux yadrosi yangilandi. Qayta yuklansinmi?",
   "update.ready": "Yangilashga tayyormisiz?",
   "update.rebootRequired": "Yangilanishlar uchun qayta ishga tushirish kerak. Tayyormisiz?",
-  "update.removeOrphans": "%1 ta yetim paket olib tashlansinmi?",
+  "update.removeOrphans": {
+    "one": "%1 ta yetim paket olib tashlansinmi?",
+    "other": "%1 ta yetim paket olib tashlansinmi?"
+  },
   "update.whatsNew": "Yangiliklar: %1",
   "webapp.iconPlaceholder": "Favicon avtomatik olinmadi. PNG ikonka URL manzili yoki ikonka nomini kiriting",
   "webapp.intro": "Ilova ishga tushirgichi bilan ochishingiz mumkin boʻlgan yangi veb-ilova yaratamiz.",

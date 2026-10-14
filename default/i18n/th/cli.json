@@ -124,8 +124,9 @@
   "lock.didNotLock": "หน้าจอไม่ล็อกก่อนพักเครื่อง",
   "lock.unlockedNoLockScreen": "เซสชันไม่ได้ล็อก (ไม่ได้ตั้งค่าหน้าจอล็อก)",
   "lock.unlockedTimeout": "เซสชันไม่ได้ล็อก (เชลล์ล็อกเซสชันไม่ทันภายใน %1ms)",
-  "migrate.clickToRun": "คลิกเพื่อรันการย้ายที่รอดำเนินการ %1 รายการ",
-  "migrate.clickToRunOne": "คลิกเพื่อรันการย้ายที่รอดำเนินการ 1 รายการ",
+  "migrate.clickToRun": {
+    "other": "คลิกเพื่อรันการย้ายที่รอดำเนินการ %1 รายการ"
+  },
   "migrate.pending": "การย้าย Omarchy ที่รอดำเนินการ",
   "monitor.extendedRestored": "คืนค่าโหมดขยายแล้ว",
   "monitor.laptopDisabled": "ปิดจอแล็ปท็อปแล้ว",
@@ -160,16 +161,23 @@
   "preinstalls.confirmRemove": "แน่ใจหรือไม่ว่าต้องการลบเว็บแอป ตัวครอบ TUI และแอปเดสก์ท็อปที่ติดตั้งล่วงหน้าทั้งหมดออก?",
   "preinstalls.confirmRestore": "แน่ใจหรือไม่ว่าต้องการคืนค่าเว็บแอป ตัวครอบ TUI และแอปเดสก์ท็อปที่ติดตั้งล่วงหน้าทั้งหมด?",
   "reminder.cleared": "ล้างการเตือนความจำทั้งหมดแล้ว",
-  "reminder.count": "การเตือนความจำ %1 รายการ",
-  "reminder.countOne": "การเตือนความจำ 1 รายการ",
-  "reminder.customInMinutes": "%1 ในอีก %2 นาที",
+  "reminder.count": {
+    "other": "%1 การเตือนความจำ"
+  },
+  "reminder.customInMinutes": {
+    "other": "%1 ในอีก %2 นาที"
+  },
   "reminder.durationMinutesSeconds": "%1 น. %2 วิ",
   "reminder.durationSeconds": "%1 วิ",
   "reminder.inRemaining": "%1 ในอีก %2 (%3)",
   "reminder.minuteLabel": "เตือนความจำ %1 นาที",
-  "reminder.minutesUp": "ครบ %1 นาทีของคุณแล้ว",
+  "reminder.minutesUp": {
+    "other": "ครบ %1 นาทีแล้ว"
+  },
   "reminder.none": "ไม่มีการเตือนความจำค้างอยู่",
-  "reminder.setForMinutes": "ตั้งเตือนในอีก %1 นาทีแล้ว",
+  "reminder.setForMinutes": {
+    "other": "ตั้งการเตือนความจำ %1 นาทีแล้ว"
+  },
   "reminder.setTooltip": "ตั้งการเตือนความจำ",
   "reminder.title": "เตือนความจำ",
   "reminder.upcoming": "การเตือนความจำที่จะถึง",
@@ -218,6 +226,9 @@
   "system.shutdownFailed": "ปิดเครื่องไม่สำเร็จ",
   "system.shutdownRetry": "ไม่สามารถปิดเครื่องให้เสร็จได้ กรุณาลองอีกครั้ง",
   "system.shuttingDown": "กำลังปิดเครื่อง",
+  "tailscale.fileCount": {
+    "other": "%1 ไฟล์"
+  },
   "tailscale.received": "ได้รับ %1 แล้ว",
   "tailscale.savedTo": "บันทึกไปยัง %1 แล้ว",
   "tailscale.sendFailed": "ส่งไป %1 ไม่ได้",
@@ -263,7 +274,9 @@
   "update.kernelReboot": "เคอร์เนล Linux อัปเดตแล้ว รีบูตไหม?",
   "update.ready": "พร้อมอัปเดตไหม?",
   "update.rebootRequired": "การอัปเดตต้องรีบูต พร้อมหรือไม่?",
-  "update.removeOrphans": "นำ %1 แพ็กเกจที่ไม่มีผู้ใช้ออกหรือไม่?",
+  "update.removeOrphans": {
+    "other": "ลบแพ็กเกจกำพร้า %1 แพ็กเกจไหม?"
+  },
   "update.whatsNew": "มีอะไรใหม่: %1",
   "webapp.iconPlaceholder": "ดึง favicon โดยอัตโนมัติไม่ได้ ใส่ URL ไอคอน PNG หรือชื่อไอคอน",
   "webapp.intro": "มาสร้างเว็บแอปใหม่ที่คุณเปิดได้จากตัวเปิดแอปกัน",

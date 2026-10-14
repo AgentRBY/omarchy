@@ -17,17 +17,31 @@
   "agents.durationHoursMinutes": "%1t %2min",
   "agents.durationMinutes": "%1min",
   "agents.durationNow": "nu",
-  "agents.freeResetOne": "1 gratis nulstilling",
-  "agents.freeResetOneExpires": "1 gratis nulstilling · næste udløber om %1",
-  "agents.freeResets": "%1 gratis nulstillinger",
-  "agents.freeResetsExpires": "%1 gratis nulstillinger · næste udløber om %2",
+  "agents.freeResets": {
+    "one": "%1 gratis nulstilling",
+    "other": "%1 gratis nulstillinger"
+  },
+  "agents.freeResetsExpires": {
+    "one": "%1 gratis nulstilling · næste udløber om %2",
+    "other": "%1 gratis nulstillinger · næste udløber om %2"
+  },
+  "agents.helpFireworksSignIn": "Sæt %1, kør %2, eller log ind på Fireworks i pi eller opencode.",
+  "agents.helpNotInPath": "%1 ikke fundet i PATH",
+  "agents.helpRunToAuthenticate": "Kør %1 for at godkende.",
+  "agents.helpRunToRestoreUsage": "Kør %1 for at gendanne autoritativt forbrug.",
+  "agents.helpScanFailed": "%1-forbrugsscanning mislykkedes",
+  "agents.helpSignInExpired": "Det gemte login for %1 er udløbet. Start %1 for at opdatere det.",
+  "agents.helpStartOrRunToSignIn": "Start %1, eller kør %2, for at logge ind.",
+  "agents.helpStartToSeeLimits": "Start %1 for at se dets grænser; du behøver ikke logge ind igen.",
   "agents.lastUpdatedAgo": "Sidst opdateret for %1 siden",
   "agents.lastUpdatedJustNow": "Sidst opdateret for under et minut siden",
   "agents.lastUpdatedUnknown": "Tidspunkt for sidste opdatering ikke tilgængeligt",
   "agents.limitsPaused": "Grænser sat på pause",
   "agents.makeSomethingCool": "SKAB NOGET FEDT",
-  "agents.merged": "Samlet fra %1 enheder",
-  "agents.mergedOne": "Samlet fra 1 enhed",
+  "agents.merged": {
+    "one": "Flettet fra %1 enhed",
+    "other": "Flettet fra %1 enheder"
+  },
   "agents.modelMonthly": "%1 månedlig",
   "agents.modelSession": "%1-session",
   "agents.modelWeekly": "%1 ugentligt",
@@ -37,7 +51,10 @@
   "agents.placeholderCode": "Kode",
   "agents.placeholderWork": "Arbejde",
   "agents.plugin": "Plugin",
-  "agents.promptsToday": "%1 prompts i dag",
+  "agents.promptsToday": {
+    "one": "%1 prompt i dag",
+    "other": "%1 prompts i dag"
+  },
   "agents.providerLimitsUnavailable": "%1-grænser ikke tilgængelige",
   "agents.providerUnavailable": "%1 ikke tilgængelig",
   "agents.reopenSignIn": "Åbn login-siden igen",
@@ -45,7 +62,10 @@
   "agents.scopedOther": "%1: %2% af sin %3-kvote",
   "agents.scopedSession": "%1: %2% af sin sessionskvote",
   "agents.scopedWeekly": "%1: %2% af sin ugentlige kvote",
-  "agents.sessionsToday": "%1 sessioner i dag",
+  "agents.sessionsToday": {
+    "one": "%1 session i dag",
+    "other": "%1 sessioner i dag"
+  },
   "agents.signInAgainAccount": "Log ind på denne konto igen",
   "agents.signInAgainProvider": "Log ind på %1 igen",
   "agents.signInExpired": "Login udløbet",
@@ -61,9 +81,16 @@
   "agents.syncMkdirFailed": "mkdir ved forbrugssynkronisering mislykkedes",
   "agents.syncScanFailed": "Scanning ved forbrugssynkronisering mislykkedes",
   "agents.theme": "Tema",
+  "agents.tierPrepaid": "Forudbetalt",
   "agents.title": "Agenter",
-  "agents.tokensThisWeek": "%1 tokens denne uge",
-  "agents.tokensToday": "%1 tokens i dag",
+  "agents.tokensThisWeek": {
+    "one": "%1 token i denne uge",
+    "other": "%1 tokens i denne uge"
+  },
+  "agents.tokensToday": {
+    "one": "%1 token i dag",
+    "other": "%1 tokens i dag"
+  },
   "agents.unknownModel": "Ukendt",
   "agents.usageNotUpdated": "Forbrug er ikke opdateret endnu.",
   "agents.usageUnavailable": "Forbrug ikke tilgængeligt",
@@ -142,7 +169,10 @@
   "bluetooth.turnedOff": "Slukket",
   "clipboard.deleteHistory": "Slet hele udklipshistorikken?",
   "clipboard.empty": "Udklipsholderen er tom",
-  "clipboard.files": "%1 filer",
+  "clipboard.files": {
+    "one": "%1 fil",
+    "other": "%1 filer"
+  },
   "clipboard.image": "Billede",
   "clipboard.imageFrom": "Billede fra %1",
   "clipboard.screenshotFrom": "Skærmbillede fra %1",
@@ -228,8 +258,14 @@
   "elsewhen.badgeTracked": "fulgt",
   "elsewhen.clock": "Ur",
   "elsewhen.dateFormat": "ddd d. MMM",
-  "elsewhen.daysAhead": "+%1 dage",
-  "elsewhen.daysBehind": "-%1 dage",
+  "elsewhen.daysAhead": {
+    "one": "+%1 dag",
+    "other": "+%1 dage"
+  },
+  "elsewhen.daysBehind": {
+    "one": "-%1 dag",
+    "other": "-%1 dage"
+  },
   "elsewhen.daysShort": "%1d",
   "elsewhen.here": "Klokken er %1 her",
   "elsewhen.hereIn": "Klokken er %1 her i %2",
@@ -267,7 +303,10 @@
   "menu.powerProfilePerformance": "ydelse",
   "menu.powerProfilePowerSaver": "strømbesparende",
   "menu.selectPrompt": "Vælg",
-  "menu.selectedCount": "%1 valgt",
+  "menu.selectedCount": {
+    "one": "%1 valgt",
+    "other": "%1 valgte"
+  },
   "monitor.brightness": "LYSSTYRKE",
   "monitor.display": "Skærm",
   "monitor.displayFocused": "%1 · i fokus",
@@ -285,6 +324,10 @@
   "monitor.textSize": "TEKSTSTØRRELSE",
   "multiSelect.exited": "Indstillingskommando afsluttet med %1",
   "multiSelect.invalidJson": "Indstillingskommando returnerede ugyldig JSON",
+  "multiSelect.selectedCount": {
+    "one": "%1 valgt",
+    "other": "%1 valgte"
+  },
   "multiSelect.timedOut": "Indstillingskommandoen fik tidsudløb",
   "network.automatic": "AUTOMATISK",
   "network.bandAuto": "Auto",
@@ -299,7 +342,7 @@
   "network.copyToClipboard": "Kopiér til udklipsholder",
   "network.disconnected": "Afbrudt",
   "network.disconnecting": "Afbryder…",
-  "network.dnsCustom": "Brugerdefineret",
+  "network.dnsCustom": "Tilpasset",
   "network.dnsFromDhcp": "Brug DNS fra DHCP",
   "network.dnsProvider": "DNS-UDBYDER",
   "network.downloaded": "Downloadet",
@@ -389,7 +432,7 @@
   "power.powerProfile": "STRØMPROFIL",
   "power.profileBalanced": "Balanceret",
   "power.profilePerformance": "Ydeevne",
-  "power.profilePowerSaver": "Strømbesparende",
+  "power.profilePowerSaver": "Strømsparer",
   "power.threshold": "Tærskel",
   "power.timeLeft": "Tid tilbage",
   "power.timeToFull": "Tid til fuld",

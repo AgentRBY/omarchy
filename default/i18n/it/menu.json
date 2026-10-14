@@ -322,7 +322,7 @@
     "label": "Duplica schermo"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "GPU ibrida"
   },
   "trigger.hardware.touchpad": {
     "label": "Touchpad"
@@ -340,7 +340,7 @@
     "label": "alto"
   },
   "trigger.hardware.touchscreen": {
-    "label": "Touchscreen"
+    "label": "Schermo tattile"
   },
   "trigger.reminder.set": {
     "label": "Imposta"
@@ -612,7 +612,7 @@
     "label": "SSHD"
   },
   "setup.security.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "Agente SSH"
   },
   "setup.security.sudoless-docker": {
     "label": "Docker senza sudo"

@@ -322,7 +322,7 @@
     "label": "שיקוף תצוגה"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "GPU היברידי"
   },
   "trigger.hardware.touchpad": {
     "label": "משטח מגע"
@@ -612,7 +612,7 @@
     "label": "SSHD"
   },
   "setup.security.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "סוכן SSH"
   },
   "setup.security.sudoless-docker": {
     "label": "Docker ללא sudo"

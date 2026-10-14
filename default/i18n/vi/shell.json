@@ -17,10 +17,12 @@
   "agents.durationHoursMinutes": "%1g %2ph",
   "agents.durationMinutes": "%1ph",
   "agents.durationNow": "bây giờ",
-  "agents.freeResetOne": "1 lượt đặt lại miễn phí",
-  "agents.freeResetOneExpires": "1 lượt đặt lại miễn phí · lượt tiếp theo hết hạn sau %1",
-  "agents.freeResets": "%1 lượt đặt lại miễn phí",
-  "agents.freeResetsExpires": "%1 lượt đặt lại miễn phí · lượt tiếp theo hết hạn sau %2",
+  "agents.freeResets": {
+    "other": "%1 lần đặt lại miễn phí"
+  },
+  "agents.freeResetsExpires": {
+    "other": "%1 lần đặt lại miễn phí · lần tiếp theo hết hạn sau %2"
+  },
   "agents.helpFireworksSignIn": "Đặt %1, chạy %2, hoặc đăng nhập Fireworks trong pi hoặc opencode.",
   "agents.helpNotInPath": "Không tìm thấy %1 trong PATH",
   "agents.helpRunToAuthenticate": "Chạy %1 để xác thực.",
@@ -34,8 +36,9 @@
   "agents.lastUpdatedUnknown": "Chưa có thời gian cập nhật lần cuối",
   "agents.limitsPaused": "Giới hạn đã tạm dừng",
   "agents.makeSomethingCool": "HÃY TẠO ĐIỀU TUYỆT VỜI",
-  "agents.merged": "Đã gộp từ %1 thiết bị",
-  "agents.mergedOne": "Đã gộp từ 1 thiết bị",
+  "agents.merged": {
+    "other": "Đã gộp từ %1 thiết bị"
+  },
   "agents.modelMonthly": "%1 hàng tháng",
   "agents.modelSession": "%1 theo phiên",
   "agents.modelWeekly": "%1 hàng tuần",
@@ -45,7 +48,9 @@
   "agents.placeholderCode": "Mã",
   "agents.placeholderWork": "Công việc",
   "agents.plugin": "Plugin",
-  "agents.promptsToday": "%1 prompt hôm nay",
+  "agents.promptsToday": {
+    "other": "%1 prompt hôm nay"
+  },
   "agents.providerLimitsUnavailable": "Chưa có giới hạn %1",
   "agents.providerUnavailable": "%1 không khả dụng",
   "agents.reopenSignIn": "Mở lại trang đăng nhập",
@@ -53,7 +58,9 @@
   "agents.scopedOther": "%1: %2% hạn mức %3",
   "agents.scopedSession": "%1: %2% hạn mức phiên",
   "agents.scopedWeekly": "%1: %2% hạn mức hàng tuần",
-  "agents.sessionsToday": "%1 phiên hôm nay",
+  "agents.sessionsToday": {
+    "other": "%1 phiên hôm nay"
+  },
   "agents.signInAgainAccount": "Đăng nhập lại vào tài khoản này",
   "agents.signInAgainProvider": "Đăng nhập lại vào %1",
   "agents.signInExpired": "Đăng nhập đã hết hạn",
@@ -71,8 +78,12 @@
   "agents.theme": "Chủ đề",
   "agents.tierPrepaid": "Trả trước",
   "agents.title": "Agent",
-  "agents.tokensThisWeek": "%1 token tuần này",
-  "agents.tokensToday": "%1 token hôm nay",
+  "agents.tokensThisWeek": {
+    "other": "%1 token tuần này"
+  },
+  "agents.tokensToday": {
+    "other": "%1 token hôm nay"
+  },
   "agents.unknownModel": "Không rõ",
   "agents.usageNotUpdated": "Mức dùng chưa được cập nhật.",
   "agents.usageUnavailable": "Chưa có mức dùng",
@@ -151,7 +162,9 @@
   "bluetooth.turnedOff": "Đã tắt",
   "clipboard.deleteHistory": "Xóa toàn bộ lịch sử bảng nhớ tạm?",
   "clipboard.empty": "Bảng nhớ tạm trống",
-  "clipboard.files": "%1 tệp",
+  "clipboard.files": {
+    "other": "%1 tệp"
+  },
   "clipboard.image": "Hình ảnh",
   "clipboard.imageFrom": "Hình ảnh từ %1",
   "clipboard.screenshotFrom": "Ảnh chụp màn hình từ %1",
@@ -237,8 +250,12 @@
   "elsewhen.badgeTracked": "đang theo dõi",
   "elsewhen.clock": "Đồng hồ",
   "elsewhen.dateFormat": "ddd d MMM",
-  "elsewhen.daysAhead": "+%1 ngày",
-  "elsewhen.daysBehind": "-%1 ngày",
+  "elsewhen.daysAhead": {
+    "other": "+%1 ngày"
+  },
+  "elsewhen.daysBehind": {
+    "other": "-%1 ngày"
+  },
   "elsewhen.daysShort": "%1ng",
   "elsewhen.here": "Ở đây là %1",
   "elsewhen.hereIn": "Ở %2 hiện là %1",
@@ -276,7 +293,9 @@
   "menu.powerProfilePerformance": "hiệu năng",
   "menu.powerProfilePowerSaver": "tiết kiệm pin",
   "menu.selectPrompt": "Chọn",
-  "menu.selectedCount": "%1 đã chọn",
+  "menu.selectedCount": {
+    "other": "%1 đã chọn"
+  },
   "monitor.brightness": "ĐỘ SÁNG",
   "monitor.display": "Màn hình",
   "monitor.displayFocused": "%1 · đang tập trung",
@@ -294,6 +313,9 @@
   "monitor.textSize": "CỠ CHỮ",
   "multiSelect.exited": "Lệnh tùy chọn đã kết thúc %1",
   "multiSelect.invalidJson": "Lệnh tùy chọn xuất JSON không hợp lệ",
+  "multiSelect.selectedCount": {
+    "other": "%1 đã chọn"
+  },
   "multiSelect.timedOut": "Lệnh tùy chọn đã hết thời gian chờ",
   "network.automatic": "TỰ ĐỘNG",
   "network.bandAuto": "Tự động",
@@ -317,7 +339,7 @@
   "network.failedToConnect": "Kết nối thất bại",
   "network.forgetNetwork": "Quên mạng",
   "network.forgetting": "Đang quên…",
-  "network.gateway": "Gateway",
+  "network.gateway": "Cổng kết nối",
   "network.hidden": "Ẩn",
   "network.identity": "Danh tính (user@domain)",
   "network.ipAddress": "Địa chỉ IP",
@@ -398,7 +420,7 @@
   "power.powerProfile": "CHẾ ĐỘ NGUỒN",
   "power.profileBalanced": "Cân bằng",
   "power.profilePerformance": "Hiệu năng",
-  "power.profilePowerSaver": "Tiết kiệm pin",
+  "power.profilePowerSaver": "Tiết kiệm",
   "power.threshold": "Ngưỡng",
   "power.timeLeft": "Thời gian còn lại",
   "power.timeToFull": "Thời gian sạc đầy",

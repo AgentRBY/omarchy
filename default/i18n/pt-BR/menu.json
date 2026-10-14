@@ -612,7 +612,7 @@
     "label": "SSHD"
   },
   "setup.security.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "Agente SSH"
   },
   "setup.security.sudoless-docker": {
     "label": "Docker sem sudo"

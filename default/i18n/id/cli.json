@@ -59,6 +59,8 @@
   "clipboard.urlCopied": "URL disalin ke papan klip",
   "common.disabled": "Dinonaktifkan",
   "common.enabled": "Diaktifkan",
+  "common.no": "Tidak",
+  "common.yes": "Ya",
   "config.editing": "Mengedit berkas konfigurasi",
   "corners.followTheme": "Sudut mengikuti tema",
   "corners.rounded": "Sudut membulat untuk semua tema",
@@ -122,8 +124,9 @@
   "lock.didNotLock": "Layar tidak terkunci sebelum ditangguhkan",
   "lock.unlockedNoLockScreen": "Sesi dibiarkan tidak terkunci (tidak ada layar kunci yang dikonfigurasi).",
   "lock.unlockedTimeout": "Sesi dibiarkan tidak terkunci (shell tidak mengamankan sesi dalam %1ms).",
-  "migrate.clickToRun": "Klik untuk menjalankan %1 migrasi tertunda.",
-  "migrate.clickToRunOne": "Klik untuk menjalankan 1 migrasi tertunda.",
+  "migrate.clickToRun": {
+    "other": "Klik untuk menjalankan %1 migrasi tertunda."
+  },
   "migrate.pending": "Migrasi Omarchy Tertunda",
   "monitor.extendedRestored": "Mode diperluas dipulihkan",
   "monitor.laptopDisabled": "Layar laptop dinonaktifkan",
@@ -158,16 +161,23 @@
   "preinstalls.confirmRemove": "Anda yakin ingin menghapus semua aplikasi web, pembungkus TUI, dan aplikasi desktop bawaan?",
   "preinstalls.confirmRestore": "Anda yakin ingin memulihkan semua aplikasi web, pembungkus TUI, dan aplikasi desktop bawaan?",
   "reminder.cleared": "Semua pengingat telah dihapus",
-  "reminder.count": "%1 pengingat",
-  "reminder.countOne": "1 pengingat",
-  "reminder.customInMinutes": "%1 dalam %2 menit",
+  "reminder.count": {
+    "other": "%1 pengingat"
+  },
+  "reminder.customInMinutes": {
+    "other": "%1 dalam %2 menit"
+  },
   "reminder.durationMinutesSeconds": "%1mnt %2dtk",
   "reminder.durationSeconds": "%1dtk",
   "reminder.inRemaining": "%1 dalam %2 (%3)",
   "reminder.minuteLabel": "Pengingat %1 menit",
-  "reminder.minutesUp": "Waktu %1 menit Anda telah habis",
+  "reminder.minutesUp": {
+    "other": "Waktu %1 menit Anda habis"
+  },
   "reminder.none": "Tidak ada pengingat yang belum selesai",
-  "reminder.setForMinutes": "Pengingat disetel untuk %1 menit",
+  "reminder.setForMinutes": {
+    "other": "Pengingat disetel untuk %1 menit"
+  },
   "reminder.setTooltip": "Setel Pengingat",
   "reminder.title": "Pengingat",
   "reminder.upcoming": "Pengingat mendatang",
@@ -216,6 +226,9 @@
   "system.shutdownFailed": "Mematikan gagal",
   "system.shutdownRetry": "Tidak dapat mematikan. Coba lagi.",
   "system.shuttingDown": "Mematikan",
+  "tailscale.fileCount": {
+    "other": "%1 berkas"
+  },
   "tailscale.received": "Diterima %1",
   "tailscale.savedTo": "Disimpan ke %1",
   "tailscale.sendFailed": "Tidak dapat mengirim ke %1",
@@ -261,7 +274,9 @@
   "update.kernelReboot": "Kernel Linux telah diperbarui. Mulai ulang?",
   "update.ready": "Siap memperbarui?",
   "update.rebootRequired": "Pembaruan memerlukan mulai ulang. Siap?",
-  "update.removeOrphans": "Hapus %1 paket yatim?",
+  "update.removeOrphans": {
+    "other": "Hapus %1 paket yatim?"
+  },
   "update.whatsNew": "Yang baru: %1",
   "webapp.iconPlaceholder": "Tidak dapat mengambil favicon secara otomatis. Masukkan URL ikon PNG atau nama ikon",
   "webapp.intro": "Mari buat aplikasi web baru yang dapat Anda jalankan dengan peluncur aplikasi.",

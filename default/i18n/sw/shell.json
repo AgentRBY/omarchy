@@ -17,17 +17,31 @@
   "agents.durationHoursMinutes": "%1 saa %2 dak",
   "agents.durationMinutes": "%1 dak",
   "agents.durationNow": "sasa",
-  "agents.freeResetOne": "Mara 1 ya kuweka upya bila malipo",
-  "agents.freeResetOneExpires": "Mara 1 ya kuweka upya bila malipo · inayofuata itaisha baada ya %1",
-  "agents.freeResets": "Mara %1 za kuweka upya bila malipo",
-  "agents.freeResetsExpires": "Mara %1 za kuweka upya bila malipo · inayofuata itaisha baada ya %2",
+  "agents.freeResets": {
+    "one": "%1 mara ya kuweka upya bure",
+    "other": "%1 mara ya kuweka upya bure"
+  },
+  "agents.freeResetsExpires": {
+    "one": "%1 mara ya kuweka upya bure · ijayo inaisha baada ya %2",
+    "other": "%1 mara ya kuweka upya bure · ijayo inaisha baada ya %2"
+  },
+  "agents.helpFireworksSignIn": "Weka %1, endesha %2, au ingia kwenye Fireworks kupitia pi au opencode.",
+  "agents.helpNotInPath": "%1 haikupatikana katika PATH",
+  "agents.helpRunToAuthenticate": "Endesha %1 ili kuthibitisha utambulisho.",
+  "agents.helpRunToRestoreUsage": "Endesha %1 ili kurejesha matumizi rasmi.",
+  "agents.helpScanFailed": "Uchanganuzi wa matumizi ya %1 umeshindwa",
+  "agents.helpSignInExpired": "Kuingia kwa %1 kulikohifadhiwa kumeisha. Anzisha %1 ili kuisasisha.",
+  "agents.helpStartOrRunToSignIn": "Anzisha %1, au endesha %2, ili kuingia.",
+  "agents.helpStartToSeeLimits": "Anzisha %1 ili kuona vikomo vyake; kuingia tena hakuhitajiki.",
   "agents.lastUpdatedAgo": "Sasisho la mwisho %1 iliyopita",
   "agents.lastUpdatedJustNow": "Sasisho la mwisho chini ya dakika moja iliyopita",
   "agents.lastUpdatedUnknown": "Wakati wa sasisho la mwisho haupatikani",
   "agents.limitsPaused": "Vikomo vimesitishwa",
   "agents.makeSomethingCool": "UNDA KITU KIZURI",
-  "agents.merged": "Imeunganishwa kutoka vifaa %1",
-  "agents.mergedOne": "Imeunganishwa kutoka kifaa 1",
+  "agents.merged": {
+    "one": "Imeunganishwa kutoka %1 kifaa",
+    "other": "Imeunganishwa kutoka %1 vifaa"
+  },
   "agents.modelMonthly": "%1 ya kila mwezi",
   "agents.modelSession": "Kipindi cha %1",
   "agents.modelWeekly": "%1 ya Wiki",
@@ -37,7 +51,10 @@
   "agents.placeholderCode": "Msimbo",
   "agents.placeholderWork": "Kazi",
   "agents.plugin": "Programu-jalizi",
-  "agents.promptsToday": "%1 vidokezo leo",
+  "agents.promptsToday": {
+    "one": "%1 kidokezo leo",
+    "other": "%1 vidokezo leo"
+  },
   "agents.providerLimitsUnavailable": "Vikomo vya %1 havipatikani",
   "agents.providerUnavailable": "%1 haipatikani",
   "agents.reopenSignIn": "Fungua ukurasa wa kuingia tena",
@@ -45,7 +62,10 @@
   "agents.scopedOther": "%1: %2% ya kikomo chake cha %3",
   "agents.scopedSession": "%1: %2% ya kikomo chake cha kipindi",
   "agents.scopedWeekly": "%1: %2% ya kikomo chake cha wiki",
-  "agents.sessionsToday": "%1 vipindi leo",
+  "agents.sessionsToday": {
+    "one": "%1 kipindi leo",
+    "other": "%1 vipindi leo"
+  },
   "agents.signInAgainAccount": "Ingia kwenye akaunti hii tena",
   "agents.signInAgainProvider": "Ingia kwenye %1 tena",
   "agents.signInExpired": "Muda wa kuingia umekwisha",
@@ -61,9 +81,16 @@
   "agents.syncMkdirFailed": "mkdir ya usawazishaji wa matumizi imeshindwa",
   "agents.syncScanFailed": "Uchanganuzi wa usawazishaji wa matumizi umeshindwa",
   "agents.theme": "Mandhari",
+  "agents.tierPrepaid": "Imelipiwa awali",
   "agents.title": "Maajenti",
-  "agents.tokensThisWeek": "%1 tokeni wiki hii",
-  "agents.tokensToday": "%1 tokeni leo",
+  "agents.tokensThisWeek": {
+    "one": "%1 tokeni wiki hii",
+    "other": "%1 tokeni wiki hii"
+  },
+  "agents.tokensToday": {
+    "one": "%1 tokeni leo",
+    "other": "%1 tokeni leo"
+  },
   "agents.unknownModel": "Isiyojulikana",
   "agents.usageNotUpdated": "Matumizi bado hayajasasishwa.",
   "agents.usageUnavailable": "Matumizi hayapatikani",
@@ -142,7 +169,10 @@
   "bluetooth.turnedOff": "Imezimwa",
   "clipboard.deleteHistory": "Futa historia nzima ya ubao wa kunakili?",
   "clipboard.empty": "Ubao wa kunakili ni tupu",
-  "clipboard.files": "faili %1",
+  "clipboard.files": {
+    "one": "%1 faili",
+    "other": "%1 faili"
+  },
   "clipboard.image": "Picha",
   "clipboard.imageFrom": "Picha kutoka %1",
   "clipboard.screenshotFrom": "Picha ya skrini kutoka %1",
@@ -228,8 +258,14 @@
   "elsewhen.badgeTracked": "inafuatiliwa",
   "elsewhen.clock": "Saa",
   "elsewhen.dateFormat": "ddd d MMM",
-  "elsewhen.daysAhead": "+%1 siku",
-  "elsewhen.daysBehind": "-%1 siku",
+  "elsewhen.daysAhead": {
+    "one": "+%1 siku",
+    "other": "+%1 siku"
+  },
+  "elsewhen.daysBehind": {
+    "one": "-%1 siku",
+    "other": "-%1 siku"
+  },
   "elsewhen.daysShort": "%1 siku",
   "elsewhen.here": "Ni %1 hapa",
   "elsewhen.hereIn": "Ni %1 hapa katika %2",
@@ -267,7 +303,10 @@
   "menu.powerProfilePerformance": "utendaji",
   "menu.powerProfilePowerSaver": "okoa-nishati",
   "menu.selectPrompt": "Chagua",
-  "menu.selectedCount": "%1 zimechaguliwa",
+  "menu.selectedCount": {
+    "one": "%1 kimechaguliwa",
+    "other": "%1 vimechaguliwa"
+  },
   "monitor.brightness": "MWANGAZA",
   "monitor.display": "Skrini",
   "monitor.displayFocused": "%1 · imeangaziwa",
@@ -285,6 +324,10 @@
   "monitor.textSize": "UKUBWA WA MAANDISHI",
   "multiSelect.exited": "Amri ya chaguo imemalizika %1",
   "multiSelect.invalidJson": "Amri ya chaguo imetoa JSON batili",
+  "multiSelect.selectedCount": {
+    "one": "%1 kimechaguliwa",
+    "other": "%1 vimechaguliwa"
+  },
   "multiSelect.timedOut": "Amri ya chaguo imeisha muda",
   "network.automatic": "KIOTOMATIKI",
   "network.bandAuto": "Kiotomatiki",
@@ -389,7 +432,7 @@
   "power.powerProfile": "WASIFU WA NGUVU",
   "power.profileBalanced": "Uwiano",
   "power.profilePerformance": "Utendaji",
-  "power.profilePowerSaver": "Kuokoa nguvu",
+  "power.profilePowerSaver": "Okoa nguvu",
   "power.threshold": "Kizingiti",
   "power.timeLeft": "Muda uliobaki",
   "power.timeToFull": "Muda hadi kujaa",

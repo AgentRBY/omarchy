@@ -645,7 +645,7 @@
     "label": "Serbisyo"
   },
   "install.development": {
-    "label": "Development"
+    "label": "Pag-develop"
   },
   "install.editor": {
     "label": "Editor"
@@ -926,7 +926,7 @@
     "title": "Alisin"
   },
   "remove.development": {
-    "label": "Development",
+    "label": "Pag-develop",
     "title": "Alisin"
   },
   "remove.theme": {

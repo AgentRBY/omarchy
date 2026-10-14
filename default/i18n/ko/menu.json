@@ -174,7 +174,7 @@
     "label": "오른쪽 막대"
   },
   "trigger.appearance.dock": {
-    "label": "Dock"
+    "label": "독"
   },
   "trigger.appearance.dock.autohide": {
     "label": "독 자동 숨기기"
@@ -322,7 +322,7 @@
     "label": "화면 미러링"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "하이브리드 GPU"
   },
   "trigger.hardware.touchpad": {
     "label": "터치패드"
@@ -454,7 +454,7 @@
     "label": "기본값"
   },
   "setup.default.agent": {
-    "label": "Agent",
+    "label": "에이전트",
     "title": "기본 Agent"
   },
   "setup.default.agent.agy": {
@@ -612,7 +612,7 @@
     "label": "SSHD"
   },
   "setup.security.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "SSH 에이전트"
   },
   "setup.security.sudoless-docker": {
     "label": "sudo 없는 Docker"

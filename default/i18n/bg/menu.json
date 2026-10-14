@@ -322,7 +322,7 @@
     "label": "Огледален дисплей"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "Хибриден GPU"
   },
   "trigger.hardware.touchpad": {
     "label": "Тъчпад"
@@ -612,7 +612,7 @@
     "label": "SSHD"
   },
   "setup.security.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "SSH агент"
   },
   "setup.security.sudoless-docker": {
     "label": "Docker без sudo"

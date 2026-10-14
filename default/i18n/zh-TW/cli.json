@@ -124,8 +124,9 @@
   "lock.didNotLock": "暫停前螢幕未鎖定",
   "lock.unlockedNoLockScreen": "工作階段保持未鎖定（未設定鎖定畫面）。",
   "lock.unlockedTimeout": "工作階段保持未鎖定（外殼未能在 %1ms 內鎖定工作階段）。",
-  "migrate.clickToRun": "點擊執行 %1 項待處理的遷移。",
-  "migrate.clickToRunOne": "點擊執行 1 項待處理的遷移。",
+  "migrate.clickToRun": {
+    "other": "點擊執行 %1 項待處理的遷移。"
+  },
   "migrate.pending": "待處理的 Omarchy 遷移",
   "monitor.extendedRestored": "已還原延伸模式",
   "monitor.laptopDisabled": "筆電螢幕已停用",
@@ -160,16 +161,23 @@
   "preinstalls.confirmRemove": "確定要移除所有預先安裝的網頁應用程式、TUI 包裝器和桌面應用程式嗎？",
   "preinstalls.confirmRestore": "確定要還原所有預先安裝的網頁應用程式、TUI 包裝器和桌面應用程式嗎？",
   "reminder.cleared": "所有提醒已清除",
-  "reminder.count": "%1 個提醒",
-  "reminder.countOne": "1 個提醒",
-  "reminder.customInMinutes": "%1 在 %2 分鐘後",
+  "reminder.count": {
+    "other": "%1 個提醒"
+  },
+  "reminder.customInMinutes": {
+    "other": "%1 在 %2 分鐘後"
+  },
   "reminder.durationMinutesSeconds": "%1 分 %2 秒",
   "reminder.durationSeconds": "%1 秒",
   "reminder.inRemaining": "%1 在 %2 後 (%3)",
   "reminder.minuteLabel": "%1 分鐘提醒",
-  "reminder.minutesUp": "你的 %1 分鐘到了",
+  "reminder.minutesUp": {
+    "other": "你的 %1 分鐘到了"
+  },
   "reminder.none": "沒有未完成的提醒",
-  "reminder.setForMinutes": "已設定 %1 分鐘後提醒",
+  "reminder.setForMinutes": {
+    "other": "已設定 %1 分鐘提醒"
+  },
   "reminder.setTooltip": "設定提醒",
   "reminder.title": "提醒",
   "reminder.upcoming": "即將到來的提醒",
@@ -218,6 +226,9 @@
   "system.shutdownFailed": "關機失敗",
   "system.shutdownRetry": "無法完成關機，請再試一次。",
   "system.shuttingDown": "正在關機",
+  "tailscale.fileCount": {
+    "other": "%1 個檔案"
+  },
   "tailscale.received": "已收到 %1",
   "tailscale.savedTo": "已儲存至 %1",
   "tailscale.sendFailed": "無法傳送給 %1",
@@ -263,7 +274,9 @@
   "update.kernelReboot": "Linux 核心已更新。要重新啟動嗎？",
   "update.ready": "準備好更新了嗎？",
   "update.rebootRequired": "更新需要重新啟動。準備好了嗎？",
-  "update.removeOrphans": "移除 %1 個孤立套件？",
+  "update.removeOrphans": {
+    "other": "要移除 %1 個孤立套件嗎？"
+  },
   "update.whatsNew": "更新內容：%1",
   "webapp.iconPlaceholder": "無法自動取得 favicon。輸入 PNG 圖示 URL 或圖示名稱",
   "webapp.intro": "來建立一個可從應用程式啟動器開啟的新 Web 應用程式。",

@@ -124,8 +124,12 @@
   "lock.didNotLock": "Zaslon se pred spanjem ni zaklenil",
   "lock.unlockedNoLockScreen": "Seja je ostala odklenjena (ni nastavljenega zaklepanja zaslona).",
   "lock.unlockedTimeout": "Seja je ostala odklenjena (lupina seje ni zavarovala v %1ms).",
-  "migrate.clickToRun": "Kliknite za zagon %1 čakajočih migracij.",
-  "migrate.clickToRunOne": "Kliknite za zagon 1 čakajoče migracije.",
+  "migrate.clickToRun": {
+    "few": "Kliknite, da zaženete %1 čakajoče migracije.",
+    "one": "Kliknite, da zaženete %1 čakajočo migracijo.",
+    "other": "Kliknite, da zaženete %1 čakajočih migracij.",
+    "two": "Kliknite, da zaženete %1 čakajoči migraciji."
+  },
   "migrate.pending": "Čakajoče migracije Omarchy",
   "monitor.extendedRestored": "Razširjeni način obnovljen",
   "monitor.laptopDisabled": "Zaslon prenosnika onemogočen",
@@ -160,16 +164,35 @@
   "preinstalls.confirmRemove": "Ali ste prepričani, da želite odstraniti vse prednameščene spletne aplikacije, ovojnike TUI in namizne aplikacije?",
   "preinstalls.confirmRestore": "Ali ste prepričani, da želite obnoviti vse prednameščene spletne aplikacije, ovojnike TUI in namizne aplikacije?",
   "reminder.cleared": "Vsi opomniki so počiščeni",
-  "reminder.count": "%1 opomnikov",
-  "reminder.countOne": "1 opomnik",
-  "reminder.customInMinutes": "%1 čez %2 minut",
+  "reminder.count": {
+    "few": "%1 opomniki",
+    "one": "%1 opomnik",
+    "other": "%1 opomnikov",
+    "two": "%1 opomnika"
+  },
+  "reminder.customInMinutes": {
+    "few": "%1 čez %2 minute",
+    "one": "%1 čez %2 minuto",
+    "other": "%1 čez %2 minut",
+    "two": "%1 čez %2 minuti"
+  },
   "reminder.durationMinutesSeconds": "%1 min %2 s",
   "reminder.durationSeconds": "%1 s",
   "reminder.inRemaining": "%1 čez %2 (%3)",
   "reminder.minuteLabel": "%1-minutni opomnik",
-  "reminder.minutesUp": "Vaših %1 minut je poteklo",
+  "reminder.minutesUp": {
+    "few": "Vaše %1 minute so minile",
+    "one": "Vaša %1 minuta je minila",
+    "other": "Vaših %1 minut je minilo",
+    "two": "Vaši %1 minuti sta minili"
+  },
   "reminder.none": "Ni opomnikov na čakanju",
-  "reminder.setForMinutes": "Opomnik nastavljen čez %1 minut",
+  "reminder.setForMinutes": {
+    "few": "Opomnik nastavljen za %1 minute",
+    "one": "Opomnik nastavljen za %1 minuto",
+    "other": "Opomnik nastavljen za %1 minut",
+    "two": "Opomnik nastavljen za %1 minuti"
+  },
   "reminder.setTooltip": "Nastavi opomnik",
   "reminder.title": "Opomnik",
   "reminder.upcoming": "Prihajajoči opomniki",
@@ -218,6 +241,12 @@
   "system.shutdownFailed": "Izklop ni uspel",
   "system.shutdownRetry": "Izklopa ni bilo mogoče dokončati. Poskusite znova.",
   "system.shuttingDown": "Izklapljanje",
+  "tailscale.fileCount": {
+    "few": "%1 datoteke",
+    "one": "%1 datoteka",
+    "other": "%1 datotek",
+    "two": "%1 datoteki"
+  },
   "tailscale.received": "Prejeto %1",
   "tailscale.savedTo": "Shranjeno v %1",
   "tailscale.sendFailed": "Ni bilo mogoče poslati v %1",
@@ -263,7 +292,12 @@
   "update.kernelReboot": "Jedro Linuxa je posodobljeno. Znova zagnati?",
   "update.ready": "Pripravljeni na posodobitev?",
   "update.rebootRequired": "Posodobitve zahtevajo ponovni zagon. Pripravljeni?",
-  "update.removeOrphans": "Odstraniti %1 osirotelih paketov?",
+  "update.removeOrphans": {
+    "few": "Odstraniti %1 osirotele pakete?",
+    "one": "Odstraniti %1 osirotel paket?",
+    "other": "Odstraniti %1 osirotelih paketov?",
+    "two": "Odstraniti %1 osirotela paketa?"
+  },
   "update.whatsNew": "Novosti: %1",
   "webapp.iconPlaceholder": "Ikone favicon ni bilo mogoče samodejno pridobiti. Vnesite URL ikone PNG ali ime ikone",
   "webapp.intro": "Ustvarimo novo spletno aplikacijo, ki jo lahko zaženete z zaganjalnikom aplikacij.",

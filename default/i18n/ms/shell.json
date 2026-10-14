@@ -17,17 +17,28 @@
   "agents.durationHoursMinutes": "%1j %2m",
   "agents.durationMinutes": "%1m",
   "agents.durationNow": "sekarang",
-  "agents.freeResetOne": "1 reset percuma",
-  "agents.freeResetOneExpires": "1 reset percuma · seterusnya tamat dalam %1",
-  "agents.freeResets": "%1 reset percuma",
-  "agents.freeResetsExpires": "%1 reset percuma · seterusnya tamat dalam %2",
+  "agents.freeResets": {
+    "other": "%1 tetapan semula percuma"
+  },
+  "agents.freeResetsExpires": {
+    "other": "%1 tetapan semula percuma · seterusnya luput dalam %2"
+  },
+  "agents.helpFireworksSignIn": "Tetapkan %1, jalankan %2, atau log masuk ke Fireworks dalam pi atau opencode.",
+  "agents.helpNotInPath": "%1 tidak ditemui dalam PATH",
+  "agents.helpRunToAuthenticate": "Jalankan %1 untuk pengesahan.",
+  "agents.helpRunToRestoreUsage": "Jalankan %1 untuk memulihkan penggunaan berwibawa.",
+  "agents.helpScanFailed": "Imbasan penggunaan %1 gagal",
+  "agents.helpSignInExpired": "Log masuk tersimpan %1 telah tamat. Mulakan %1 untuk memperbaharuinya.",
+  "agents.helpStartOrRunToSignIn": "Mulakan %1, atau jalankan %2, untuk log masuk.",
+  "agents.helpStartToSeeLimits": "Mulakan %1 untuk melihat hadnya; tidak perlu log masuk semula.",
   "agents.lastUpdatedAgo": "Terakhir dikemas kini %1 lalu",
   "agents.lastUpdatedJustNow": "Terakhir dikemas kini kurang daripada seminit lalu",
   "agents.lastUpdatedUnknown": "Masa kemas kini terakhir tidak tersedia",
   "agents.limitsPaused": "Had dijeda",
   "agents.makeSomethingCool": "BUAT SESUATU YANG HEBAT",
-  "agents.merged": "Digabungkan daripada %1 peranti",
-  "agents.mergedOne": "Digabungkan daripada 1 peranti",
+  "agents.merged": {
+    "other": "Digabungkan daripada %1 peranti"
+  },
   "agents.modelMonthly": "%1 Bulanan",
   "agents.modelSession": "%1 Sesi",
   "agents.modelWeekly": "%1 Mingguan",
@@ -36,8 +47,10 @@
   "agents.pasteCode": "Jika halaman menunjukkan kod dan bukannya selesai, tampalkannya di sini.",
   "agents.placeholderCode": "Kod",
   "agents.placeholderWork": "Kerja",
-  "agents.plugin": "Plugin",
-  "agents.promptsToday": "%1 prompt hari ini",
+  "agents.plugin": "Pemalam",
+  "agents.promptsToday": {
+    "other": "%1 gesaan hari ini"
+  },
   "agents.providerLimitsUnavailable": "Had %1 tidak tersedia",
   "agents.providerUnavailable": "%1 tidak tersedia",
   "agents.reopenSignIn": "Buka semula halaman log masuk",
@@ -45,7 +58,9 @@
   "agents.scopedOther": "%1: %2% daripada peruntukan %3-nya",
   "agents.scopedSession": "%1: %2% daripada peruntukan sesinya",
   "agents.scopedWeekly": "%1: %2% daripada peruntukan mingguannya",
-  "agents.sessionsToday": "%1 sesi hari ini",
+  "agents.sessionsToday": {
+    "other": "%1 sesi hari ini"
+  },
   "agents.signInAgainAccount": "Log masuk ke akaun ini semula",
   "agents.signInAgainProvider": "Log masuk ke %1 semula",
   "agents.signInExpired": "Log masuk tamat tempoh",
@@ -61,9 +76,14 @@
   "agents.syncMkdirFailed": "Segerak penggunaan: mkdir gagal",
   "agents.syncScanFailed": "Segerak penggunaan: imbasan gagal",
   "agents.theme": "Tema",
+  "agents.tierPrepaid": "Prabayar",
   "agents.title": "Ejen",
-  "agents.tokensThisWeek": "%1 token minggu ini",
-  "agents.tokensToday": "%1 token hari ini",
+  "agents.tokensThisWeek": {
+    "other": "%1 token minggu ini"
+  },
+  "agents.tokensToday": {
+    "other": "%1 token hari ini"
+  },
   "agents.unknownModel": "Tidak diketahui",
   "agents.usageNotUpdated": "Penggunaan belum dikemas kini.",
   "agents.usageUnavailable": "Penggunaan tidak tersedia",
@@ -142,7 +162,9 @@
   "bluetooth.turnedOff": "Dimatikan",
   "clipboard.deleteHistory": "Padam keseluruhan sejarah papan keratan?",
   "clipboard.empty": "Papan keratan kosong",
-  "clipboard.files": "%1 fail",
+  "clipboard.files": {
+    "other": "%1 fail"
+  },
   "clipboard.image": "Imej",
   "clipboard.imageFrom": "Imej daripada %1",
   "clipboard.screenshotFrom": "Tangkapan skrin daripada %1",
@@ -228,8 +250,12 @@
   "elsewhen.badgeTracked": "dijejaki",
   "elsewhen.clock": "Jam",
   "elsewhen.dateFormat": "ddd, d MMM",
-  "elsewhen.daysAhead": "+%1 hari",
-  "elsewhen.daysBehind": "-%1 hari",
+  "elsewhen.daysAhead": {
+    "other": "+%1 hari"
+  },
+  "elsewhen.daysBehind": {
+    "other": "-%1 hari"
+  },
   "elsewhen.daysShort": "%1h",
   "elsewhen.here": "Sekarang pukul %1 di sini",
   "elsewhen.hereIn": "Sekarang pukul %1 di sini, %2",
@@ -267,7 +293,9 @@
   "menu.powerProfilePerformance": "prestasi",
   "menu.powerProfilePowerSaver": "jimat kuasa",
   "menu.selectPrompt": "Pilih",
-  "menu.selectedCount": "%1 dipilih",
+  "menu.selectedCount": {
+    "other": "%1 dipilih"
+  },
   "monitor.brightness": "KECERAHAN",
   "monitor.display": "Paparan",
   "monitor.displayFocused": "%1 · fokus",
@@ -285,6 +313,9 @@
   "monitor.textSize": "SAIZ TEKS",
   "multiSelect.exited": "Arahan pilihan tamat %1",
   "multiSelect.invalidJson": "Arahan pilihan mengeluarkan JSON tidak sah",
+  "multiSelect.selectedCount": {
+    "other": "%1 dipilih"
+  },
   "multiSelect.timedOut": "Arahan pilihan tamat masa",
   "network.automatic": "AUTOMATIK",
   "network.bandAuto": "Auto",

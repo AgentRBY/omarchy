@@ -322,7 +322,7 @@
     "label": "Scáthánaigh scáileán"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "GPU Hibrideach"
   },
   "trigger.hardware.touchpad": {
     "label": "Ceap tadhaill"
@@ -612,7 +612,7 @@
     "label": "SSHD"
   },
   "setup.security.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "Gníomhaire SSH"
   },
   "setup.security.sudoless-docker": {
     "label": "Docker gan sudo"

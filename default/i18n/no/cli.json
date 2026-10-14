@@ -59,6 +59,8 @@
   "clipboard.urlCopied": "URL kopiert til utklippstavlen",
   "common.disabled": "Deaktivert",
   "common.enabled": "Aktivert",
+  "common.no": "Nei",
+  "common.yes": "Ja",
   "config.editing": "Redigerer konfigurasjonsfil",
   "corners.followTheme": "Hjørner følger temaet",
   "corners.rounded": "Avrundede hjørner for alle temaer",
@@ -122,8 +124,10 @@
   "lock.didNotLock": "Skjermen ble ikke låst før hvile",
   "lock.unlockedNoLockScreen": "Økten ble etterlatt ulåst (ingen låseskjerm er konfigurert).",
   "lock.unlockedTimeout": "Økten ble stående ulåst (skallet sikret ikke økten innen %1ms).",
-  "migrate.clickToRun": "Klikk for å kjøre %1 ventende migrasjoner.",
-  "migrate.clickToRunOne": "Klikk for å kjøre 1 ventende migrasjon.",
+  "migrate.clickToRun": {
+    "one": "Klikk for å kjøre %1 ventende migrasjon.",
+    "other": "Klikk for å kjøre %1 ventende migrasjoner."
+  },
   "migrate.pending": "Ventende Omarchy-migrasjoner",
   "monitor.extendedRestored": "Utvidet modus gjenopprettet",
   "monitor.laptopDisabled": "Bærbar skjerm deaktivert",
@@ -158,16 +162,27 @@
   "preinstalls.confirmRemove": "Er du sikker på at du vil fjerne alle forhåndsinstallerte webapper, TUI-omslag og skrivebordsprogrammer?",
   "preinstalls.confirmRestore": "Er du sikker på at du vil gjenopprette alle forhåndsinstallerte webapper, TUI-omslag og skrivebordsprogrammer?",
   "reminder.cleared": "Alle påminnelser er fjernet",
-  "reminder.count": "%1 påminnelser",
-  "reminder.countOne": "1 påminnelse",
-  "reminder.customInMinutes": "%1 om %2 minutter",
+  "reminder.count": {
+    "one": "%1 påminnelse",
+    "other": "%1 påminnelser"
+  },
+  "reminder.customInMinutes": {
+    "one": "%1 om %2 minutt",
+    "other": "%1 om %2 minutter"
+  },
   "reminder.durationMinutesSeconds": "%1 min %2 s",
   "reminder.durationSeconds": "%1 s",
   "reminder.inRemaining": "%1 om %2 (%3)",
   "reminder.minuteLabel": "%1-minutters påminnelse",
-  "reminder.minutesUp": "Dine %1 minutter er ute",
+  "reminder.minutesUp": {
+    "one": "Ditt %1 minutt er omme",
+    "other": "Dine %1 minutter er omme"
+  },
   "reminder.none": "Ingen utestående påminnelser",
-  "reminder.setForMinutes": "Påminnelse satt til om %1 minutter",
+  "reminder.setForMinutes": {
+    "one": "Påminnelse satt til %1 minutt",
+    "other": "Påminnelse satt til %1 minutter"
+  },
   "reminder.setTooltip": "Sett påminnelse",
   "reminder.title": "Påminnelse",
   "reminder.upcoming": "Kommende påminnelser",
@@ -216,6 +231,10 @@
   "system.shutdownFailed": "Avslåing mislyktes",
   "system.shutdownRetry": "Kunne ikke slå av. Prøv igjen.",
   "system.shuttingDown": "Slår av",
+  "tailscale.fileCount": {
+    "one": "%1 fil",
+    "other": "%1 filer"
+  },
   "tailscale.received": "Mottatt %1",
   "tailscale.savedTo": "Lagret til %1",
   "tailscale.sendFailed": "Kunne ikke sende til %1",
@@ -261,7 +280,10 @@
   "update.kernelReboot": "Linux-kjernen er oppdatert. Start på nytt?",
   "update.ready": "Klar til å oppdatere?",
   "update.rebootRequired": "Oppdateringene krever omstart. Klar?",
-  "update.removeOrphans": "Fjerne %1 foreldreløs(e) pakke(r)?",
+  "update.removeOrphans": {
+    "one": "Fjerne %1 foreldreløs pakke?",
+    "other": "Fjerne %1 foreldreløse pakker?"
+  },
   "update.whatsNew": "Hva er nytt: %1",
   "webapp.iconPlaceholder": "Kunne ikke hente favicon automatisk. Skriv inn URL for PNG-ikon eller ikonnavn",
   "webapp.intro": "La oss lage en ny nettapp du kan starte med appstarteren.",

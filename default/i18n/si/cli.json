@@ -124,8 +124,10 @@
   "lock.didNotLock": "අත්හිටුවීමට පෙර තිරය අගුලු නොදැමුණි",
   "lock.unlockedNoLockScreen": "සැසිය අගුලු නොදමා තැබුණි (අගුලු තිරය සකසා නැත).",
   "lock.unlockedTimeout": "සැසිය අගුලු නොදමා තැබුණි (ෂෙලයට %1ms තුළ සැසිය සුරක්ෂිත කිරීමට නොහැකි විය).",
-  "migrate.clickToRun": "අපේක්ෂිත සංක්‍රමණ %1 ක් ධාවනය කිරීමට ක්ලික් කරන්න.",
-  "migrate.clickToRunOne": "අපේක්ෂිත සංක්‍රමණ 1 ක් ධාවනය කිරීමට ක්ලික් කරන්න.",
+  "migrate.clickToRun": {
+    "one": "අපේක්ෂිත සංක්‍රමණය %1 ක්‍රියාත්මක කිරීමට ක්ලික් කරන්න.",
+    "other": "අපේක්ෂිත සංක්‍රමණ %1 ක්‍රියාත්මක කිරීමට ක්ලික් කරන්න."
+  },
   "migrate.pending": "අපේක්ෂිත Omarchy සංක්‍රමණ",
   "monitor.extendedRestored": "දිගු කළ මාදිලිය යළි පිහිටුවා",
   "monitor.laptopDisabled": "ලැප්ටොප් සංදර්ශකය අක්‍රිය කළා",
@@ -160,16 +162,27 @@
   "preinstalls.confirmRemove": "පෙර ස්ථාපිත වෙබ් යෙදුම්, TUI wrappers සහ ඩෙස්ක්ටොප් යෙදුම් සියල්ල ඉවත් කිරීම ඔබට විශ්වාසද?",
   "preinstalls.confirmRestore": "පෙර ස්ථාපිත වෙබ් යෙදුම්, TUI wrappers සහ ඩෙස්ක්ටොප් යෙදුම් සියල්ල නැවත පිහිටුවීම ඔබට විශ්වාසද?",
   "reminder.cleared": "සියලුම මතක්කිරීම් හිස් කළා",
-  "reminder.count": "මතක්කිරීම් %1ක්",
-  "reminder.countOne": "මතක්කිරීම 1ක්",
-  "reminder.customInMinutes": "%1 මිනිත්තු %2 කින්",
+  "reminder.count": {
+    "one": "%1 මතක්කිරීම",
+    "other": "%1 මතක්කිරීම්"
+  },
+  "reminder.customInMinutes": {
+    "one": "%1, මිනිත්තු %2කින්",
+    "other": "%1, මිනිත්තු %2කින්"
+  },
   "reminder.durationMinutesSeconds": "%1මිනි %2තත්",
   "reminder.durationSeconds": "%1තත්",
   "reminder.inRemaining": "%1, %2 කින් (%3)",
   "reminder.minuteLabel": "මිනිත්තු %1ක මතක්කිරීම",
-  "reminder.minutesUp": "ඔබේ මිනිත්තු %1 අවසන් වුණා",
+  "reminder.minutesUp": {
+    "one": "ඔබේ මිනිත්තු %1 ඉවරයි",
+    "other": "ඔබේ මිනිත්තු %1 ඉවරයි"
+  },
   "reminder.none": "ඉතිරි මතක්කිරීම් නැත",
-  "reminder.setForMinutes": "මිනිත්තු %1 කට මතක්කිරීම සකසුවා",
+  "reminder.setForMinutes": {
+    "one": "මිනිත්තු %1කට මතක්කිරීම සැකසුවා",
+    "other": "මිනිත්තු %1කට මතක්කිරීම සැකසුවා"
+  },
   "reminder.setTooltip": "මතක්කිරීම සකසන්න",
   "reminder.title": "මතක්කිරීම",
   "reminder.upcoming": "ඉදිරි මතක්කිරීම්",
@@ -218,6 +231,10 @@
   "system.shutdownFailed": "වසා දැමීම අසාර්ථක විය",
   "system.shutdownRetry": "වසා දැමීම සම්පූර්ණ කළ නොහැකි විය. කරුණාකර නැවත උත්සාහ කරන්න.",
   "system.shuttingDown": "වසා දමමින්",
+  "tailscale.fileCount": {
+    "one": "%1 ගොනුවක්",
+    "other": "%1 ගොනු"
+  },
   "tailscale.received": "%1 ලැබුණා",
   "tailscale.savedTo": "%1 වෙත සුරැකුවා",
   "tailscale.sendFailed": "%1 වෙත යැවිය නොහැකි විය",
@@ -263,7 +280,10 @@
   "update.kernelReboot": "Linux kernel යාවත්කාලීනයි. නැවත ආරම්භ කරමුද?",
   "update.ready": "යාවත්කාලීනයට සූදානම්ද?",
   "update.rebootRequired": "යාවත්කාලීනයන්ට නැවත ආරම්භය අවශ්‍යයි. සූදානම්ද?",
-  "update.removeOrphans": "අනාථ පැකේජ %1 ක් ඉවත් කරමුද?",
+  "update.removeOrphans": {
+    "one": "%1 අනාථ පැකේජය ඉවත් කරමුද?",
+    "other": "%1 අනාථ පැකේජ ඉවත් කරමුද?"
+  },
   "update.whatsNew": "අලුත්ම දේ: %1",
   "webapp.iconPlaceholder": "favicon ස්වයංක්‍රීයව ගත නොහැකි විය. PNG අයිකන URL හෝ අයිකන නම ඇතුළත් කරන්න",
   "webapp.intro": "යෙදුම් දියත්කරණයෙන් ආරම්භ කළ හැකි නව වෙබ් යෙදුමක් සාදමු.",

@@ -17,10 +17,18 @@
   "agents.durationHoursMinutes": "%1год %2хв",
   "agents.durationMinutes": "%1хв",
   "agents.durationNow": "зараз",
-  "agents.freeResetOne": "1 безкоштовне скидання",
-  "agents.freeResetOneExpires": "1 безкоштовне скидання · наступне закінчується через %1",
-  "agents.freeResets": "%1 безкоштовних скидань",
-  "agents.freeResetsExpires": "%1 безкоштовних скидань · наступне закінчується через %2",
+  "agents.freeResets": {
+    "few": "%1 безкоштовні скидання",
+    "many": "%1 безкоштовних скидань",
+    "one": "%1 безкоштовне скидання",
+    "other": "%1 безкоштовного скидання"
+  },
+  "agents.freeResetsExpires": {
+    "few": "%1 безкоштовні скидання · наступне спливає через %2",
+    "many": "%1 безкоштовних скидань · наступне спливає через %2",
+    "one": "%1 безкоштовне скидання · наступне спливає через %2",
+    "other": "%1 безкоштовного скидання · наступне спливає через %2"
+  },
   "agents.helpFireworksSignIn": "Встановіть %1, запустіть %2 або увійдіть до Fireworks у pi чи opencode.",
   "agents.helpNotInPath": "%1 не знайдено в PATH",
   "agents.helpRunToAuthenticate": "Запустіть %1 для автентифікації.",
@@ -34,8 +42,12 @@
   "agents.lastUpdatedUnknown": "Час останнього оновлення недоступний",
   "agents.limitsPaused": "Ліміти призупинено",
   "agents.makeSomethingCool": "СТВОРІТЬ ЩОСЬ ЦІКАВЕ",
-  "agents.merged": "Об’єднано з %1 пристроїв",
-  "agents.mergedOne": "Об’єднано з 1 пристрою",
+  "agents.merged": {
+    "few": "Об’єднано з %1 пристроїв",
+    "many": "Об’єднано з %1 пристроїв",
+    "one": "Об’єднано з %1 пристрою",
+    "other": "Об’єднано з %1 пристрою"
+  },
   "agents.modelMonthly": "%1 за місяць",
   "agents.modelSession": "%1 за сеанс",
   "agents.modelWeekly": "%1 за тиждень",
@@ -45,7 +57,12 @@
   "agents.placeholderCode": "Код",
   "agents.placeholderWork": "Робота",
   "agents.plugin": "Плагін",
-  "agents.promptsToday": "%1 запитів сьогодні",
+  "agents.promptsToday": {
+    "few": "%1 запити сьогодні",
+    "many": "%1 запитів сьогодні",
+    "one": "%1 запит сьогодні",
+    "other": "%1 запиту сьогодні"
+  },
   "agents.providerLimitsUnavailable": "Ліміти %1 недоступні",
   "agents.providerUnavailable": "%1 недоступно",
   "agents.reopenSignIn": "Знову відкрити сторінку входу",
@@ -53,7 +70,12 @@
   "agents.scopedOther": "%1: %2% його ліміту %3",
   "agents.scopedSession": "%1: %2% ліміту на сеанс",
   "agents.scopedWeekly": "%1: %2% тижневого ліміту",
-  "agents.sessionsToday": "%1 сеансів сьогодні",
+  "agents.sessionsToday": {
+    "few": "%1 сесії сьогодні",
+    "many": "%1 сесій сьогодні",
+    "one": "%1 сесія сьогодні",
+    "other": "%1 сесії сьогодні"
+  },
   "agents.signInAgainAccount": "Знову увійти до цього облікового запису",
   "agents.signInAgainProvider": "Знову увійти до %1",
   "agents.signInExpired": "Термін дії входу минув",
@@ -71,8 +93,18 @@
   "agents.theme": "Тема",
   "agents.tierPrepaid": "Передоплата",
   "agents.title": "Агенти",
-  "agents.tokensThisWeek": "%1 токенів цього тижня",
-  "agents.tokensToday": "%1 токенів сьогодні",
+  "agents.tokensThisWeek": {
+    "few": "%1 токени цього тижня",
+    "many": "%1 токенів цього тижня",
+    "one": "%1 токен цього тижня",
+    "other": "%1 токена цього тижня"
+  },
+  "agents.tokensToday": {
+    "few": "%1 токени сьогодні",
+    "many": "%1 токенів сьогодні",
+    "one": "%1 токен сьогодні",
+    "other": "%1 токена сьогодні"
+  },
   "agents.unknownModel": "Невідома",
   "agents.usageNotUpdated": "Використання ще не оновлено.",
   "agents.usageUnavailable": "Використання недоступне",
@@ -151,7 +183,12 @@
   "bluetooth.turnedOff": "Вимкнено",
   "clipboard.deleteHistory": "Видалити всю історію буфера обміну?",
   "clipboard.empty": "Буфер обміну порожній",
-  "clipboard.files": "%1 файлів",
+  "clipboard.files": {
+    "few": "%1 файли",
+    "many": "%1 файлів",
+    "one": "%1 файл",
+    "other": "%1 файла"
+  },
   "clipboard.image": "Зображення",
   "clipboard.imageFrom": "Зображення з %1",
   "clipboard.screenshotFrom": "Знімок екрана з %1",
@@ -237,8 +274,18 @@
   "elsewhen.badgeTracked": "відстежуване",
   "elsewhen.clock": "Годинник",
   "elsewhen.dateFormat": "ddd d MMM",
-  "elsewhen.daysAhead": "+%1 дн.",
-  "elsewhen.daysBehind": "-%1 дн.",
+  "elsewhen.daysAhead": {
+    "few": "+%1 дні",
+    "many": "+%1 днів",
+    "one": "+%1 день",
+    "other": "+%1 дня"
+  },
+  "elsewhen.daysBehind": {
+    "few": "-%1 дні",
+    "many": "-%1 днів",
+    "one": "-%1 день",
+    "other": "-%1 дня"
+  },
   "elsewhen.daysShort": "%1 дн.",
   "elsewhen.here": "Тут зараз %1",
   "elsewhen.hereIn": "Тут, у %2, зараз %1",
@@ -276,7 +323,12 @@
   "menu.powerProfilePerformance": "продуктивність",
   "menu.powerProfilePowerSaver": "енергоощадний",
   "menu.selectPrompt": "Виберіть",
-  "menu.selectedCount": "%1 обрано",
+  "menu.selectedCount": {
+    "few": "%1 вибрано",
+    "many": "%1 вибрано",
+    "one": "%1 вибрано",
+    "other": "%1 вибрано"
+  },
   "monitor.brightness": "ЯСКРАВІСТЬ",
   "monitor.display": "Дисплей",
   "monitor.displayFocused": "%1 · у фокусі",
@@ -294,6 +346,12 @@
   "monitor.textSize": "РОЗМІР ТЕКСТУ",
   "multiSelect.exited": "Команда параметрів завершилася з кодом %1",
   "multiSelect.invalidJson": "Команда параметрів повернула недійсний JSON",
+  "multiSelect.selectedCount": {
+    "few": "%1 вибрано",
+    "many": "%1 вибрано",
+    "one": "%1 вибрано",
+    "other": "%1 вибрано"
+  },
   "multiSelect.timedOut": "Час очікування команди параметрів вичерпано",
   "network.automatic": "АВТОМАТИЧНО",
   "network.bandAuto": "Авто",
@@ -396,9 +454,9 @@
   "power.holding": "Утримується",
   "power.onBattery": "Від батареї",
   "power.powerProfile": "ПРОФІЛЬ ЖИВЛЕННЯ",
-  "power.profileBalanced": "Збалансований",
-  "power.profilePerformance": "Продуктивність",
-  "power.profilePowerSaver": "Енергоощадний",
+  "power.profileBalanced": "Баланс",
+  "power.profilePerformance": "Потужність",
+  "power.profilePowerSaver": "Ощадний",
   "power.threshold": "Поріг",
   "power.timeLeft": "Залишилося часу",
   "power.timeToFull": "Час до повної",

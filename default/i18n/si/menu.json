@@ -174,7 +174,7 @@
     "label": "දකුණු තීරුව"
   },
   "trigger.appearance.dock": {
-    "label": "Dock"
+    "label": "ඩොක්"
   },
   "trigger.appearance.dock.autohide": {
     "label": "Dock ස්වයං-සඟවන්න"
@@ -262,7 +262,7 @@
     "label": "බිඳවැටීම් ග්‍රහණය"
   },
   "trigger.emoji": {
-    "label": "Emoji"
+    "label": "ඉමෝජි"
   },
   "trigger.clipboard-history": {
     "label": "ක්ලිප්බෝඩ් ඉතිහාසය"
@@ -454,7 +454,7 @@
     "label": "පෙරනිමි"
   },
   "setup.default.agent": {
-    "label": "Agent",
+    "label": "ඒජන්ට්",
     "title": "පෙරනිමි Agent"
   },
   "setup.default.agent.agy": {

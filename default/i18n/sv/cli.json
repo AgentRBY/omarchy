@@ -124,8 +124,10 @@
   "lock.didNotLock": "Skärmen låstes inte före viloläge",
   "lock.unlockedNoLockScreen": "Sessionen lämnades olåst (ingen låsskärm är konfigurerad).",
   "lock.unlockedTimeout": "Sessionen lämnades olåst (skalet säkrade inte sessionen inom %1ms).",
-  "migrate.clickToRun": "Klicka för att köra %1 väntande migreringar.",
-  "migrate.clickToRunOne": "Klicka för att köra 1 väntande migrering.",
+  "migrate.clickToRun": {
+    "one": "Klicka för att köra %1 väntande migrering.",
+    "other": "Klicka för att köra %1 väntande migreringar."
+  },
   "migrate.pending": "Väntande Omarchy-migreringar",
   "monitor.extendedRestored": "Utökat läge återställt",
   "monitor.laptopDisabled": "Bärbar skärm inaktiverad",
@@ -160,16 +162,27 @@
   "preinstalls.confirmRemove": "Är du säker på att du vill ta bort alla förinstallerade webbappar, TUI-wrappers och skrivbordsprogram?",
   "preinstalls.confirmRestore": "Är du säker på att du vill återställa alla förinstallerade webbappar, TUI-wrappers och skrivbordsprogram?",
   "reminder.cleared": "Alla påminnelser har rensats",
-  "reminder.count": "%1 påminnelser",
-  "reminder.countOne": "1 påminnelse",
-  "reminder.customInMinutes": "%1 om %2 minuter",
+  "reminder.count": {
+    "one": "%1 påminnelse",
+    "other": "%1 påminnelser"
+  },
+  "reminder.customInMinutes": {
+    "one": "%1 om %2 minut",
+    "other": "%1 om %2 minuter"
+  },
   "reminder.durationMinutesSeconds": "%1 min %2 s",
   "reminder.durationSeconds": "%1 s",
   "reminder.inRemaining": "%1 om %2 (%3)",
   "reminder.minuteLabel": "%1-minuters påminnelse",
-  "reminder.minutesUp": "Dina %1 minuter har gått",
+  "reminder.minutesUp": {
+    "one": "Din %1 minut är slut",
+    "other": "Dina %1 minuter är slut"
+  },
   "reminder.none": "Inga utestående påminnelser",
-  "reminder.setForMinutes": "Påminnelse satt till om %1 minuter",
+  "reminder.setForMinutes": {
+    "one": "Påminnelse inställd på %1 minut",
+    "other": "Påminnelse inställd på %1 minuter"
+  },
   "reminder.setTooltip": "Ställ in påminnelse",
   "reminder.title": "Påminnelse",
   "reminder.upcoming": "Kommande påminnelser",
@@ -218,6 +231,10 @@
   "system.shutdownFailed": "Avstängning misslyckades",
   "system.shutdownRetry": "Kunde inte slutföra avstängningen. Försök igen.",
   "system.shuttingDown": "Stänger av",
+  "tailscale.fileCount": {
+    "one": "%1 fil",
+    "other": "%1 filer"
+  },
   "tailscale.received": "Tog emot %1",
   "tailscale.savedTo": "Sparat till %1",
   "tailscale.sendFailed": "Kunde inte skicka till %1",
@@ -263,7 +280,10 @@
   "update.kernelReboot": "Linux-kärnan har uppdaterats. Starta om?",
   "update.ready": "Redo att uppdatera?",
   "update.rebootRequired": "Uppdateringarna kräver omstart. Redo?",
-  "update.removeOrphans": "Ta bort %1 föräldralösa paket?",
+  "update.removeOrphans": {
+    "one": "Ta bort %1 föräldralöst paket?",
+    "other": "Ta bort %1 föräldralösa paket?"
+  },
   "update.whatsNew": "Vad är nytt: %1",
   "webapp.iconPlaceholder": "Kunde inte hämta favicon automatiskt. Ange URL till PNG-ikon eller ikonnamn",
   "webapp.intro": "Låt oss skapa en ny webbapp som du kan starta med appstartaren.",

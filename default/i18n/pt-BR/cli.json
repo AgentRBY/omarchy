@@ -59,6 +59,8 @@
   "clipboard.urlCopied": "URL copiada para a área de transferência",
   "common.disabled": "Desativado",
   "common.enabled": "Ativado",
+  "common.no": "Não",
+  "common.yes": "Sim",
   "config.editing": "Editando arquivo de configuração",
   "corners.followTheme": "Cantos seguem o tema",
   "corners.rounded": "Cantos arredondados para todos os temas",
@@ -122,8 +124,11 @@
   "lock.didNotLock": "A tela não bloqueou antes de suspender",
   "lock.unlockedNoLockScreen": "A sessão ficou desbloqueada (nenhuma tela de bloqueio está configurada).",
   "lock.unlockedTimeout": "A sessão ficou desbloqueada (o shell não protegeu a sessão em %1ms).",
-  "migrate.clickToRun": "Clique para executar %1 migrações pendentes.",
-  "migrate.clickToRunOne": "Clique para executar 1 migração pendente.",
+  "migrate.clickToRun": {
+    "many": "Clique para executar %1 migrações pendentes.",
+    "one": "Clique para executar %1 migração pendente.",
+    "other": "Clique para executar %1 migrações pendentes."
+  },
   "migrate.pending": "Migrações pendentes do Omarchy",
   "monitor.extendedRestored": "Modo estendido restaurado",
   "monitor.laptopDisabled": "Tela do notebook desativada",
@@ -158,16 +163,31 @@
   "preinstalls.confirmRemove": "Tem certeza de que deseja remover todos os aplicativos web, wrappers TUI e aplicativos de desktop pré-instalados?",
   "preinstalls.confirmRestore": "Tem certeza de que deseja restaurar todos os aplicativos web, wrappers TUI e aplicativos de desktop pré-instalados?",
   "reminder.cleared": "Todos os lembretes foram apagados",
-  "reminder.count": "%1 lembretes",
-  "reminder.countOne": "1 lembrete",
-  "reminder.customInMinutes": "%1 em %2 minutos",
+  "reminder.count": {
+    "many": "%1 lembretes",
+    "one": "%1 lembrete",
+    "other": "%1 lembretes"
+  },
+  "reminder.customInMinutes": {
+    "many": "%1 em %2 minutos",
+    "one": "%1 em %2 minuto",
+    "other": "%1 em %2 minutos"
+  },
   "reminder.durationMinutesSeconds": "%1min %2s",
   "reminder.durationSeconds": "%1s",
   "reminder.inRemaining": "%1 em %2 (%3)",
   "reminder.minuteLabel": "Lembrete de %1 min",
-  "reminder.minutesUp": "Seus %1 minutos acabaram",
+  "reminder.minutesUp": {
+    "many": "Seus %1 minutos acabaram",
+    "one": "Seu %1 minuto acabou",
+    "other": "Seus %1 minutos acabaram"
+  },
   "reminder.none": "Nenhum lembrete pendente",
-  "reminder.setForMinutes": "Lembrete definido para %1 minutos",
+  "reminder.setForMinutes": {
+    "many": "Lembrete definido para %1 minutos",
+    "one": "Lembrete definido para %1 minuto",
+    "other": "Lembrete definido para %1 minutos"
+  },
   "reminder.setTooltip": "Definir lembrete",
   "reminder.title": "Lembrete",
   "reminder.upcoming": "Próximos lembretes",
@@ -216,6 +236,11 @@
   "system.shutdownFailed": "Falha ao desligar",
   "system.shutdownRetry": "Não foi possível concluir o desligamento. Tente novamente.",
   "system.shuttingDown": "Desligando",
+  "tailscale.fileCount": {
+    "many": "%1 arquivos",
+    "one": "%1 arquivo",
+    "other": "%1 arquivos"
+  },
   "tailscale.received": "Recebido %1",
   "tailscale.savedTo": "Salvo em %1",
   "tailscale.sendFailed": "Não foi possível enviar para %1",
@@ -261,7 +286,11 @@
   "update.kernelReboot": "O kernel Linux foi atualizado. Reiniciar?",
   "update.ready": "Pronto para atualizar?",
   "update.rebootRequired": "As atualizações exigem reinicialização. Pronto?",
-  "update.removeOrphans": "Remover %1 pacote(s) órfão(s)?",
+  "update.removeOrphans": {
+    "many": "Remover %1 pacotes órfãos?",
+    "one": "Remover %1 pacote órfão?",
+    "other": "Remover %1 pacotes órfãos?"
+  },
   "update.whatsNew": "Novidades: %1",
   "webapp.iconPlaceholder": "Não foi possível obter o favicon automaticamente. Digite a URL do ícone PNG ou o nome do ícone",
   "webapp.intro": "Vamos criar um novo aplicativo web para iniciar pelo lançador de aplicativos.",

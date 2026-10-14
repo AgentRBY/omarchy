@@ -17,17 +17,28 @@
   "agents.durationHoursMinutes": "%1時間 %2分",
   "agents.durationMinutes": "%1分",
   "agents.durationNow": "今",
-  "agents.freeResetOne": "無料リセット 1回",
-  "agents.freeResetOneExpires": "無料リセット 1回 · 次は %1 後に期限切れ",
-  "agents.freeResets": "無料リセット %1回",
-  "agents.freeResetsExpires": "無料リセット %1回 · 次は %2 後に期限切れ",
+  "agents.freeResets": {
+    "other": "%1 回の無料リセット"
+  },
+  "agents.freeResetsExpires": {
+    "other": "%1 回の無料リセット · 次は %2 後に期限切れ"
+  },
+  "agents.helpFireworksSignIn": "%1 を設定するか、%2 を実行するか、pi または opencode で Fireworks にサインインしてください。",
+  "agents.helpNotInPath": "PATH に %1 が見つかりません",
+  "agents.helpRunToAuthenticate": "認証するには %1 を実行してください。",
+  "agents.helpRunToRestoreUsage": "正確な利用状況を復元するには %1 を実行してください。",
+  "agents.helpScanFailed": "%1 の利用状況スキャンに失敗しました",
+  "agents.helpSignInExpired": "%1 の保存済みサインインの期限が切れました。更新するには %1 を起動してください。",
+  "agents.helpStartOrRunToSignIn": "サインインするには %1 を起動するか、%2 を実行してください。",
+  "agents.helpStartToSeeLimits": "上限を確認するには %1 を起動してください。再度のサインインは不要です。",
   "agents.lastUpdatedAgo": "最終更新: %1前",
   "agents.lastUpdatedJustNow": "最終更新: 1分以内",
   "agents.lastUpdatedUnknown": "最終更新時刻を取得できません",
   "agents.limitsPaused": "上限を一時停止中",
   "agents.makeSomethingCool": "かっこいいものを作ろう",
-  "agents.merged": "%1台のデバイスから統合",
-  "agents.mergedOne": "1台のデバイスから統合",
+  "agents.merged": {
+    "other": "%1 台のデバイスから統合"
+  },
   "agents.modelMonthly": "%1 月間",
   "agents.modelSession": "%1 セッション",
   "agents.modelWeekly": "%1 週間",
@@ -37,7 +48,9 @@
   "agents.placeholderCode": "コード",
   "agents.placeholderWork": "仕事用",
   "agents.plugin": "プラグイン",
-  "agents.promptsToday": "今日は %1 件のプロンプト",
+  "agents.promptsToday": {
+    "other": "今日 %1 件のプロンプト"
+  },
   "agents.providerLimitsUnavailable": "%1 の上限を取得できません",
   "agents.providerUnavailable": "%1 を利用できません",
   "agents.reopenSignIn": "サインインページを再度開く",
@@ -45,7 +58,9 @@
   "agents.scopedOther": "%1: %3 利用枠の %2%",
   "agents.scopedSession": "%1: セッション利用枠の %2%",
   "agents.scopedWeekly": "%1: 週間利用枠の %2%",
-  "agents.sessionsToday": "今日は %1 件のセッション",
+  "agents.sessionsToday": {
+    "other": "今日 %1 件のセッション"
+  },
   "agents.signInAgainAccount": "このアカウントにもう一度サインイン",
   "agents.signInAgainProvider": "%1 にもう一度サインイン",
   "agents.signInExpired": "サインインが期限切れです",
@@ -61,9 +76,14 @@
   "agents.syncMkdirFailed": "使用量同期の mkdir に失敗しました",
   "agents.syncScanFailed": "使用量同期のスキャンに失敗しました",
   "agents.theme": "テーマ",
+  "agents.tierPrepaid": "プリペイド",
   "agents.title": "エージェント",
-  "agents.tokensThisWeek": "今週は %1 トークン",
-  "agents.tokensToday": "今日は %1 トークン",
+  "agents.tokensThisWeek": {
+    "other": "今週 %1 トークン"
+  },
+  "agents.tokensToday": {
+    "other": "今日 %1 トークン"
+  },
   "agents.unknownModel": "不明",
   "agents.usageNotUpdated": "使用量はまだ更新されていません。",
   "agents.usageUnavailable": "使用量を取得できません",
@@ -142,7 +162,9 @@
   "bluetooth.turnedOff": "オフ",
   "clipboard.deleteHistory": "クリップボード履歴をすべて削除しますか？",
   "clipboard.empty": "クリップボードは空です",
-  "clipboard.files": "%1 件のファイル",
+  "clipboard.files": {
+    "other": "%1 ファイル"
+  },
   "clipboard.image": "画像",
   "clipboard.imageFrom": "%1 からの画像",
   "clipboard.screenshotFrom": "%1 からのスクリーンショット",
@@ -228,8 +250,12 @@
   "elsewhen.badgeTracked": "追跡中",
   "elsewhen.clock": "時計",
   "elsewhen.dateFormat": "MMM d'日' ddd",
-  "elsewhen.daysAhead": "+%1日",
-  "elsewhen.daysBehind": "-%1日",
+  "elsewhen.daysAhead": {
+    "other": "+%1日"
+  },
+  "elsewhen.daysBehind": {
+    "other": "-%1日"
+  },
   "elsewhen.daysShort": "%1日",
   "elsewhen.here": "こちらは %1",
   "elsewhen.hereIn": "%2 は現在 %1",
@@ -263,11 +289,13 @@
   "media.source": "ソース",
   "menu.inputPrompt": "入力",
   "menu.nothingHere": "まだ何もありません",
-  "menu.powerProfileBalanced": "balanced",
-  "menu.powerProfilePerformance": "performance",
-  "menu.powerProfilePowerSaver": "power-saver",
+  "menu.powerProfileBalanced": "バランス",
+  "menu.powerProfilePerformance": "パフォーマンス",
+  "menu.powerProfilePowerSaver": "省電力",
   "menu.selectPrompt": "選択",
-  "menu.selectedCount": "%1件選択中",
+  "menu.selectedCount": {
+    "other": "%1 件選択中"
+  },
   "monitor.brightness": "明るさ",
   "monitor.display": "ディスプレイ",
   "monitor.displayFocused": "%1 · フォーカス中",
@@ -285,6 +313,9 @@
   "monitor.textSize": "文字サイズ",
   "multiSelect.exited": "オプションコマンドが%1で終了しました",
   "multiSelect.invalidJson": "オプションコマンドが無効なJSONを出力しました",
+  "multiSelect.selectedCount": {
+    "other": "%1 件選択中"
+  },
   "multiSelect.timedOut": "オプションコマンドがタイムアウトしました",
   "network.automatic": "自動",
   "network.bandAuto": "自動",
@@ -303,7 +334,7 @@
   "network.dnsFromDhcp": "DHCPのDNSを使用",
   "network.dnsProvider": "DNSプロバイダ",
   "network.downloaded": "ダウンロード済み",
-  "network.ethernet": "Ethernet",
+  "network.ethernet": "イーサネット",
   "network.failed": "失敗",
   "network.failedToConnect": "接続に失敗しました",
   "network.forgetNetwork": "ネットワークを削除",

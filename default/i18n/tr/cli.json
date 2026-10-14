@@ -124,8 +124,10 @@
   "lock.didNotLock": "Ekran beklemeden önce kilitlenmedi",
   "lock.unlockedNoLockScreen": "Oturum kilitsiz bırakıldı (kilit ekranı yapılandırılmamış).",
   "lock.unlockedTimeout": "Oturum kilitsiz bırakıldı (kabuk oturumu %1ms içinde güvence altına almadı).",
-  "migrate.clickToRun": "%1 bekleyen geçişi çalıştırmak için tıklayın.",
-  "migrate.clickToRunOne": "1 bekleyen geçişi çalıştırmak için tıklayın.",
+  "migrate.clickToRun": {
+    "one": "Bekleyen %1 geçişi çalıştırmak için tıklayın.",
+    "other": "Bekleyen %1 geçişi çalıştırmak için tıklayın."
+  },
   "migrate.pending": "Bekleyen Omarchy Geçişleri",
   "monitor.extendedRestored": "Genişletilmiş mod geri yüklendi",
   "monitor.laptopDisabled": "Dizüstü ekranı devre dışı",
@@ -160,16 +162,27 @@
   "preinstalls.confirmRemove": "Önceden yüklenmiş tüm web uygulamalarını, TUI sarmalayıcılarını ve masaüstü uygulamalarını kaldırmak istediğinizden emin misiniz?",
   "preinstalls.confirmRestore": "Önceden yüklenmiş tüm web uygulamalarını, TUI sarmalayıcılarını ve masaüstü uygulamalarını geri yüklemek istediğinizden emin misiniz?",
   "reminder.cleared": "Tüm hatırlatıcılar temizlendi",
-  "reminder.count": "%1 hatırlatıcı",
-  "reminder.countOne": "1 hatırlatıcı",
-  "reminder.customInMinutes": "%1, %2 dakika içinde",
+  "reminder.count": {
+    "one": "%1 hatırlatıcı",
+    "other": "%1 hatırlatıcı"
+  },
+  "reminder.customInMinutes": {
+    "one": "%1, %2 dakika sonra",
+    "other": "%1, %2 dakika sonra"
+  },
   "reminder.durationMinutesSeconds": "%1dk %2sn",
   "reminder.durationSeconds": "%1sn",
   "reminder.inRemaining": "%1, %2 sonra (%3)",
   "reminder.minuteLabel": "%1 dakikalık hatırlatıcı",
-  "reminder.minutesUp": "%1 dakikanız doldu",
+  "reminder.minutesUp": {
+    "one": "%1 dakikalık süreniz doldu",
+    "other": "%1 dakikalık süreniz doldu"
+  },
   "reminder.none": "Bekleyen hatırlatıcı yok",
-  "reminder.setForMinutes": "Hatırlatıcı %1 dakika sonraya kuruldu",
+  "reminder.setForMinutes": {
+    "one": "%1 dakika sonrası için hatırlatıcı kuruldu",
+    "other": "%1 dakika sonrası için hatırlatıcı kuruldu"
+  },
   "reminder.setTooltip": "Hatırlatıcı Kur",
   "reminder.title": "Hatırlatıcı",
   "reminder.upcoming": "Yaklaşan hatırlatıcılar",
@@ -218,6 +231,10 @@
   "system.shutdownFailed": "Kapatılamadı",
   "system.shutdownRetry": "Kapatma tamamlanamadı. Lütfen tekrar deneyin.",
   "system.shuttingDown": "Kapatılıyor",
+  "tailscale.fileCount": {
+    "one": "%1 dosya",
+    "other": "%1 dosya"
+  },
   "tailscale.received": "%1 alındı",
   "tailscale.savedTo": "%1 konumuna kaydedildi",
   "tailscale.sendFailed": "%1 adresine gönderilemedi",
@@ -263,7 +280,10 @@
   "update.kernelReboot": "Linux çekirdeği güncellendi. Yeniden başlatılsın mı?",
   "update.ready": "Güncellemeye hazır mısınız?",
   "update.rebootRequired": "Güncellemeler yeniden başlatma gerektiriyor. Hazır mısınız?",
-  "update.removeOrphans": "%1 yetim paket kaldırılsın mı?",
+  "update.removeOrphans": {
+    "one": "%1 yetim paket kaldırılsın mı?",
+    "other": "%1 yetim paket kaldırılsın mı?"
+  },
   "update.whatsNew": "Yenilikler: %1",
   "webapp.iconPlaceholder": "Favicon otomatik alınamadı. PNG simge URL'si veya simge adı girin",
   "webapp.intro": "Uygulama başlatıcısından başlatabileceğiniz yeni bir web uygulaması oluşturalım.",

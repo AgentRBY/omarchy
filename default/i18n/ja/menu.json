@@ -174,7 +174,7 @@
     "label": "右バー"
   },
   "trigger.appearance.dock": {
-    "label": "Dock"
+    "label": "ドック"
   },
   "trigger.appearance.dock.autohide": {
     "label": "ドックを自動で隠す"
@@ -322,7 +322,7 @@
     "label": "画面ミラーリング"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "ハイブリッド GPU"
   },
   "trigger.hardware.touchpad": {
     "label": "タッチパッド"
@@ -612,7 +612,7 @@
     "label": "SSHD"
   },
   "setup.security.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "SSH エージェント"
   },
   "setup.security.sudoless-docker": {
     "label": "sudoなしDocker"
@@ -1047,7 +1047,7 @@
     "label": "Xbox Cloud Gaming"
   },
   "remove.gaming.xbox-controllers": {
-    "label": "Xbox Controllers (󰂯)"
+    "label": "Xbox コントローラー (󰂯)"
   },
   "remove.gaming.battlenet": {
     "label": "Battle.net"

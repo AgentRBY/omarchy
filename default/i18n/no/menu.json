@@ -551,7 +551,7 @@
     "label": "Kitty"
   },
   "setup.default.editor": {
-    "label": "Editor",
+    "label": "Redigeringsprogram",
     "title": "Standardeditor"
   },
   "setup.default.editor.neovim": {
@@ -579,7 +579,7 @@
     "label": "Emacs"
   },
   "setup.plugin": {
-    "label": "Plugins"
+    "label": "Programtillegg"
   },
   "setup.plugin.enable": {
     "label": "Aktiver plugin"
@@ -648,7 +648,7 @@
     "label": "Utvikling"
   },
   "install.editor": {
-    "label": "Editor"
+    "label": "Redigeringsprogram"
   },
   "install.style": {
     "label": "Stil"
@@ -1146,7 +1146,7 @@
     "title": "Omstart"
   },
   "update.firmware": {
-    "label": "Firmware"
+    "label": "Fastvare"
   },
   "update.password": {
     "label": "Passord"
@@ -1173,7 +1173,7 @@
     "label": "Hyprsunset"
   },
   "update.process.shell": {
-    "label": "Shell"
+    "label": "Skall"
   },
   "update.config.hyprland": {
     "label": "Hyprland"
@@ -1188,7 +1188,7 @@
     "label": "Tmux"
   },
   "update.config.shell": {
-    "label": "Shell"
+    "label": "Skall"
   },
   "update.hardware.audio": {
     "label": "Lyd"

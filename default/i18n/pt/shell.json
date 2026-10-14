@@ -3,7 +3,7 @@
   "agents.addAccount": "Adicionar uma conta",
   "agents.addProviderAccount": "Adicionar conta %1",
   "agents.addSubscription": "Adicionar uma subscrição",
-  "agents.app": "App",
+  "agents.app": "Aplicação",
   "agents.autoswitch": "Troca automática",
   "agents.backToLimits": "Voltar aos limites",
   "agents.balance": "Saldo",
@@ -17,17 +17,34 @@
   "agents.durationHoursMinutes": "%1h %2min",
   "agents.durationMinutes": "%1min",
   "agents.durationNow": "agora",
-  "agents.freeResetOne": "1 reposição gratuita",
-  "agents.freeResetOneExpires": "1 reposição gratuita · a próxima expira em %1",
-  "agents.freeResets": "%1 reposições gratuitas",
-  "agents.freeResetsExpires": "%1 reposições gratuitas · a próxima expira em %2",
+  "agents.freeResets": {
+    "many": "%1 reposições grátis",
+    "one": "%1 reposição grátis",
+    "other": "%1 reposições grátis"
+  },
+  "agents.freeResetsExpires": {
+    "many": "%1 reposições grátis · a próxima expira daqui a %2",
+    "one": "%1 reposição grátis · a próxima expira daqui a %2",
+    "other": "%1 reposições grátis · a próxima expira daqui a %2"
+  },
+  "agents.helpFireworksSignIn": "Define %1, executa %2 ou inicia sessão na Fireworks no pi ou no opencode.",
+  "agents.helpNotInPath": "%1 não encontrado no PATH",
+  "agents.helpRunToAuthenticate": "Executa %1 para te autenticares.",
+  "agents.helpRunToRestoreUsage": "Executa %1 para restaurares a utilização autoritativa.",
+  "agents.helpScanFailed": "A análise de utilização de %1 falhou",
+  "agents.helpSignInExpired": "A sessão guardada de %1 expirou. Inicia %1 para a renovar.",
+  "agents.helpStartOrRunToSignIn": "Inicia %1 ou executa %2 para iniciares sessão.",
+  "agents.helpStartToSeeLimits": "Inicia %1 para veres os limites; não é preciso iniciar sessão outra vez.",
   "agents.lastUpdatedAgo": "Atualizado há %1",
   "agents.lastUpdatedJustNow": "Atualizado há menos de um minuto",
   "agents.lastUpdatedUnknown": "Hora da última atualização indisponível",
   "agents.limitsPaused": "Limites em pausa",
   "agents.makeSomethingCool": "CRIA ALGO FIXE",
-  "agents.merged": "Agregado de %1 dispositivos",
-  "agents.mergedOne": "Agregado de 1 dispositivo",
+  "agents.merged": {
+    "many": "Combinado a partir de %1 dispositivos",
+    "one": "Combinado a partir de %1 dispositivo",
+    "other": "Combinado a partir de %1 dispositivos"
+  },
   "agents.modelMonthly": "%1 Mensal",
   "agents.modelSession": "%1 Sessão",
   "agents.modelWeekly": "%1 Semanal",
@@ -37,7 +54,11 @@
   "agents.placeholderCode": "Código",
   "agents.placeholderWork": "Trabalho",
   "agents.plugin": "Plugin",
-  "agents.promptsToday": "%1 prompts hoje",
+  "agents.promptsToday": {
+    "many": "%1 prompts hoje",
+    "one": "%1 prompt hoje",
+    "other": "%1 prompts hoje"
+  },
   "agents.providerLimitsUnavailable": "Limites de %1 indisponíveis",
   "agents.providerUnavailable": "%1 indisponível",
   "agents.reopenSignIn": "Voltar a abrir o início de sessão",
@@ -45,7 +66,11 @@
   "agents.scopedOther": "%1: %2% do seu limite %3",
   "agents.scopedSession": "%1: %2% do seu limite de sessão",
   "agents.scopedWeekly": "%1: %2% do seu limite semanal",
-  "agents.sessionsToday": "%1 sessões hoje",
+  "agents.sessionsToday": {
+    "many": "%1 sessões hoje",
+    "one": "%1 sessão hoje",
+    "other": "%1 sessões hoje"
+  },
   "agents.signInAgainAccount": "Inicia sessão nesta conta outra vez",
   "agents.signInAgainProvider": "Inicia sessão em %1 outra vez",
   "agents.signInExpired": "Início de sessão expirado",
@@ -61,9 +86,18 @@
   "agents.syncMkdirFailed": "Falha no mkdir da sincronização de utilização",
   "agents.syncScanFailed": "Falha na análise da sincronização de utilização",
   "agents.theme": "Tema",
+  "agents.tierPrepaid": "Pré-pago",
   "agents.title": "Agentes",
-  "agents.tokensThisWeek": "%1 tokens esta semana",
-  "agents.tokensToday": "%1 tokens hoje",
+  "agents.tokensThisWeek": {
+    "many": "%1 tokens esta semana",
+    "one": "%1 token esta semana",
+    "other": "%1 tokens esta semana"
+  },
+  "agents.tokensToday": {
+    "many": "%1 tokens hoje",
+    "one": "%1 token hoje",
+    "other": "%1 tokens hoje"
+  },
   "agents.unknownModel": "Desconhecido",
   "agents.usageNotUpdated": "A utilização ainda não foi atualizada.",
   "agents.usageUnavailable": "Utilização indisponível",
@@ -142,7 +176,11 @@
   "bluetooth.turnedOff": "Desligado",
   "clipboard.deleteHistory": "Eliminar todo o histórico da área de transferência?",
   "clipboard.empty": "A área de transferência está vazia",
-  "clipboard.files": "%1 ficheiros",
+  "clipboard.files": {
+    "many": "%1 ficheiros",
+    "one": "%1 ficheiro",
+    "other": "%1 ficheiros"
+  },
   "clipboard.image": "Imagem",
   "clipboard.imageFrom": "Imagem de %1",
   "clipboard.screenshotFrom": "Captura de ecrã de %1",
@@ -228,8 +266,16 @@
   "elsewhen.badgeTracked": "seguida",
   "elsewhen.clock": "Relógio",
   "elsewhen.dateFormat": "ddd d MMM",
-  "elsewhen.daysAhead": "+%1 dias",
-  "elsewhen.daysBehind": "-%1 dias",
+  "elsewhen.daysAhead": {
+    "many": "+%1 dias",
+    "one": "+%1 dia",
+    "other": "+%1 dias"
+  },
+  "elsewhen.daysBehind": {
+    "many": "-%1 dias",
+    "one": "-%1 dia",
+    "other": "-%1 dias"
+  },
   "elsewhen.daysShort": "%1d",
   "elsewhen.here": "São %1 aqui",
   "elsewhen.hereIn": "São %1 aqui em %2",
@@ -267,7 +313,11 @@
   "menu.powerProfilePerformance": "desempenho",
   "menu.powerProfilePowerSaver": "poupança de energia",
   "menu.selectPrompt": "Selecionar",
-  "menu.selectedCount": "%1 selecionados",
+  "menu.selectedCount": {
+    "many": "%1 selecionados",
+    "one": "%1 selecionado",
+    "other": "%1 selecionados"
+  },
   "monitor.brightness": "BRILHO",
   "monitor.display": "Ecrã",
   "monitor.displayFocused": "%1 · em foco",
@@ -285,9 +335,14 @@
   "monitor.textSize": "TAMANHO DO TEXTO",
   "multiSelect.exited": "O comando de opções terminou com %1",
   "multiSelect.invalidJson": "O comando de opções devolveu JSON inválido",
+  "multiSelect.selectedCount": {
+    "many": "%1 selecionados",
+    "one": "%1 selecionado",
+    "other": "%1 selecionados"
+  },
   "multiSelect.timedOut": "O comando de opções excedeu o tempo limite",
   "network.automatic": "AUTOMÁTICO",
-  "network.bandAuto": "Auto",
+  "network.bandAuto": "Automático",
   "network.bandAutoTooltip": "Deixar o Wi-Fi escolher a banda",
   "network.captivePortalHelp": "Inicia sessão ou aceita os termos desta rede para aceder à internet.",
   "network.connect": "Ligar",
@@ -299,7 +354,7 @@
   "network.copyToClipboard": "Copiar para a área de transferência",
   "network.disconnected": "Desligado",
   "network.disconnecting": "A desligar…",
-  "network.dnsCustom": "Personalizado",
+  "network.dnsCustom": "Manual",
   "network.dnsFromDhcp": "Usar DNS do DHCP",
   "network.dnsProvider": "FORNECEDOR DE DNS",
   "network.downloaded": "Descarregado",
@@ -389,7 +444,7 @@
   "power.powerProfile": "PERFIL DE ENERGIA",
   "power.profileBalanced": "Equilibrado",
   "power.profilePerformance": "Desempenho",
-  "power.profilePowerSaver": "Poupança de energia",
+  "power.profilePowerSaver": "Poupança",
   "power.threshold": "Limite",
   "power.timeLeft": "Tempo restante",
   "power.timeToFull": "Tempo até à carga total",

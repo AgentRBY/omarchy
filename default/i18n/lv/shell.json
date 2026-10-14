@@ -17,17 +17,34 @@
   "agents.durationHoursMinutes": "%1 st. %2 min.",
   "agents.durationMinutes": "%1 min.",
   "agents.durationNow": "tagad",
-  "agents.freeResetOne": "1 bezmaksas atiestatīšana",
-  "agents.freeResetOneExpires": "1 bezmaksas atiestatīšana · nākamā beidzas pēc %1",
-  "agents.freeResets": "%1 bezmaksas atiestatīšanas",
-  "agents.freeResetsExpires": "%1 bezmaksas atiestatīšanas · nākamā beidzas pēc %2",
+  "agents.freeResets": {
+    "one": "%1 bezmaksas atiestatīšana",
+    "other": "%1 bezmaksas atiestatīšanas",
+    "zero": "%1 bezmaksas atiestatīšanu"
+  },
+  "agents.freeResetsExpires": {
+    "one": "%1 bezmaksas atiestatīšana · nākamā beidzas pēc %2",
+    "other": "%1 bezmaksas atiestatīšanas · nākamā beidzas pēc %2",
+    "zero": "%1 bezmaksas atiestatīšanu · nākamā beidzas pēc %2"
+  },
+  "agents.helpFireworksSignIn": "Iestati %1, palaid %2 vai pieraksties Fireworks pakalpojumā pi vai opencode.",
+  "agents.helpNotInPath": "%1 nav atrasts PATH",
+  "agents.helpRunToAuthenticate": "Palaid %1, lai autentificētos.",
+  "agents.helpRunToRestoreUsage": "Palaid %1, lai atjaunotu autoritatīvos lietojuma datus.",
+  "agents.helpScanFailed": "%1 lietojuma skenēšana neizdevās",
+  "agents.helpSignInExpired": "%1 saglabātā pierakstīšanās ir beigusies. Palaid %1, lai to atsvaidzinātu.",
+  "agents.helpStartOrRunToSignIn": "Palaid %1 vai izpildi %2, lai pierakstītos.",
+  "agents.helpStartToSeeLimits": "Palaid %1, lai redzētu tā limitus; atkārtota pierakstīšanās nav vajadzīga.",
   "agents.lastUpdatedAgo": "Atjaunināts pirms %1",
   "agents.lastUpdatedJustNow": "Atjaunināts pirms mazāk nekā minūtes",
   "agents.lastUpdatedUnknown": "Atjaunināšanas laiks nav pieejams",
   "agents.limitsPaused": "Limiti pauzēti",
   "agents.makeSomethingCool": "IZVEIDO KO FORŠU",
-  "agents.merged": "Apvienots no %1 ierīcēm",
-  "agents.mergedOne": "Apvienots no 1 ierīces",
+  "agents.merged": {
+    "one": "Apvienots no %1 ierīces",
+    "other": "Apvienots no %1 ierīcēm",
+    "zero": "Apvienots no %1 ierīcēm"
+  },
   "agents.modelMonthly": "%1 mēnesī",
   "agents.modelSession": "%1 sesijā",
   "agents.modelWeekly": "%1 nedēļā",
@@ -37,7 +54,11 @@
   "agents.placeholderCode": "Kods",
   "agents.placeholderWork": "Darbs",
   "agents.plugin": "Spraudnis",
-  "agents.promptsToday": "%1 uzvednes šodien",
+  "agents.promptsToday": {
+    "one": "%1 uzvedne šodien",
+    "other": "%1 uzvednes šodien",
+    "zero": "%1 uzvedņu šodien"
+  },
   "agents.providerLimitsUnavailable": "%1 limiti nav pieejami",
   "agents.providerUnavailable": "%1 nav pieejams",
   "agents.reopenSignIn": "Atvērt pierakstīšanās lapu atkal",
@@ -45,7 +66,11 @@
   "agents.scopedOther": "%1: %2% no %3 limita",
   "agents.scopedSession": "%1: %2% no sesijas limita",
   "agents.scopedWeekly": "%1: %2% no nedēļas limita",
-  "agents.sessionsToday": "%1 sesijas šodien",
+  "agents.sessionsToday": {
+    "one": "%1 sesija šodien",
+    "other": "%1 sesijas šodien",
+    "zero": "%1 sesiju šodien"
+  },
   "agents.signInAgainAccount": "Pieraksties šajā kontā vēlreiz",
   "agents.signInAgainProvider": "Pieraksties %1 vēlreiz",
   "agents.signInExpired": "Pierakstīšanās beigusies",
@@ -61,9 +86,18 @@
   "agents.syncMkdirFailed": "Patēriņa sinhronizācijas mkdir neizdevās",
   "agents.syncScanFailed": "Patēriņa sinhronizācijas skenēšana neizdevās",
   "agents.theme": "Tēma",
+  "agents.tierPrepaid": "Priekšapmaksa",
   "agents.title": "Aģenti",
-  "agents.tokensThisWeek": "%1 tokenu šonedēļ",
-  "agents.tokensToday": "%1 tokenu šodien",
+  "agents.tokensThisWeek": {
+    "one": "%1 tokens šonedēļ",
+    "other": "%1 tokeni šonedēļ",
+    "zero": "%1 tokenu šonedēļ"
+  },
+  "agents.tokensToday": {
+    "one": "%1 tokens šodien",
+    "other": "%1 tokeni šodien",
+    "zero": "%1 tokenu šodien"
+  },
   "agents.unknownModel": "Nezināms",
   "agents.usageNotUpdated": "Patēriņš vēl nav atjaunināts.",
   "agents.usageUnavailable": "Patēriņš nav pieejams",
@@ -142,7 +176,11 @@
   "bluetooth.turnedOff": "Izslēgts",
   "clipboard.deleteHistory": "Dzēst visu starpliktuves vēsturi?",
   "clipboard.empty": "Starpliktuve ir tukša",
-  "clipboard.files": "%1 faili",
+  "clipboard.files": {
+    "one": "%1 fails",
+    "other": "%1 faili",
+    "zero": "%1 failu"
+  },
   "clipboard.image": "Attēls",
   "clipboard.imageFrom": "Attēls no %1",
   "clipboard.screenshotFrom": "Ekrānuzņēmums no %1",
@@ -228,8 +266,16 @@
   "elsewhen.badgeTracked": "sekots",
   "elsewhen.clock": "Pulkstenis",
   "elsewhen.dateFormat": "ddd, d. MMM",
-  "elsewhen.daysAhead": "+%1 dienas",
-  "elsewhen.daysBehind": "-%1 dienas",
+  "elsewhen.daysAhead": {
+    "one": "+%1 diena",
+    "other": "+%1 dienas",
+    "zero": "+%1 dienu"
+  },
+  "elsewhen.daysBehind": {
+    "one": "-%1 diena",
+    "other": "-%1 dienas",
+    "zero": "-%1 dienu"
+  },
   "elsewhen.daysShort": "%1 d.",
   "elsewhen.here": "Šeit ir %1",
   "elsewhen.hereIn": "Šeit, %2, ir %1",
@@ -267,7 +313,11 @@
   "menu.powerProfilePerformance": "veiktspēja",
   "menu.powerProfilePowerSaver": "enerģijas taupīšana",
   "menu.selectPrompt": "Izvēlēties",
-  "menu.selectedCount": "Atlasīts: %1",
+  "menu.selectedCount": {
+    "one": "%1 atlasīts",
+    "other": "%1 atlasīti",
+    "zero": "%1 atlasītu"
+  },
   "monitor.brightness": "SPILGTUMS",
   "monitor.display": "Ekrāns",
   "monitor.displayFocused": "%1 · fokusā",
@@ -285,6 +335,11 @@
   "monitor.textSize": "TEKSTA IZMĒRS",
   "multiSelect.exited": "Opciju komanda beidzās ar kodu %1",
   "multiSelect.invalidJson": "Opciju komanda izvadīja nederīgu JSON",
+  "multiSelect.selectedCount": {
+    "one": "%1 atlasīts",
+    "other": "%1 atlasīti",
+    "zero": "%1 atlasītu"
+  },
   "multiSelect.timedOut": "Opciju komandai beidzās gaidīšanas laiks",
   "network.automatic": "AUTOMĀTISKS",
   "network.bandAuto": "Automātiski",
@@ -389,7 +444,7 @@
   "power.powerProfile": "JAUDAS PROFILS",
   "power.profileBalanced": "Sabalansēts",
   "power.profilePerformance": "Veiktspēja",
-  "power.profilePowerSaver": "Enerģijas taupīšana",
+  "power.profilePowerSaver": "Taupīšana",
   "power.threshold": "Slieksnis",
   "power.timeLeft": "Atlikušais laiks",
   "power.timeToFull": "Laiks līdz pilnai uzlādei",

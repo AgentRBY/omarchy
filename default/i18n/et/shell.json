@@ -17,17 +17,31 @@
   "agents.durationHoursMinutes": "%1 t %2 min",
   "agents.durationMinutes": "%1 min",
   "agents.durationNow": "nüüd",
-  "agents.freeResetOne": "1 tasuta lähtestamine",
-  "agents.freeResetOneExpires": "1 tasuta lähtestamine · järgmine aegub %1 pärast",
-  "agents.freeResets": "%1 tasuta lähtestamist",
-  "agents.freeResetsExpires": "%1 tasuta lähtestamist · järgmine aegub %2 pärast",
+  "agents.freeResets": {
+    "one": "%1 tasuta lähtestamine",
+    "other": "%1 tasuta lähtestamist"
+  },
+  "agents.freeResetsExpires": {
+    "one": "%1 tasuta lähtestamine · järgmine aegub %2 pärast",
+    "other": "%1 tasuta lähtestamist · järgmine aegub %2 pärast"
+  },
+  "agents.helpFireworksSignIn": "Määra %1, käivita %2 või logi Fireworks'i sisse pi-s või opencode'is.",
+  "agents.helpNotInPath": "%1 ei leitud PATH-ist",
+  "agents.helpRunToAuthenticate": "Autentimiseks käivita %1.",
+  "agents.helpRunToRestoreUsage": "Käivita %1, et taastada ametlikud kasutusandmed.",
+  "agents.helpScanFailed": "%1 kasutuse skannimine ebaõnnestus",
+  "agents.helpSignInExpired": "%1 salvestatud sisselogimine aegus. Värskendamiseks käivita %1.",
+  "agents.helpStartOrRunToSignIn": "Sisselogimiseks käivita %1 või %2.",
+  "agents.helpStartToSeeLimits": "Käivita %1, et näha selle limiite; uuesti sisselogimist pole vaja.",
   "agents.lastUpdatedAgo": "Viimati uuendatud %1 tagasi",
   "agents.lastUpdatedJustNow": "Viimati uuendatud vähem kui minuti eest",
   "agents.lastUpdatedUnknown": "Viimase uuendamise aeg pole saadaval",
   "agents.limitsPaused": "Limiidid peatatud",
   "agents.makeSomethingCool": "TEE MIDAGI LAHEDAT",
-  "agents.merged": "%1 seadmest ühendatud",
-  "agents.mergedOne": "1 seadmest ühendatud",
+  "agents.merged": {
+    "one": "Ühendatud %1 seadmest",
+    "other": "Ühendatud %1 seadmest"
+  },
   "agents.modelMonthly": "%1 igakuine",
   "agents.modelSession": "%1 seanss",
   "agents.modelWeekly": "%1 nädalane",
@@ -37,7 +51,10 @@
   "agents.placeholderCode": "Kood",
   "agents.placeholderWork": "Töö",
   "agents.plugin": "Plugin",
-  "agents.promptsToday": "%1 päringut täna",
+  "agents.promptsToday": {
+    "one": "%1 käsklus täna",
+    "other": "%1 käsklust täna"
+  },
   "agents.providerLimitsUnavailable": "%1 limiidid pole saadaval",
   "agents.providerUnavailable": "%1 pole saadaval",
   "agents.reopenSignIn": "Ava sisselogimisleht uuesti",
@@ -45,7 +62,10 @@
   "agents.scopedOther": "%1: %2% selle %3 limiidist",
   "agents.scopedSession": "%1: %2% selle seansi limiidist",
   "agents.scopedWeekly": "%1: %2% selle nädala limiidist",
-  "agents.sessionsToday": "%1 seanssi täna",
+  "agents.sessionsToday": {
+    "one": "%1 seanss täna",
+    "other": "%1 seanssi täna"
+  },
   "agents.signInAgainAccount": "Logi sellesse kontosse uuesti sisse",
   "agents.signInAgainProvider": "Logi %1-sse uuesti sisse",
   "agents.signInExpired": "Sisselogimine aegus",
@@ -61,9 +81,16 @@
   "agents.syncMkdirFailed": "Kasutuse sünkroonimise mkdir ebaõnnestus",
   "agents.syncScanFailed": "Kasutuse sünkroonimise skannimine ebaõnnestus",
   "agents.theme": "Teema",
+  "agents.tierPrepaid": "Ettemakstud",
   "agents.title": "Agendid",
-  "agents.tokensThisWeek": "%1 tokenit sel nädalal",
-  "agents.tokensToday": "%1 tokenit täna",
+  "agents.tokensThisWeek": {
+    "one": "%1 token sel nädalal",
+    "other": "%1 tokenit sel nädalal"
+  },
+  "agents.tokensToday": {
+    "one": "%1 token täna",
+    "other": "%1 tokenit täna"
+  },
   "agents.unknownModel": "Teadmata",
   "agents.usageNotUpdated": "Kasutust pole veel värskendatud.",
   "agents.usageUnavailable": "Kasutus pole saadaval",
@@ -142,7 +169,10 @@
   "bluetooth.turnedOff": "Välja lülitatud",
   "clipboard.deleteHistory": "Kustuta kogu lõikelaua ajalugu?",
   "clipboard.empty": "Lõikelaud on tühi",
-  "clipboard.files": "%1 faili",
+  "clipboard.files": {
+    "one": "%1 fail",
+    "other": "%1 faili"
+  },
   "clipboard.image": "Pilt",
   "clipboard.imageFrom": "Pilt %1-st",
   "clipboard.screenshotFrom": "Ekraanitõmmis %1-st",
@@ -228,8 +258,14 @@
   "elsewhen.badgeTracked": "jälgitud",
   "elsewhen.clock": "Kell",
   "elsewhen.dateFormat": "ddd d. MMM",
-  "elsewhen.daysAhead": "+%1 päeva",
-  "elsewhen.daysBehind": "-%1 päeva",
+  "elsewhen.daysAhead": {
+    "one": "+%1 päev",
+    "other": "+%1 päeva"
+  },
+  "elsewhen.daysBehind": {
+    "one": "-%1 päev",
+    "other": "-%1 päeva"
+  },
   "elsewhen.daysShort": "%1p",
   "elsewhen.here": "Siin on kell %1",
   "elsewhen.hereIn": "Siin on kell %1 (%2)",
@@ -267,7 +303,10 @@
   "menu.powerProfilePerformance": "jõudlus",
   "menu.powerProfilePowerSaver": "energiasääst",
   "menu.selectPrompt": "Vali",
-  "menu.selectedCount": "%1 valitud",
+  "menu.selectedCount": {
+    "one": "%1 valitud",
+    "other": "%1 valitud"
+  },
   "monitor.brightness": "HELEDUS",
   "monitor.display": "Kuvar",
   "monitor.displayFocused": "%1 · fookuses",
@@ -285,6 +324,10 @@
   "monitor.textSize": "TEKSTI SUURUS",
   "multiSelect.exited": "Valikute käsk lõppes: %1",
   "multiSelect.invalidJson": "Valikute käsk andis vigase JSON-i",
+  "multiSelect.selectedCount": {
+    "one": "%1 valitud",
+    "other": "%1 valitud"
+  },
   "multiSelect.timedOut": "Valikute käsk aegus",
   "network.automatic": "AUTOMAATNE",
   "network.bandAuto": "Automaatne",
@@ -387,9 +430,9 @@
   "power.holding": "Hoiab",
   "power.onBattery": "Akutoitel",
   "power.powerProfile": "TOITEREŽIIM",
-  "power.profileBalanced": "Tasakaalustatud",
+  "power.profileBalanced": "Tasakaalus",
   "power.profilePerformance": "Jõudlus",
-  "power.profilePowerSaver": "Energiasääst",
+  "power.profilePowerSaver": "Säästlik",
   "power.threshold": "Lävi",
   "power.timeLeft": "Aega jäänud",
   "power.timeToFull": "Aega täislaadimiseni",

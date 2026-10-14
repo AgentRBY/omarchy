@@ -33,7 +33,7 @@
     "label": "Sistem"
   },
   "system.screensaver": {
-    "label": "Screensaver"
+    "label": "Penghemat Layar"
   },
   "system.lock": {
     "label": "Kunci"
@@ -256,7 +256,7 @@
     "label": "Lampu Malam"
   },
   "trigger.toggle.screensaver": {
-    "label": "Screensaver"
+    "label": "Penghemat Layar"
   },
   "trigger.toggle.crash-capture": {
     "label": "Tangkap Crash"
@@ -385,7 +385,7 @@
     "label": "Hyprland"
   },
   "style.screensaver": {
-    "label": "Screensaver"
+    "label": "Penghemat Layar"
   },
   "style.about": {
     "label": "Tentang"

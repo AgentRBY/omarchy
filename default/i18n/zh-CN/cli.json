@@ -124,8 +124,9 @@
   "lock.didNotLock": "屏幕在挂起前未锁定",
   "lock.unlockedNoLockScreen": "会话未锁定（未配置锁屏）。",
   "lock.unlockedTimeout": "会话未锁定（shell 未在 %1ms 内锁定会话）。",
-  "migrate.clickToRun": "点击运行 %1 项待处理迁移。",
-  "migrate.clickToRunOne": "点击运行 1 项待处理迁移。",
+  "migrate.clickToRun": {
+    "other": "点击运行 %1 个待处理迁移。"
+  },
   "migrate.pending": "待处理的 Omarchy 迁移",
   "monitor.extendedRestored": "扩展模式已恢复",
   "monitor.laptopDisabled": "笔记本显示器已禁用",
@@ -160,16 +161,23 @@
   "preinstalls.confirmRemove": "确定要移除所有预装的 Web 应用、TUI 封装程序和桌面应用吗？",
   "preinstalls.confirmRestore": "确定要恢复所有预装的 Web 应用、TUI 封装程序和桌面应用吗？",
   "reminder.cleared": "所有提醒已清除",
-  "reminder.count": "%1 个提醒",
-  "reminder.countOne": "1 个提醒",
-  "reminder.customInMinutes": "%1 在 %2 分钟后",
+  "reminder.count": {
+    "other": "%1 个提醒"
+  },
+  "reminder.customInMinutes": {
+    "other": "%1 在 %2 分钟后"
+  },
   "reminder.durationMinutesSeconds": "%1分 %2秒",
   "reminder.durationSeconds": "%1秒",
   "reminder.inRemaining": "%1 在 %2 后 (%3)",
   "reminder.minuteLabel": "%1 分钟提醒",
-  "reminder.minutesUp": "你的 %1 分钟已到",
+  "reminder.minutesUp": {
+    "other": "你的 %1 分钟到了"
+  },
   "reminder.none": "没有未完成的提醒",
-  "reminder.setForMinutes": "提醒已设置为 %1 分钟后",
+  "reminder.setForMinutes": {
+    "other": "已设置 %1 分钟提醒"
+  },
   "reminder.setTooltip": "设置提醒",
   "reminder.title": "提醒",
   "reminder.upcoming": "即将到来的提醒",
@@ -218,6 +226,9 @@
   "system.shutdownFailed": "关机失败",
   "system.shutdownRetry": "无法完成关机。请重试。",
   "system.shuttingDown": "正在关机",
+  "tailscale.fileCount": {
+    "other": "%1 个文件"
+  },
   "tailscale.received": "已接收 %1",
   "tailscale.savedTo": "已保存到 %1",
   "tailscale.sendFailed": "无法发送到 %1",
@@ -263,7 +274,9 @@
   "update.kernelReboot": "Linux 内核已更新。重启？",
   "update.ready": "准备好更新了吗？",
   "update.rebootRequired": "更新需要重启。准备好了吗？",
-  "update.removeOrphans": "移除 %1 个孤立软件包？",
+  "update.removeOrphans": {
+    "other": "删除 %1 个孤立软件包？"
+  },
   "update.whatsNew": "更新内容：%1",
   "webapp.iconPlaceholder": "无法自动获取 favicon。请输入 PNG 图标 URL 或图标名称",
   "webapp.intro": "来创建一个可通过应用启动器启动的新网页应用吧。",

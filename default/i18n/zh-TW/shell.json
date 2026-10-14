@@ -17,10 +17,12 @@
   "agents.durationHoursMinutes": "%1小時 %2分",
   "agents.durationMinutes": "%1分",
   "agents.durationNow": "現在",
-  "agents.freeResetOne": "1 次免費重置",
-  "agents.freeResetOneExpires": "1 次免費重置 · 將於 %1 後到期",
-  "agents.freeResets": "%1 次免費重置",
-  "agents.freeResetsExpires": "%1 次免費重置 · 下一個將於 %2 後到期",
+  "agents.freeResets": {
+    "other": "%1 次免費重置"
+  },
+  "agents.freeResetsExpires": {
+    "other": "%1 次免費重置 · 下一個將在 %2 後到期"
+  },
   "agents.helpFireworksSignIn": "設定 %1、執行 %2，或在 pi 或 opencode 中登入 Fireworks。",
   "agents.helpNotInPath": "在 PATH 中找不到 %1",
   "agents.helpRunToAuthenticate": "執行 %1 以進行驗證。",
@@ -34,8 +36,9 @@
   "agents.lastUpdatedUnknown": "最後更新時間無法取得",
   "agents.limitsPaused": "用量限制已暫停",
   "agents.makeSomethingCool": "做點酷東西",
-  "agents.merged": "合併自 %1 台裝置",
-  "agents.mergedOne": "合併自 1 台裝置",
+  "agents.merged": {
+    "other": "已合併自 %1 台裝置"
+  },
   "agents.modelMonthly": "%1 每月",
   "agents.modelSession": "%1 工作階段",
   "agents.modelWeekly": "%1 每週",
@@ -45,7 +48,9 @@
   "agents.placeholderCode": "代碼",
   "agents.placeholderWork": "工作",
   "agents.plugin": "外掛",
-  "agents.promptsToday": "今天 %1 則提示",
+  "agents.promptsToday": {
+    "other": "今日 %1 則提示"
+  },
   "agents.providerLimitsUnavailable": "%1 用量限制無法取得",
   "agents.providerUnavailable": "%1 無法使用",
   "agents.reopenSignIn": "再次開啟登入頁面",
@@ -53,7 +58,9 @@
   "agents.scopedOther": "%1：其 %3 額度的 %2%",
   "agents.scopedSession": "%1：其工作階段額度的 %2%",
   "agents.scopedWeekly": "%1：其每週額度的 %2%",
-  "agents.sessionsToday": "今天 %1 個工作階段",
+  "agents.sessionsToday": {
+    "other": "今日 %1 個工作階段"
+  },
   "agents.signInAgainAccount": "再次登入這個帳號",
   "agents.signInAgainProvider": "再次登入 %1",
   "agents.signInExpired": "登入已過期",
@@ -71,8 +78,12 @@
   "agents.theme": "主題",
   "agents.tierPrepaid": "預付",
   "agents.title": "代理程式",
-  "agents.tokensThisWeek": "本週 %1 個 Token",
-  "agents.tokensToday": "今天 %1 個 Token",
+  "agents.tokensThisWeek": {
+    "other": "本週 %1 個 token"
+  },
+  "agents.tokensToday": {
+    "other": "今日 %1 個 token"
+  },
   "agents.unknownModel": "未知",
   "agents.usageNotUpdated": "用量尚未更新。",
   "agents.usageUnavailable": "用量無法取得",
@@ -151,7 +162,9 @@
   "bluetooth.turnedOff": "已關閉",
   "clipboard.deleteHistory": "要刪除全部剪貼簿紀錄嗎？",
   "clipboard.empty": "剪貼簿尚無內容",
-  "clipboard.files": "%1 個檔案",
+  "clipboard.files": {
+    "other": "%1 個檔案"
+  },
   "clipboard.image": "圖片",
   "clipboard.imageFrom": "來自 %1 的圖片",
   "clipboard.screenshotFrom": "來自 %1 的螢幕截圖",
@@ -237,8 +250,12 @@
   "elsewhen.badgeTracked": "已追蹤",
   "elsewhen.clock": "時鐘",
   "elsewhen.dateFormat": "M月d日 ddd",
-  "elsewhen.daysAhead": "+%1天",
-  "elsewhen.daysBehind": "-%1天",
+  "elsewhen.daysAhead": {
+    "other": "+%1 天"
+  },
+  "elsewhen.daysBehind": {
+    "other": "-%1 天"
+  },
   "elsewhen.daysShort": "%1天",
   "elsewhen.here": "這裡現在是 %1",
   "elsewhen.hereIn": "%2 現在是 %1",
@@ -276,7 +293,9 @@
   "menu.powerProfilePerformance": "效能",
   "menu.powerProfilePowerSaver": "省電",
   "menu.selectPrompt": "選擇",
-  "menu.selectedCount": "已選取 %1 項",
+  "menu.selectedCount": {
+    "other": "已選取 %1 項"
+  },
   "monitor.brightness": "亮度",
   "monitor.display": "顯示器",
   "monitor.displayFocused": "%1 · 已聚焦",
@@ -294,6 +313,9 @@
   "monitor.textSize": "文字大小",
   "multiSelect.exited": "選項指令已結束 %1",
   "multiSelect.invalidJson": "選項指令輸出了無效的 JSON",
+  "multiSelect.selectedCount": {
+    "other": "已選取 %1 項"
+  },
   "multiSelect.timedOut": "選項指令逾時",
   "network.automatic": "自動",
   "network.bandAuto": "自動",

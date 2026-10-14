@@ -174,7 +174,7 @@
     "label": "Desna traka"
   },
   "trigger.appearance.dock": {
-    "label": "Dock"
+    "label": "Dok"
   },
   "trigger.appearance.dock.autohide": {
     "label": "Auto-sakrij dock"
@@ -322,7 +322,7 @@
     "label": "Zrcali zaslon"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "Hibridni GPU"
   },
   "trigger.hardware.touchpad": {
     "label": "Dodirna ploha"
@@ -1146,7 +1146,7 @@
     "title": "Ponovno pokreni"
   },
   "update.firmware": {
-    "label": "Firmware"
+    "label": "Firmver"
   },
   "update.password": {
     "label": "Lozinka"
@@ -1173,7 +1173,7 @@
     "label": "Hyprsunset"
   },
   "update.process.shell": {
-    "label": "Shell"
+    "label": "Ljuska"
   },
   "update.config.hyprland": {
     "label": "Hyprland"
@@ -1188,7 +1188,7 @@
     "label": "Tmux"
   },
   "update.config.shell": {
-    "label": "Shell"
+    "label": "Ljuska"
   },
   "update.hardware.audio": {
     "label": "Zvuk"

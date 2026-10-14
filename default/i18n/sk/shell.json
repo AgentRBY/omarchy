@@ -17,17 +17,34 @@
   "agents.durationHoursMinutes": "%1 h %2 min",
   "agents.durationMinutes": "%1 min",
   "agents.durationNow": "teraz",
-  "agents.freeResetOne": "1 bezplatný reset",
-  "agents.freeResetOneExpires": "1 bezplatný reset · ďalší vyprší o %1",
-  "agents.freeResets": "%1 bezplatných resetov",
-  "agents.freeResetsExpires": "%1 bezplatných resetov · ďalší vyprší o %2",
+  "agents.freeResets": {
+    "few": "%1 voľné resety",
+    "one": "%1 voľný reset",
+    "other": "%1 voľných resetov"
+  },
+  "agents.freeResetsExpires": {
+    "few": "%1 voľné resety · ďalší vyprší o %2",
+    "one": "%1 voľný reset · ďalší vyprší o %2",
+    "other": "%1 voľných resetov · ďalší vyprší o %2"
+  },
+  "agents.helpFireworksSignIn": "Nastavte %1, spustite %2 alebo sa prihláste do Fireworks v pi alebo opencode.",
+  "agents.helpNotInPath": "%1 sa nenašiel v PATH",
+  "agents.helpRunToAuthenticate": "Na overenie spustite %1.",
+  "agents.helpRunToRestoreUsage": "Spustite %1 na obnovenie autoritatívnych údajov o využití.",
+  "agents.helpScanFailed": "Skenovanie využitia %1 zlyhalo",
+  "agents.helpSignInExpired": "Uložené prihlásenie do %1 vypršalo. Na obnovenie spustite %1.",
+  "agents.helpStartOrRunToSignIn": "Na prihlásenie spustite %1 alebo spustite %2.",
+  "agents.helpStartToSeeLimits": "Spustite %1, ak chcete zobraziť limity; opätovné prihlásenie nie je potrebné.",
   "agents.lastUpdatedAgo": "Naposledy aktualizované pred %1",
   "agents.lastUpdatedJustNow": "Naposledy aktualizované pred menej ako minútou",
   "agents.lastUpdatedUnknown": "Čas poslednej aktualizácie nedostupný",
   "agents.limitsPaused": "Limity pozastavené",
   "agents.makeSomethingCool": "VYTVORTE NIEČO SKVELÉ",
-  "agents.merged": "Zlúčené z %1 zariadení",
-  "agents.mergedOne": "Zlúčené z 1 zariadenia",
+  "agents.merged": {
+    "few": "Zlúčené z %1 zariadení",
+    "one": "Zlúčené z %1 zariadenia",
+    "other": "Zlúčené z %1 zariadení"
+  },
   "agents.modelMonthly": "%1 mesačne",
   "agents.modelSession": "%1 relácia",
   "agents.modelWeekly": "%1 týždenne",
@@ -37,7 +54,11 @@
   "agents.placeholderCode": "Kód",
   "agents.placeholderWork": "Práca",
   "agents.plugin": "Plugin",
-  "agents.promptsToday": "%1 promptov dnes",
+  "agents.promptsToday": {
+    "few": "%1 prompty dnes",
+    "one": "%1 prompt dnes",
+    "other": "%1 promptov dnes"
+  },
   "agents.providerLimitsUnavailable": "Limity %1 nedostupné",
   "agents.providerUnavailable": "%1 nedostupné",
   "agents.reopenSignIn": "Znova otvoriť prihlasovaciu stránku",
@@ -45,7 +66,11 @@
   "agents.scopedOther": "%1: %2% limitu %3",
   "agents.scopedSession": "%1: %2% limitu relácie",
   "agents.scopedWeekly": "%1: %2% týždenného limitu",
-  "agents.sessionsToday": "%1 relácií dnes",
+  "agents.sessionsToday": {
+    "few": "%1 relácie dnes",
+    "one": "%1 relácia dnes",
+    "other": "%1 relácií dnes"
+  },
   "agents.signInAgainAccount": "Znova sa prihlásiť do tohto účtu",
   "agents.signInAgainProvider": "Znova sa prihlásiť do %1",
   "agents.signInExpired": "Prihlásenie vypršalo",
@@ -61,9 +86,18 @@
   "agents.syncMkdirFailed": "mkdir pri synchronizácii využitia zlyhalo",
   "agents.syncScanFailed": "Skenovanie pri synchronizácii využitia zlyhalo",
   "agents.theme": "Téma",
+  "agents.tierPrepaid": "Predplatené",
   "agents.title": "Agenti",
-  "agents.tokensThisWeek": "%1 tokenov tento týždeň",
-  "agents.tokensToday": "%1 tokenov dnes",
+  "agents.tokensThisWeek": {
+    "few": "%1 tokeny tento týždeň",
+    "one": "%1 token tento týždeň",
+    "other": "%1 tokenov tento týždeň"
+  },
+  "agents.tokensToday": {
+    "few": "%1 tokeny dnes",
+    "one": "%1 token dnes",
+    "other": "%1 tokenov dnes"
+  },
   "agents.unknownModel": "Neznámy",
   "agents.usageNotUpdated": "Využitie zatiaľ nebolo aktualizované.",
   "agents.usageUnavailable": "Využitie nedostupné",
@@ -142,7 +176,11 @@
   "bluetooth.turnedOff": "Vypnuté",
   "clipboard.deleteHistory": "Odstrániť celú históriu schránky?",
   "clipboard.empty": "Schránka je prázdna",
-  "clipboard.files": "%1 súborov",
+  "clipboard.files": {
+    "few": "%1 súbory",
+    "one": "%1 súbor",
+    "other": "%1 súborov"
+  },
   "clipboard.image": "Obrázok",
   "clipboard.imageFrom": "Obrázok z %1",
   "clipboard.screenshotFrom": "Snímka obrazovky z %1",
@@ -228,8 +266,16 @@
   "elsewhen.badgeTracked": "sledované",
   "elsewhen.clock": "Hodiny",
   "elsewhen.dateFormat": "ddd d. MMM",
-  "elsewhen.daysAhead": "+%1 dní",
-  "elsewhen.daysBehind": "-%1 dní",
+  "elsewhen.daysAhead": {
+    "few": "+%1 dni",
+    "one": "+%1 deň",
+    "other": "+%1 dní"
+  },
+  "elsewhen.daysBehind": {
+    "few": "-%1 dni",
+    "one": "-%1 deň",
+    "other": "-%1 dní"
+  },
   "elsewhen.daysShort": "%1d",
   "elsewhen.here": "Tu je %1",
   "elsewhen.hereIn": "Tu v %2 je %1",
@@ -267,7 +313,11 @@
   "menu.powerProfilePerformance": "výkonný",
   "menu.powerProfilePowerSaver": "úsporný",
   "menu.selectPrompt": "Vybrať",
-  "menu.selectedCount": "%1 vybraných",
+  "menu.selectedCount": {
+    "few": "%1 vybraté",
+    "one": "%1 vybraté",
+    "other": "%1 vybratých"
+  },
   "monitor.brightness": "JAS",
   "monitor.display": "Displej",
   "monitor.displayFocused": "%1 · aktívny",
@@ -285,6 +335,11 @@
   "monitor.textSize": "VEĽKOSŤ TEXTU",
   "multiSelect.exited": "Príkaz možností skončil s kódom %1",
   "multiSelect.invalidJson": "Príkaz možností vrátil neplatný JSON",
+  "multiSelect.selectedCount": {
+    "few": "%1 vybraté",
+    "one": "%1 vybraté",
+    "other": "%1 vybratých"
+  },
   "multiSelect.timedOut": "Časový limit príkazu možností vypršal",
   "network.automatic": "AUTOMATICKÉ",
   "network.bandAuto": "Automatické",

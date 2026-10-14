@@ -17,10 +17,14 @@
   "agents.durationHoursMinutes": "%1 soat %2 daq",
   "agents.durationMinutes": "%1 daq",
   "agents.durationNow": "hozir",
-  "agents.freeResetOne": "1 ta bepul tiklash",
-  "agents.freeResetOneExpires": "1 ta bepul tiklash · keyingisi %1 ichida tugaydi",
-  "agents.freeResets": "%1 ta bepul tiklash",
-  "agents.freeResetsExpires": "%1 ta bepul tiklash · keyingisi %2 ichida tugaydi",
+  "agents.freeResets": {
+    "one": "%1 ta bepul tiklash",
+    "other": "%1 ta bepul tiklash"
+  },
+  "agents.freeResetsExpires": {
+    "one": "%1 ta bepul tiklash · keyingisi %2 dan keyin tugaydi",
+    "other": "%1 ta bepul tiklash · keyingisi %2 dan keyin tugaydi"
+  },
   "agents.helpFireworksSignIn": "%1 ni sozlang, %2 ni ishga tushiring yoki pi yoxud opencode orqali Fireworks ga kiring.",
   "agents.helpNotInPath": "%1 PATH da topilmadi",
   "agents.helpRunToAuthenticate": "Autentifikatsiya qilish uchun %1 ni ishga tushiring.",
@@ -34,8 +38,10 @@
   "agents.lastUpdatedUnknown": "Oxirgi yangilanish vaqti mavjud emas",
   "agents.limitsPaused": "Limitlar toʻxtatib turilgan",
   "agents.makeSomethingCool": "AJOYIB NARSA YARATING",
-  "agents.merged": "%1 ta qurilmadan birlashtirilgan",
-  "agents.mergedOne": "1 ta qurilmadan birlashtirilgan",
+  "agents.merged": {
+    "one": "%1 ta qurilmadan birlashtirildi",
+    "other": "%1 ta qurilmadan birlashtirildi"
+  },
   "agents.modelMonthly": "%1 Oylik",
   "agents.modelSession": "%1 Sessiya",
   "agents.modelWeekly": "%1 Haftalik",
@@ -45,7 +51,10 @@
   "agents.placeholderCode": "Kod",
   "agents.placeholderWork": "Ish",
   "agents.plugin": "Plagin",
-  "agents.promptsToday": "Bugun %1 ta soʻrov",
+  "agents.promptsToday": {
+    "one": "Bugun %1 ta soʻrov",
+    "other": "Bugun %1 ta soʻrov"
+  },
   "agents.providerLimitsUnavailable": "%1 limitlari mavjud emas",
   "agents.providerUnavailable": "%1 mavjud emas",
   "agents.reopenSignIn": "Kirish sahifasini qayta ochish",
@@ -53,7 +62,10 @@
   "agents.scopedOther": "%1: %3 limitining %2%i",
   "agents.scopedSession": "%1: sessiya limitining %2%i",
   "agents.scopedWeekly": "%1: haftalik limitining %2%i",
-  "agents.sessionsToday": "Bugun %1 ta sessiya",
+  "agents.sessionsToday": {
+    "one": "Bugun %1 ta sessiya",
+    "other": "Bugun %1 ta sessiya"
+  },
   "agents.signInAgainAccount": "Bu hisobga qayta kiring",
   "agents.signInAgainProvider": "%1 ga qayta kiring",
   "agents.signInExpired": "Kirish muddati tugagan",
@@ -71,14 +83,20 @@
   "agents.theme": "Mavzu",
   "agents.tierPrepaid": "Oldindan toʻlangan",
   "agents.title": "Agentlar",
-  "agents.tokensThisWeek": "Bu hafta %1 token",
-  "agents.tokensToday": "Bugun %1 token",
+  "agents.tokensThisWeek": {
+    "one": "Bu hafta %1 ta token",
+    "other": "Bu hafta %1 ta token"
+  },
+  "agents.tokensToday": {
+    "one": "Bugun %1 ta token",
+    "other": "Bugun %1 ta token"
+  },
   "agents.unknownModel": "Nomaʼlum",
   "agents.usageNotUpdated": "Foydalanish hali yangilanmagan.",
   "agents.usageUnavailable": "Foydalanish maʼlumoti yoʻq",
   "agents.use": "Ishlatish",
   "agents.waitingForAuth": "Avtorizatsiya kutilmoqda",
-  "agents.windowLimit": "Limit",
+  "agents.windowLimit": "Cheklov",
   "agents.windowMonthly": "Oylik",
   "agents.windowSession": "Sessiya",
   "agents.windowUsed": "%1: %2% ishlatilgan",
@@ -151,7 +169,10 @@
   "bluetooth.turnedOff": "Oʻchirilgan",
   "clipboard.deleteHistory": "Butun bufer tarixi oʻchirilsinmi?",
   "clipboard.empty": "Bufer boʻsh",
-  "clipboard.files": "%1 ta fayl",
+  "clipboard.files": {
+    "one": "%1 ta fayl",
+    "other": "%1 ta fayl"
+  },
   "clipboard.image": "Rasm",
   "clipboard.imageFrom": "%1 dan rasm",
   "clipboard.screenshotFrom": "%1 dan skrinshot",
@@ -237,8 +258,14 @@
   "elsewhen.badgeTracked": "kuzatilmoqda",
   "elsewhen.clock": "Soat",
   "elsewhen.dateFormat": "ddd, d MMM",
-  "elsewhen.daysAhead": "+%1 kun",
-  "elsewhen.daysBehind": "-%1 kun",
+  "elsewhen.daysAhead": {
+    "one": "+%1 kun",
+    "other": "+%1 kun"
+  },
+  "elsewhen.daysBehind": {
+    "one": "-%1 kun",
+    "other": "-%1 kun"
+  },
   "elsewhen.daysShort": "%1k",
   "elsewhen.here": "Bu yerda hozir soat %1",
   "elsewhen.hereIn": "%2da hozir soat %1",
@@ -276,7 +303,10 @@
   "menu.powerProfilePerformance": "unumdorlik",
   "menu.powerProfilePowerSaver": "quvvat tejash",
   "menu.selectPrompt": "Tanlash",
-  "menu.selectedCount": "%1 tanlandi",
+  "menu.selectedCount": {
+    "one": "%1 ta tanlangan",
+    "other": "%1 ta tanlangan"
+  },
   "monitor.brightness": "YORQINLIK",
   "monitor.display": "Displey",
   "monitor.displayFocused": "%1 · fokusda",
@@ -294,6 +324,10 @@
   "monitor.textSize": "MATN OʻLCHAMI",
   "multiSelect.exited": "Variantlar buyrugʻi %1 bilan tugadi",
   "multiSelect.invalidJson": "Variantlar buyrugʻi notoʻgʻri JSON qaytardi",
+  "multiSelect.selectedCount": {
+    "one": "%1 ta tanlangan",
+    "other": "%1 ta tanlangan"
+  },
   "multiSelect.timedOut": "Variantlar buyrugʻi vaqti tugadi",
   "network.automatic": "AVTOMATIK",
   "network.bandAuto": "Avto",
@@ -398,7 +432,7 @@
   "power.powerProfile": "QUVVAT PROFILI",
   "power.profileBalanced": "Muvozanatli",
   "power.profilePerformance": "Unumdorlik",
-  "power.profilePowerSaver": "Quvvat tejovchi",
+  "power.profilePowerSaver": "Tejamkor",
   "power.threshold": "Chegara",
   "power.timeLeft": "Qolgan vaqt",
   "power.timeToFull": "Toʻlishgacha vaqt",

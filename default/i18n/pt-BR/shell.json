@@ -17,17 +17,34 @@
   "agents.durationHoursMinutes": "%1h %2min",
   "agents.durationMinutes": "%1min",
   "agents.durationNow": "agora",
-  "agents.freeResetOne": "1 redefinição gratuita",
-  "agents.freeResetOneExpires": "1 redefinição gratuita · próxima expira em %1",
-  "agents.freeResets": "%1 redefinições gratuitas",
-  "agents.freeResetsExpires": "%1 redefinições gratuitas · próxima expira em %2",
+  "agents.freeResets": {
+    "many": "%1 redefinições gratuitas",
+    "one": "%1 redefinição gratuita",
+    "other": "%1 redefinições gratuitas"
+  },
+  "agents.freeResetsExpires": {
+    "many": "%1 redefinições gratuitas · a próxima expira em %2",
+    "one": "%1 redefinição gratuita · a próxima expira em %2",
+    "other": "%1 redefinições gratuitas · a próxima expira em %2"
+  },
+  "agents.helpFireworksSignIn": "Defina %1, execute %2 ou entre no Fireworks pelo pi ou opencode.",
+  "agents.helpNotInPath": "%1 não encontrado no PATH",
+  "agents.helpRunToAuthenticate": "Execute %1 para se autenticar.",
+  "agents.helpRunToRestoreUsage": "Execute %1 para restaurar o uso oficial.",
+  "agents.helpScanFailed": "A verificação de uso de %1 falhou",
+  "agents.helpSignInExpired": "O login salvo de %1 expirou. Inicie %1 para atualizá-lo.",
+  "agents.helpStartOrRunToSignIn": "Inicie %1 ou execute %2 para entrar.",
+  "agents.helpStartToSeeLimits": "Inicie %1 para ver seus limites; não é preciso entrar novamente.",
   "agents.lastUpdatedAgo": "Atualizado há %1",
   "agents.lastUpdatedJustNow": "Atualizado há menos de um minuto",
   "agents.lastUpdatedUnknown": "Horário da última atualização indisponível",
   "agents.limitsPaused": "Limites pausados",
   "agents.makeSomethingCool": "CRIE ALGO LEGAL",
-  "agents.merged": "Mesclado de %1 dispositivos",
-  "agents.mergedOne": "Mesclado de 1 dispositivo",
+  "agents.merged": {
+    "many": "Mesclado de %1 dispositivos",
+    "one": "Mesclado de %1 dispositivo",
+    "other": "Mesclado de %1 dispositivos"
+  },
   "agents.modelMonthly": "%1 Mensal",
   "agents.modelSession": "%1 Sessão",
   "agents.modelWeekly": "%1 Semanal",
@@ -37,7 +54,11 @@
   "agents.placeholderCode": "Código",
   "agents.placeholderWork": "Trabalho",
   "agents.plugin": "Plugin",
-  "agents.promptsToday": "%1 prompts hoje",
+  "agents.promptsToday": {
+    "many": "%1 prompts hoje",
+    "one": "%1 prompt hoje",
+    "other": "%1 prompts hoje"
+  },
   "agents.providerLimitsUnavailable": "Limites de %1 indisponíveis",
   "agents.providerUnavailable": "%1 indisponível",
   "agents.reopenSignIn": "Abrir a página de login novamente",
@@ -45,7 +66,11 @@
   "agents.scopedOther": "%1: %2% da sua cota %3",
   "agents.scopedSession": "%1: %2% da cota da sessão",
   "agents.scopedWeekly": "%1: %2% da cota semanal",
-  "agents.sessionsToday": "%1 sessões hoje",
+  "agents.sessionsToday": {
+    "many": "%1 sessões hoje",
+    "one": "%1 sessão hoje",
+    "other": "%1 sessões hoje"
+  },
   "agents.signInAgainAccount": "Entrar novamente nesta conta",
   "agents.signInAgainProvider": "Entrar no %1 novamente",
   "agents.signInExpired": "Login expirado",
@@ -61,9 +86,18 @@
   "agents.syncMkdirFailed": "Falha no mkdir da sincronização de uso",
   "agents.syncScanFailed": "Falha na varredura da sincronização de uso",
   "agents.theme": "Tema",
+  "agents.tierPrepaid": "Pré-pago",
   "agents.title": "Agentes",
-  "agents.tokensThisWeek": "%1 tokens esta semana",
-  "agents.tokensToday": "%1 tokens hoje",
+  "agents.tokensThisWeek": {
+    "many": "%1 tokens nesta semana",
+    "one": "%1 token nesta semana",
+    "other": "%1 tokens nesta semana"
+  },
+  "agents.tokensToday": {
+    "many": "%1 tokens hoje",
+    "one": "%1 token hoje",
+    "other": "%1 tokens hoje"
+  },
   "agents.unknownModel": "Desconhecido",
   "agents.usageNotUpdated": "O uso ainda não foi atualizado.",
   "agents.usageUnavailable": "Uso indisponível",
@@ -142,7 +176,11 @@
   "bluetooth.turnedOff": "Desligado",
   "clipboard.deleteHistory": "Excluir todo o histórico da área de transferência?",
   "clipboard.empty": "Área de transferência vazia",
-  "clipboard.files": "%1 arquivos",
+  "clipboard.files": {
+    "many": "%1 arquivos",
+    "one": "%1 arquivo",
+    "other": "%1 arquivos"
+  },
   "clipboard.image": "Imagem",
   "clipboard.imageFrom": "Imagem de %1",
   "clipboard.screenshotFrom": "Captura de tela de %1",
@@ -228,8 +266,16 @@
   "elsewhen.badgeTracked": "acompanhada",
   "elsewhen.clock": "Relógio",
   "elsewhen.dateFormat": "ddd, d 'de' MMM",
-  "elsewhen.daysAhead": "+%1 dias",
-  "elsewhen.daysBehind": "-%1 dias",
+  "elsewhen.daysAhead": {
+    "many": "+%1 dias",
+    "one": "+%1 dia",
+    "other": "+%1 dias"
+  },
+  "elsewhen.daysBehind": {
+    "many": "-%1 dias",
+    "one": "-%1 dia",
+    "other": "-%1 dias"
+  },
   "elsewhen.daysShort": "%1d",
   "elsewhen.here": "São %1 aqui",
   "elsewhen.hereIn": "São %1 aqui em %2",
@@ -267,7 +313,11 @@
   "menu.powerProfilePerformance": "desempenho",
   "menu.powerProfilePowerSaver": "economia de energia",
   "menu.selectPrompt": "Selecionar",
-  "menu.selectedCount": "%1 selecionados",
+  "menu.selectedCount": {
+    "many": "%1 selecionados",
+    "one": "%1 selecionado",
+    "other": "%1 selecionados"
+  },
   "monitor.brightness": "BRILHO",
   "monitor.display": "Tela",
   "monitor.displayFocused": "%1 · em foco",
@@ -285,6 +335,11 @@
   "monitor.textSize": "TAMANHO DO TEXTO",
   "multiSelect.exited": "Comando de opções encerrou com %1",
   "multiSelect.invalidJson": "Comando de opções gerou JSON inválido",
+  "multiSelect.selectedCount": {
+    "many": "%1 selecionados",
+    "one": "%1 selecionado",
+    "other": "%1 selecionados"
+  },
   "multiSelect.timedOut": "Comando de opções atingiu o tempo limite",
   "network.automatic": "AUTOMÁTICO",
   "network.bandAuto": "Automático",
@@ -299,7 +354,7 @@
   "network.copyToClipboard": "Copiar para área de transferência",
   "network.disconnected": "Desconectado",
   "network.disconnecting": "Desconectando…",
-  "network.dnsCustom": "Personalizado",
+  "network.dnsCustom": "Manual",
   "network.dnsFromDhcp": "Usar DNS do DHCP",
   "network.dnsProvider": "PROVEDOR DNS",
   "network.downloaded": "Baixado",
@@ -389,7 +444,7 @@
   "power.powerProfile": "PERFIL DE ENERGIA",
   "power.profileBalanced": "Equilibrado",
   "power.profilePerformance": "Desempenho",
-  "power.profilePowerSaver": "Economia de energia",
+  "power.profilePowerSaver": "Economia",
   "power.threshold": "Limite",
   "power.timeLeft": "Tempo restante",
   "power.timeToFull": "Tempo até carga total",

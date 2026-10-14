@@ -322,7 +322,7 @@
     "label": "Display spiegeln"
   },
   "trigger.hardware.hybrid-gpu": {
-    "label": "Hybrid GPU"
+    "label": "Hybrid-GPU"
   },
   "trigger.hardware.touchpad": {
     "label": "Touchpad"
@@ -999,7 +999,7 @@
     "label": "Microsoft"
   },
   "remove.service.ssh-agent": {
-    "label": "SSH Agent"
+    "label": "SSH-Agent"
   },
   "remove.ai.chatgpt": {
     "label": "ChatGPT Desktop"

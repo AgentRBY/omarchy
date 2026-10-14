@@ -17,17 +17,31 @@
   "agents.durationHoursMinutes": "%1පැ %2වි",
   "agents.durationMinutes": "%1වි",
   "agents.durationNow": "දැන්",
-  "agents.freeResetOne": "නොමිලේ නැවත සැකසීම 1ක්",
-  "agents.freeResetOneExpires": "නොමිලේ නැවත සැකසීම 1ක් · ඊළඟ එක තව %1කින් කල් ඉකුත් වේ",
-  "agents.freeResets": "නොමිලේ නැවත සැකසීම් %1ක්",
-  "agents.freeResetsExpires": "නොමිලේ නැවත සැකසීම් %1ක් · ඊළඟ එක තව %2කින් කල් ඉකුත් වේ",
+  "agents.freeResets": {
+    "one": "%1 නොමිලේ යළි පිහිටුවීම",
+    "other": "%1 නොමිලේ යළි පිහිටුවීම්"
+  },
+  "agents.freeResetsExpires": {
+    "one": "%1 නොමිලේ යළි පිහිටුවීම · ඊළඟය %2 කින් කල් ඉකුත් වේ",
+    "other": "%1 නොමිලේ යළි පිහිටුවීම් · ඊළඟය %2 කින් කල් ඉකුත් වේ"
+  },
+  "agents.helpFireworksSignIn": "%1 සකසන්න, %2 ධාවනය කරන්න, නැතහොත් pi හෝ opencode හි Fireworks වෙත පුරනය වන්න.",
+  "agents.helpNotInPath": "%1 PATH හි හමු නොවීය",
+  "agents.helpRunToAuthenticate": "සත්‍යාපනය කිරීමට %1 ධාවනය කරන්න.",
+  "agents.helpRunToRestoreUsage": "නිල භාවිතය යළි ලබාගැනීමට %1 ධාවනය කරන්න.",
+  "agents.helpScanFailed": "%1 භාවිත පරීක්ෂාව අසාර්ථක විය",
+  "agents.helpSignInExpired": "%1 හි සුරකින ලද පුරනය කල් ඉකුත් වී ඇත. එය යාවත්කාලීන කිරීමට %1 ආරම්භ කරන්න.",
+  "agents.helpStartOrRunToSignIn": "පුරනය වීමට %1 ආරම්භ කරන්න, නැතහොත් %2 ධාවනය කරන්න.",
+  "agents.helpStartToSeeLimits": "එහි සීමාවන් බැලීමට %1 ආරම්භ කරන්න; නැවත පුරනය වීමට අවශ්‍ය නැත.",
   "agents.lastUpdatedAgo": "අවසන් වරට %1කට පෙර යාවත්කාලීන විය",
   "agents.lastUpdatedJustNow": "අවසන් වරට විනාඩියකට අඩු කලකට පෙර යාවත්කාලීන විය",
   "agents.lastUpdatedUnknown": "අවසන් යාවත්කාලීන වේලාව ලබාගත නොහැක",
   "agents.limitsPaused": "සීමාවන් විරාම කර ඇත",
   "agents.makeSomethingCool": "අලුත් දෙයක් හදන්න",
-  "agents.merged": "උපාංග %1කින් ඒකාබද්ධ කළා",
-  "agents.mergedOne": "උපාංග 1කින් ඒකාබද්ධ කළා",
+  "agents.merged": {
+    "one": "%1 උපාංගයකින් ඒකාබද්ධ කළා",
+    "other": "%1 උපාංගවලින් ඒකාබද්ධ කළා"
+  },
   "agents.modelMonthly": "%1 මාසික",
   "agents.modelSession": "%1 සැසිය",
   "agents.modelWeekly": "%1 සතිපතා",
@@ -36,8 +50,11 @@
   "agents.pasteCode": "පිටුව අවසන් වෙනවා වෙනුවට කේතයක් පෙන්වයි නම්, එය මෙහි අලවන්න.",
   "agents.placeholderCode": "කේතය",
   "agents.placeholderWork": "වැඩ",
-  "agents.plugin": "Plugin",
-  "agents.promptsToday": "අද විමසුම් %1",
+  "agents.plugin": "ප්ලගිනය",
+  "agents.promptsToday": {
+    "one": "අද ප්‍රොම්ප්ට් %1ක්",
+    "other": "අද ප්‍රොම්ප්ට් %1ක්"
+  },
   "agents.providerLimitsUnavailable": "%1 සීමාවන් ලබාගත නොහැක",
   "agents.providerUnavailable": "%1 ලබාගත නොහැක",
   "agents.reopenSignIn": "ඇතුළු වීමේ පිටුව නැවත විවෘත කරන්න",
@@ -45,7 +62,10 @@
   "agents.scopedOther": "%1: එහි %3 දීමනාවෙන් %2%",
   "agents.scopedSession": "%1: එහි සැසි දීමනාවෙන් %2%",
   "agents.scopedWeekly": "%1: එහි සතිපතා දීමනාවෙන් %2%",
-  "agents.sessionsToday": "අද සැසි %1",
+  "agents.sessionsToday": {
+    "one": "අද සැසි %1ක්",
+    "other": "අද සැසි %1ක්"
+  },
   "agents.signInAgainAccount": "මෙම ගිණුමට නැවත ඇතුළු වන්න",
   "agents.signInAgainProvider": "%1 වෙත නැවත ඇතුළු වන්න",
   "agents.signInExpired": "ඇතුළු වීම කල් ඉකුත් විය",
@@ -61,9 +81,16 @@
   "agents.syncMkdirFailed": "භාවිත සමමුහුර්ත mkdir අසාර්ථක විය",
   "agents.syncScanFailed": "භාවිත සමමුහුර්ත පරිලෝකනය අසාර්ථක විය",
   "agents.theme": "තේමාව",
+  "agents.tierPrepaid": "පෙරගෙවුම්",
   "agents.title": "නියෝජිතයන්",
-  "agents.tokensThisWeek": "මෙම සතියේ ටෝකන %1",
-  "agents.tokensToday": "අද ටෝකන %1",
+  "agents.tokensThisWeek": {
+    "one": "මෙම සතියේ ටෝකන %1ක්",
+    "other": "මෙම සතියේ ටෝකන %1ක්"
+  },
+  "agents.tokensToday": {
+    "one": "අද ටෝකන %1ක්",
+    "other": "අද ටෝකන %1ක්"
+  },
   "agents.unknownModel": "නොදන්නා",
   "agents.usageNotUpdated": "භාවිතය තවම යාවත්කාලීන වී නැත.",
   "agents.usageUnavailable": "භාවිතය ලබාගත නොහැක",
@@ -142,7 +169,10 @@
   "bluetooth.turnedOff": "ක්‍රියාවිරහිතයි",
   "clipboard.deleteHistory": "සම්පූර්ණ ක්ලිප්බෝඩ් ඉතිහාසය මකන්නද?",
   "clipboard.empty": "ක්ලිප්බෝඩය හිස්යි",
-  "clipboard.files": "ගොනු %1",
+  "clipboard.files": {
+    "one": "%1 ගොනුවක්",
+    "other": "%1 ගොනු"
+  },
   "clipboard.image": "රූපය",
   "clipboard.imageFrom": "%1 වෙතින් රූපය",
   "clipboard.screenshotFrom": "%1 වෙතින් තිර රුව",
@@ -228,8 +258,14 @@
   "elsewhen.badgeTracked": "ලුහුබැඳි",
   "elsewhen.clock": "ඔරලෝසුව",
   "elsewhen.dateFormat": "ddd MMM d",
-  "elsewhen.daysAhead": "+%1 දින",
-  "elsewhen.daysBehind": "-%1 දින",
+  "elsewhen.daysAhead": {
+    "one": "+%1 දිනයක්",
+    "other": "+%1 දින"
+  },
+  "elsewhen.daysBehind": {
+    "one": "-%1 දිනයක්",
+    "other": "-%1 දින"
+  },
   "elsewhen.daysShort": "%1දින",
   "elsewhen.here": "මෙහි %1 යි",
   "elsewhen.hereIn": "මෙහි %2හි %1 යි",
@@ -267,7 +303,10 @@
   "menu.powerProfilePerformance": "කාර්ය සාධනය",
   "menu.powerProfilePowerSaver": "බල ඉතිරිකිරීම",
   "menu.selectPrompt": "තෝරන්න",
-  "menu.selectedCount": "%1ක් තෝරා ඇත",
+  "menu.selectedCount": {
+    "one": "%1 තෝරා ඇත",
+    "other": "%1 තෝරා ඇත"
+  },
   "monitor.brightness": "දීප්තිය",
   "monitor.display": "සංදර්ශකය",
   "monitor.displayFocused": "%1 · අවධානය",
@@ -285,6 +324,10 @@
   "monitor.textSize": "පෙළ ප්‍රමාණය",
   "multiSelect.exited": "විකල්ප විධානය ඉවත් විය: %1",
   "multiSelect.invalidJson": "විකල්ප විධානය වලංගු නොවන JSON නිකුත් කළේය",
+  "multiSelect.selectedCount": {
+    "one": "%1 තෝරා ඇත",
+    "other": "%1 තෝරා ඇත"
+  },
   "multiSelect.timedOut": "විකල්ප විධානයේ කාලය ඉකුත් විය",
   "network.automatic": "ස්වයංක්‍රීය",
   "network.bandAuto": "ස්වයංක්‍රීය",
@@ -308,7 +351,7 @@
   "network.failedToConnect": "සම්බන්ධ විය නොහැකි විය",
   "network.forgetNetwork": "ජාලය අමතක කරන්න",
   "network.forgetting": "අමතක කරමින්…",
-  "network.gateway": "Gateway",
+  "network.gateway": "ද්වාරය",
   "network.hidden": "සැඟවුණු",
   "network.identity": "හැඳුනුම (user@domain)",
   "network.ipAddress": "IP ලිපිනය",

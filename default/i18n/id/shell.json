@@ -17,17 +17,28 @@
   "agents.durationHoursMinutes": "%1j %2m",
   "agents.durationMinutes": "%1m",
   "agents.durationNow": "sekarang",
-  "agents.freeResetOne": "1 reset gratis",
-  "agents.freeResetOneExpires": "1 reset gratis · berikutnya kedaluwarsa dalam %1",
-  "agents.freeResets": "%1 reset gratis",
-  "agents.freeResetsExpires": "%1 reset gratis · berikutnya kedaluwarsa dalam %2",
+  "agents.freeResets": {
+    "other": "%1 reset gratis"
+  },
+  "agents.freeResetsExpires": {
+    "other": "%1 reset gratis · berikutnya kedaluwarsa dalam %2"
+  },
+  "agents.helpFireworksSignIn": "Atur %1, jalankan %2, atau masuk ke Fireworks di pi atau opencode.",
+  "agents.helpNotInPath": "%1 tidak ditemukan di PATH",
+  "agents.helpRunToAuthenticate": "Jalankan %1 untuk autentikasi.",
+  "agents.helpRunToRestoreUsage": "Jalankan %1 untuk memulihkan penggunaan otoritatif.",
+  "agents.helpScanFailed": "Pemindaian penggunaan %1 gagal",
+  "agents.helpSignInExpired": "Sesi masuk %1 yang tersimpan telah kedaluwarsa. Mulai %1 untuk memperbaruinya.",
+  "agents.helpStartOrRunToSignIn": "Mulai %1, atau jalankan %2, untuk masuk.",
+  "agents.helpStartToSeeLimits": "Mulai %1 untuk melihat batasnya; tidak perlu masuk lagi.",
   "agents.lastUpdatedAgo": "Terakhir diperbarui %1 yang lalu",
   "agents.lastUpdatedJustNow": "Terakhir diperbarui kurang dari semenit yang lalu",
   "agents.lastUpdatedUnknown": "Waktu pembaruan terakhir tidak tersedia",
   "agents.limitsPaused": "Batas dijeda",
   "agents.makeSomethingCool": "BUAT SESUATU YANG KEREN",
-  "agents.merged": "Digabungkan dari %1 perangkat",
-  "agents.mergedOne": "Digabungkan dari 1 perangkat",
+  "agents.merged": {
+    "other": "Digabungkan dari %1 perangkat"
+  },
   "agents.modelMonthly": "%1 Bulanan",
   "agents.modelSession": "%1 Sesi",
   "agents.modelWeekly": "%1 Mingguan",
@@ -37,7 +48,9 @@
   "agents.placeholderCode": "Kode",
   "agents.placeholderWork": "Kerja",
   "agents.plugin": "Plugin",
-  "agents.promptsToday": "%1 prompt hari ini",
+  "agents.promptsToday": {
+    "other": "%1 prompt hari ini"
+  },
   "agents.providerLimitsUnavailable": "Batas %1 tidak tersedia",
   "agents.providerUnavailable": "%1 tidak tersedia",
   "agents.reopenSignIn": "Buka lagi halaman masuk",
@@ -45,7 +58,9 @@
   "agents.scopedOther": "%1: %2% dari kuota %3-nya",
   "agents.scopedSession": "%1: %2% dari kuota sesinya",
   "agents.scopedWeekly": "%1: %2% dari kuota mingguannya",
-  "agents.sessionsToday": "%1 sesi hari ini",
+  "agents.sessionsToday": {
+    "other": "%1 sesi hari ini"
+  },
   "agents.signInAgainAccount": "Masuk lagi ke akun ini",
   "agents.signInAgainProvider": "Masuk lagi ke %1",
   "agents.signInExpired": "Sesi masuk kedaluwarsa",
@@ -61,9 +76,14 @@
   "agents.syncMkdirFailed": "Sinkronisasi penggunaan: mkdir gagal",
   "agents.syncScanFailed": "Sinkronisasi penggunaan: pemindaian gagal",
   "agents.theme": "Tema",
+  "agents.tierPrepaid": "Prabayar",
   "agents.title": "Agen",
-  "agents.tokensThisWeek": "%1 token minggu ini",
-  "agents.tokensToday": "%1 token hari ini",
+  "agents.tokensThisWeek": {
+    "other": "%1 token minggu ini"
+  },
+  "agents.tokensToday": {
+    "other": "%1 token hari ini"
+  },
   "agents.unknownModel": "Tidak diketahui",
   "agents.usageNotUpdated": "Penggunaan belum diperbarui.",
   "agents.usageUnavailable": "Penggunaan tidak tersedia",
@@ -142,7 +162,9 @@
   "bluetooth.turnedOff": "Dimatikan",
   "clipboard.deleteHistory": "Hapus seluruh riwayat papan klip?",
   "clipboard.empty": "Papan klip kosong",
-  "clipboard.files": "%1 berkas",
+  "clipboard.files": {
+    "other": "%1 berkas"
+  },
   "clipboard.image": "Gambar",
   "clipboard.imageFrom": "Gambar dari %1",
   "clipboard.screenshotFrom": "Tangkapan layar dari %1",
@@ -228,8 +250,12 @@
   "elsewhen.badgeTracked": "dipantau",
   "elsewhen.clock": "Jam",
   "elsewhen.dateFormat": "ddd, d MMM",
-  "elsewhen.daysAhead": "+%1 hari",
-  "elsewhen.daysBehind": "-%1 hari",
+  "elsewhen.daysAhead": {
+    "other": "+%1 hari"
+  },
+  "elsewhen.daysBehind": {
+    "other": "-%1 hari"
+  },
   "elsewhen.daysShort": "%1 hr",
   "elsewhen.here": "Pukul %1 di sini",
   "elsewhen.hereIn": "Pukul %1 di sini, di %2",
@@ -267,7 +293,9 @@
   "menu.powerProfilePerformance": "performa",
   "menu.powerProfilePowerSaver": "hemat daya",
   "menu.selectPrompt": "Pilih",
-  "menu.selectedCount": "%1 dipilih",
+  "menu.selectedCount": {
+    "other": "%1 terpilih"
+  },
   "monitor.brightness": "KECERAHAN",
   "monitor.display": "Layar",
   "monitor.displayFocused": "%1 · terfokus",
@@ -285,6 +313,9 @@
   "monitor.textSize": "UKURAN TEKS",
   "multiSelect.exited": "Perintah opsi berakhir %1",
   "multiSelect.invalidJson": "Perintah opsi menghasilkan JSON tidak valid",
+  "multiSelect.selectedCount": {
+    "other": "%1 terpilih"
+  },
   "multiSelect.timedOut": "Perintah opsi kehabisan waktu",
   "network.automatic": "OTOMATIS",
   "network.bandAuto": "Otomatis",

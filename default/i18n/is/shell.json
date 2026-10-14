@@ -17,17 +17,31 @@
   "agents.durationHoursMinutes": "%1klst %2mín",
   "agents.durationMinutes": "%1mín",
   "agents.durationNow": "núna",
-  "agents.freeResetOne": "1 frí endurstilling",
-  "agents.freeResetOneExpires": "1 frí endurstilling · næsta rennur út eftir %1",
-  "agents.freeResets": "%1 fríar endurstillingar",
-  "agents.freeResetsExpires": "%1 fríar endurstillingar · næsta rennur út eftir %2",
+  "agents.freeResets": {
+    "one": "%1 ókeypis endurstilling",
+    "other": "%1 ókeypis endurstillingar"
+  },
+  "agents.freeResetsExpires": {
+    "one": "%1 ókeypis endurstilling · næsta rennur út eftir %2",
+    "other": "%1 ókeypis endurstillingar · næsta rennur út eftir %2"
+  },
+  "agents.helpFireworksSignIn": "Stilltu %1, keyrðu %2 eða skráðu þig inn hjá Fireworks í pi eða opencode.",
+  "agents.helpNotInPath": "%1 fannst ekki í PATH",
+  "agents.helpRunToAuthenticate": "Keyrðu %1 til að auðkenna þig.",
+  "agents.helpRunToRestoreUsage": "Keyrðu %1 til að endurheimta áreiðanlega notkun.",
+  "agents.helpScanFailed": "%1-notkunarskönnun mistókst",
+  "agents.helpSignInExpired": "Vistaða innskráning %1 er útrunnin. Ræstu %1 til að endurnýja hana.",
+  "agents.helpStartOrRunToSignIn": "Ræstu %1, eða keyrðu %2, til að skrá þig inn.",
+  "agents.helpStartToSeeLimits": "Ræstu %1 til að sjá takmarkanir þess; ekki þarf að skrá sig inn aftur.",
   "agents.lastUpdatedAgo": "Síðast uppfært %1 síðan",
   "agents.lastUpdatedJustNow": "Síðast uppfært fyrir minna en mínútu síðan",
   "agents.lastUpdatedUnknown": "Síðasti uppfærslutími ekki tiltækur",
   "agents.limitsPaused": "Takmarkanir í hléi",
   "agents.makeSomethingCool": "GERÐU EITTHVAÐ FLOTT",
-  "agents.merged": "Sameinað frá %1 tækjum",
-  "agents.mergedOne": "Sameinað frá 1 tæki",
+  "agents.merged": {
+    "one": "Sameinað frá %1 tæki",
+    "other": "Sameinað frá %1 tækjum"
+  },
   "agents.modelMonthly": "%1 á mánuði",
   "agents.modelSession": "%1 á lotu",
   "agents.modelWeekly": "%1 vikulegt",
@@ -37,7 +51,10 @@
   "agents.placeholderCode": "Kóði",
   "agents.placeholderWork": "Vinna",
   "agents.plugin": "Viðbót",
-  "agents.promptsToday": "%1 fyrirmæli í dag",
+  "agents.promptsToday": {
+    "one": "%1 fyrirmæli í dag",
+    "other": "%1 fyrirmæli í dag"
+  },
   "agents.providerLimitsUnavailable": "%1-takmarkanir ekki tiltækar",
   "agents.providerUnavailable": "%1 ekki tiltækt",
   "agents.reopenSignIn": "Opna innskráningarsíðuna aftur",
@@ -45,7 +62,10 @@
   "agents.scopedOther": "%1: %2% af %3-kvóta sínum",
   "agents.scopedSession": "%1: %2% af lotukvóta sínum",
   "agents.scopedWeekly": "%1: %2% af vikukvóta sínum",
-  "agents.sessionsToday": "%1 lotur í dag",
+  "agents.sessionsToday": {
+    "one": "%1 seta í dag",
+    "other": "%1 setur í dag"
+  },
   "agents.signInAgainAccount": "Skráðu þig inn á þennan reikning aftur",
   "agents.signInAgainProvider": "Skráðu þig inn á %1 aftur",
   "agents.signInExpired": "Innskráning útrunnin",
@@ -61,9 +81,16 @@
   "agents.syncMkdirFailed": "mkdir mistókst í notkunarsamstillingu",
   "agents.syncScanFailed": "Skönnun mistókst í notkunarsamstillingu",
   "agents.theme": "Þema",
+  "agents.tierPrepaid": "Fyrirframgreitt",
   "agents.title": "Agentar",
-  "agents.tokensThisWeek": "%1 tákn í þessari viku",
-  "agents.tokensToday": "%1 tákn í dag",
+  "agents.tokensThisWeek": {
+    "one": "%1 tákn í þessari viku",
+    "other": "%1 tákn í þessari viku"
+  },
+  "agents.tokensToday": {
+    "one": "%1 tákn í dag",
+    "other": "%1 tákn í dag"
+  },
   "agents.unknownModel": "Óþekkt",
   "agents.usageNotUpdated": "Notkun hefur ekki verið uppfærð enn.",
   "agents.usageUnavailable": "Notkun ekki tiltæk",
@@ -142,7 +169,10 @@
   "bluetooth.turnedOff": "Slökkt",
   "clipboard.deleteHistory": "Eyða allri klippiborðssögunni?",
   "clipboard.empty": "Klippiborð er tómt",
-  "clipboard.files": "%1 skrár",
+  "clipboard.files": {
+    "one": "%1 skrá",
+    "other": "%1 skrár"
+  },
   "clipboard.image": "Mynd",
   "clipboard.imageFrom": "Mynd frá %1",
   "clipboard.screenshotFrom": "Skjámynd frá %1",
@@ -228,8 +258,14 @@
   "elsewhen.badgeTracked": "fylgst með",
   "elsewhen.clock": "Klukka",
   "elsewhen.dateFormat": "ddd d MMM",
-  "elsewhen.daysAhead": "+%1 dagar",
-  "elsewhen.daysBehind": "-%1 dagar",
+  "elsewhen.daysAhead": {
+    "one": "+%1 dagur",
+    "other": "+%1 dagar"
+  },
+  "elsewhen.daysBehind": {
+    "one": "-%1 dagur",
+    "other": "-%1 dagar"
+  },
   "elsewhen.daysShort": "%1 d",
   "elsewhen.here": "Klukkan er %1 hér",
   "elsewhen.hereIn": "Klukkan er %1 hér í %2",
@@ -267,7 +303,10 @@
   "menu.powerProfilePerformance": "afköst",
   "menu.powerProfilePowerSaver": "orkusparnaður",
   "menu.selectPrompt": "Veldu",
-  "menu.selectedCount": "%1 valin",
+  "menu.selectedCount": {
+    "one": "%1 valið",
+    "other": "%1 valin"
+  },
   "monitor.brightness": "BIRTUSTIG",
   "monitor.display": "Skjár",
   "monitor.displayFocused": "%1 · í fókus",
@@ -285,6 +324,10 @@
   "monitor.textSize": "TEXTASTÆRÐ",
   "multiSelect.exited": "Valkostaskipun hætti með %1",
   "multiSelect.invalidJson": "Valkostaskipun gaf út ógilt JSON",
+  "multiSelect.selectedCount": {
+    "one": "%1 valið",
+    "other": "%1 valin"
+  },
   "multiSelect.timedOut": "Valkostaskipun rann út á tíma",
   "network.automatic": "SJÁLFKRAFA",
   "network.bandAuto": "Sjálfkrafa",
@@ -389,7 +432,7 @@
   "power.powerProfile": "ORKUSNIÐ",
   "power.profileBalanced": "Jafnvægi",
   "power.profilePerformance": "Afköst",
-  "power.profilePowerSaver": "Orkusparnaður",
+  "power.profilePowerSaver": "Sparnaður",
   "power.threshold": "Þröskuldur",
   "power.timeLeft": "Tími eftir",
   "power.timeToFull": "Tími þar til fullhlaðið",

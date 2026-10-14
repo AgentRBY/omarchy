@@ -17,17 +17,28 @@
   "agents.durationHoursMinutes": "%1시간 %2분",
   "agents.durationMinutes": "%1분",
   "agents.durationNow": "지금",
-  "agents.freeResetOne": "무료 초기화 1회",
-  "agents.freeResetOneExpires": "무료 초기화 1회 · 다음 만료까지 %1",
-  "agents.freeResets": "무료 초기화 %1회",
-  "agents.freeResetsExpires": "무료 초기화 %1회 · 다음 만료까지 %2",
+  "agents.freeResets": {
+    "other": "무료 초기화 %1회"
+  },
+  "agents.freeResetsExpires": {
+    "other": "무료 초기화 %1회 · 다음 만료까지 %2"
+  },
+  "agents.helpFireworksSignIn": "%1을 설정하거나, %2를 실행하거나, pi 또는 opencode에서 Fireworks에 로그인하세요.",
+  "agents.helpNotInPath": "%1을 PATH에서 찾을 수 없음",
+  "agents.helpRunToAuthenticate": "%1을 실행하여 인증하세요.",
+  "agents.helpRunToRestoreUsage": "%1을 실행하여 공식 사용량을 복원하세요.",
+  "agents.helpScanFailed": "%1 사용량 스캔 실패",
+  "agents.helpSignInExpired": "%1의 저장된 로그인이 만료되었습니다. %1을 시작하여 갱신하세요.",
+  "agents.helpStartOrRunToSignIn": "%1을 시작하거나 %2를 실행하여 로그인하세요.",
+  "agents.helpStartToSeeLimits": "%1을 시작하여 한도를 확인하세요. 다시 로그인할 필요가 없습니다.",
   "agents.lastUpdatedAgo": "마지막 업데이트 %1 전",
   "agents.lastUpdatedJustNow": "1분 이내 업데이트됨",
   "agents.lastUpdatedUnknown": "마지막 업데이트 시간 확인 불가",
   "agents.limitsPaused": "한도 일시 중지",
   "agents.makeSomethingCool": "멋진 것을 만드세요",
-  "agents.merged": "%1대 기기에서 병합됨",
-  "agents.mergedOne": "기기 1대에서 병합됨",
+  "agents.merged": {
+    "other": "%1대 기기에서 병합됨"
+  },
   "agents.modelMonthly": "%1 월간",
   "agents.modelSession": "%1 세션",
   "agents.modelWeekly": "%1 주간",
@@ -37,7 +48,9 @@
   "agents.placeholderCode": "코드",
   "agents.placeholderWork": "업무",
   "agents.plugin": "플러그인",
-  "agents.promptsToday": "오늘 프롬프트 %1개",
+  "agents.promptsToday": {
+    "other": "오늘 프롬프트 %1개"
+  },
   "agents.providerLimitsUnavailable": "%1 한도를 사용할 수 없음",
   "agents.providerUnavailable": "%1 사용 불가",
   "agents.reopenSignIn": "로그인 페이지를 다시 열기",
@@ -45,7 +58,9 @@
   "agents.scopedOther": "%1: %3 할당량의 %2%",
   "agents.scopedSession": "%1: 세션 할당량의 %2%",
   "agents.scopedWeekly": "%1: 주간 할당량의 %2%",
-  "agents.sessionsToday": "오늘 세션 %1개",
+  "agents.sessionsToday": {
+    "other": "오늘 세션 %1개"
+  },
   "agents.signInAgainAccount": "이 계정에 다시 로그인",
   "agents.signInAgainProvider": "%1에 다시 로그인",
   "agents.signInExpired": "로그인 만료",
@@ -61,9 +76,14 @@
   "agents.syncMkdirFailed": "사용량 동기화 mkdir 실패",
   "agents.syncScanFailed": "사용량 동기화 검사 실패",
   "agents.theme": "테마",
+  "agents.tierPrepaid": "선불",
   "agents.title": "에이전트",
-  "agents.tokensThisWeek": "이번 주 토큰 %1개",
-  "agents.tokensToday": "오늘 토큰 %1개",
+  "agents.tokensThisWeek": {
+    "other": "이번 주 토큰 %1개"
+  },
+  "agents.tokensToday": {
+    "other": "오늘 토큰 %1개"
+  },
   "agents.unknownModel": "알 수 없음",
   "agents.usageNotUpdated": "사용량이 아직 업데이트되지 않았습니다.",
   "agents.usageUnavailable": "사용량을 사용할 수 없음",
@@ -135,14 +155,16 @@
   "bluetooth.phrase7": "코덱 붙잡기",
   "bluetooth.phrase8": "패킷 닦기",
   "bluetooth.scanning": "기기 검색 중…",
-  "bluetooth.title": "Bluetooth",
+  "bluetooth.title": "블루투스",
   "bluetooth.turnOff": "Bluetooth 끄기",
   "bluetooth.turnOn": "Bluetooth 켜기",
   "bluetooth.turnOnToScan": "스캔하려면 Bluetooth를 켜세요",
   "bluetooth.turnedOff": "꺼짐",
   "clipboard.deleteHistory": "클립보드 기록을 모두 삭제하시겠습니까?",
   "clipboard.empty": "클립보드 비어 있음",
-  "clipboard.files": "파일 %1개",
+  "clipboard.files": {
+    "other": "파일 %1개"
+  },
   "clipboard.image": "이미지",
   "clipboard.imageFrom": "%1에서 가져온 이미지",
   "clipboard.screenshotFrom": "%1에서 가져온 스크린샷",
@@ -228,8 +250,12 @@
   "elsewhen.badgeTracked": "추적 중",
   "elsewhen.clock": "시계",
   "elsewhen.dateFormat": "M'월' d'일' ddd",
-  "elsewhen.daysAhead": "+%1일",
-  "elsewhen.daysBehind": "-%1일",
+  "elsewhen.daysAhead": {
+    "other": "+%1일"
+  },
+  "elsewhen.daysBehind": {
+    "other": "-%1일"
+  },
   "elsewhen.daysShort": "%1일",
   "elsewhen.here": "여기 현재 시간은 %1",
   "elsewhen.hereIn": "%2 현재 시간은 %1",
@@ -267,7 +293,9 @@
   "menu.powerProfilePerformance": "성능",
   "menu.powerProfilePowerSaver": "절전",
   "menu.selectPrompt": "선택",
-  "menu.selectedCount": "%1개 선택됨",
+  "menu.selectedCount": {
+    "other": "%1개 선택됨"
+  },
   "monitor.brightness": "밝기",
   "monitor.display": "디스플레이",
   "monitor.displayFocused": "%1 · 포커스됨",
@@ -285,6 +313,9 @@
   "monitor.textSize": "텍스트 크기",
   "multiSelect.exited": "옵션 명령 종료 코드 %1",
   "multiSelect.invalidJson": "옵션 명령이 잘못된 JSON을 반환함",
+  "multiSelect.selectedCount": {
+    "other": "%1개 선택됨"
+  },
   "multiSelect.timedOut": "옵션 명령 시간 초과",
   "network.automatic": "자동",
   "network.bandAuto": "자동",
@@ -330,7 +361,7 @@
   "network.phrase5": "빵부스러기 따라가기",
   "network.phrase6": "충돌 세는 중",
   "network.phrase7": "빛 구부리는 중",
-  "network.ping": "Ping",
+  "network.ping": "핑",
   "network.receiving": "수신 중",
   "network.runSpeedTest": "속도 테스트 실행",
   "network.scanningWifi": "Wi-Fi 검색 중…",
