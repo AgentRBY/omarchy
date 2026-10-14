@@ -42,6 +42,24 @@ cat > /etc/limine-entry-tool.d/00-omarchy-n1x-sleep.conf <<'CONF'
 KERNEL_CMDLINE[default]+=" mem_sleep_default=s2idle"
 CONF
 
+# cppc_cpufreq leaves CPPC autonomous selection off, so the CPUs follow the
+# kernel governor and the energy performance preference that
+# power-profiles-daemon sets per profile changes nothing. NVIDIA's RTX Spark
+# images turn it on, and their power-profiles-daemon driver relies on it. The
+# firmware hands over each core with its CPPC floor raised to its ceiling for a
+# faster boot, which autonomous selection would keep (cppc_cpufreq.auto_sel_mode
+# copies it into the policy too), so the cores would never slow down. As
+# NVIDIA's images do, restore the full range when cppc_cpufreq loads and when a
+# core comes back online, then turn autonomous selection on, which programs the
+# floor and ceiling from that range.
+cat > /etc/udev/rules.d/71-omarchy-n1x-cppc.rules <<'RULES'
+# N1x: the firmware hands over each core with its CPPC floor raised to its
+# ceiling, so restore the full range and turn on autonomous selection, which
+# programs the floor and ceiling from it; see install/hardware/n1x.sh.
+ACTION=="add", SUBSYSTEM=="module", KERNEL=="cppc_cpufreq", RUN+="/usr/bin/sh -c 'for p in /sys/devices/system/cpu/cpufreq/policy*; do echo 0 >$$p/auto_select; cat $$p/cpuinfo_max_freq >$$p/scaling_max_freq; cat $$p/cpuinfo_min_freq >$$p/scaling_min_freq; echo 1 >$$p/auto_select; done'"
+ACTION=="online", SUBSYSTEM=="cpu", TEST=="cpufreq/auto_select", ATTR{cpufreq/auto_select}="0", ATTR{cpufreq/scaling_max_freq}="$attr{cpufreq/cpuinfo_max_freq}", ATTR{cpufreq/scaling_min_freq}="$attr{cpufreq/cpuinfo_min_freq}", ATTR{cpufreq/auto_select}="1"
+RULES
+
 # USB4: linux-omarchy drives the USB4 host routers (patches 1070-1081),
 # which power_wrap would otherwise release once xHCI is up; the SSPM cannot
 # power them again after that. The tunnel root ports are left unconfigured by
