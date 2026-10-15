@@ -190,6 +190,23 @@ pass "Muse collector shows a signed-in plan without sessions"
   fail "Muse collector does not retry an active plan without usage windows" "$nosnap"
 pass "Muse collector does not retry an active plan without usage windows"
 
+# A plan that has moved to pay-as-you-go leaves its old windows behind: a
+# failed check after that brings none of them back. The answer is reused
+# like any other, so a panel flick doesn't mint a key again.
+set_payload '{"body":{"subs_tier_name":"Power Usage","subs_usage":{"window":{"used_percent":8,"window_duration_mins":300,"resets_at":4102444800},"weekly":{"used_percent":15,"resets_at":4103049600}}}}'
+run_collector --force >/dev/null
+printf '%s' '{"body":{"api_key":"minted","is_subs_active":false,"subs_tier_name":null}}' >"$STUB_PAYLOAD_FILE"
+run_collector --force >/dev/null
+: >"$STUB_SEEN_FILE"
+reused=$(run_collector)
+[[ ! -s $STUB_SEEN_FILE && $(jq -c '.limits' <<<"$reused") == '[]' ]] ||
+  fail "Muse collector reuses a recent pay-as-you-go answer" "$reused"
+printf '{"status":500}' >"$STUB_PAYLOAD_FILE"
+switched=$(run_collector --force)
+[[ $(jq -c '.limits' <<<"$switched") == '[]' ]] ||
+  fail "Muse collector keeps a former plan's windows out after it moved to pay-as-you-go" "$switched"
+pass "Muse collector keeps a former plan's windows out after it moved to pay-as-you-go"
+
 # Neither active nor PAYG and no windows: still a warning, never invented meters.
 set_payload '{"body":{"api_key":"minted","subs_tier_name":"Mystery"}}'
 unknown=$(run_collector --force)

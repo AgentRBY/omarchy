@@ -932,7 +932,7 @@ def collect_limits(force: bool) -> dict:
     result["stale"] = True
     result["fetchedAtMs"] = fetched_at if fallback else 0
 
-  if (fallback or cached.get("tierLabel")) and not force and 0 <= time.time() - fetched_at / 1000 < PROBE_MIN_INTERVAL_SECONDS:
+  if (fallback or cached.get("tierLabel") or cached.get("noWindows")) and not force and 0 <= time.time() - fetched_at / 1000 < PROBE_MIN_INTERVAL_SECONDS:
     result["limits"] = fallback
     result["fetchedAtMs"] = fetched_at if fallback else 0
     return result
@@ -951,17 +951,17 @@ def collect_limits(force: bool) -> dict:
 
   if probe.get("transport"):
     result["retryAdvised"] = True
-  if probe.get("payg"):
-    # Authenticated PAYG: no subscription windows exist, and the service
-    # names no plan. Keep local metering only, silent — not an error, not
-    # expired.
-    result["tierLabel"] = ""
-    return result
-  if probe.get("silent"):
-    # Active plan with no windows: same silence as PAYG, but keep the plan
-    # name. Cached windows are dropped — they belong to a different plan
-    # shape, not this one.
-    result["tierLabel"] = probe.get("tierLabel") or result["tierLabel"]
+  if probe.get("payg") or probe.get("silent"):
+    # Authenticated PAYG names no plan; an active plan without windows keeps
+    # its name. Either way local metering stands alone, silent — not an
+    # error, not expired — and the cached windows go with the old plan, so
+    # a later failed check can't bring them back.
+    result["tierLabel"] = "" if probe.get("payg") else probe.get("tierLabel") or result["tierLabel"]
+    if probe_cache is not None:
+      try:
+        write_json(probe_cache, {"fetchedAtMs": int(time.time() * 1000), "limits": [], "tierLabel": result["tierLabel"], "noWindows": True})
+      except Exception as exc:
+        print(f"omarchy-agent-usage-muse: could not write limits cache ({exc})", file=sys.stderr)
     return result
   keep_cached()
   if probe.get("expired"):
