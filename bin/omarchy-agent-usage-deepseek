@@ -20,11 +20,17 @@ like the codex collector treats pi sessions.
 from __future__ import annotations
 
 import argparse
+import fcntl
+import hashlib
 import json
+import math
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -36,16 +42,53 @@ AGENT_ID = "deepseek"
 AGENT_NAME = "DeepSeek"
 API_BASE_URL = "https://api.deepseek.com"
 
+# A panel opened and closed repeatedly must not become one request per flick.
+PROBE_MIN_INTERVAL_SECONDS = 15
+
+# A scan this recent is only reused to dedup concurrent collector runs (the
+# update command backgrounds one per agent while the panel refreshes on its
+# own). --limits-only promises only a fresh balance, so it may reuse a scan
+# for up to 15 minutes.
+SCAN_REUSE_SECONDS = 20
+LIMITS_ONLY_REUSE_SECONDS = 900
 
 class DeepSeekError(Exception):
-  pass
+  def __init__(self, message: str, transport: bool = False, refused: bool = False) -> None:
+    super().__init__(message)
+    self.transport = transport
+    self.refused = refused
+
+
+# Counts and times read from disk or the network are untrusted: a boolean,
+# NaN, negative, or absurdly large value reads as nothing, never as a number
+# that would swamp the totals. The ceiling sits well above any epoch
+# millisecond time.
+NUMBER_CEILING = 10 ** 15
 
 
 def number(value: Any) -> int:
-  try:
-    return int(value or 0)
-  except Exception:
+  if isinstance(value, bool):
     return 0
+  try:
+    n = float(value or 0)
+  except (TypeError, ValueError, OverflowError):
+    return 0
+  if not math.isfinite(n) or n < 0 or n >= NUMBER_CEILING:
+    return 0
+  return round(n)
+
+
+def obj(value: Any) -> dict[str, Any]:
+  return value if isinstance(value, dict) else {}
+
+
+# pi, omp, and the harnesses that copy their format spell usage camelCase or
+# snake_case; the first spelling present wins.
+def usage_tokens(usage: dict[str, Any], *keys: str) -> int:
+  for key in keys:
+    if key in usage:
+      return number(usage.get(key))
+  return 0
 
 
 def model_name(raw: Any) -> str:
@@ -53,25 +96,34 @@ def model_name(raw: Any) -> str:
   return value if value else AGENT_ID
 
 
-def local_day(value: Any) -> str:
+# The local day a message was spent on, or None when its timestamp can't be
+# trusted, so the caller skips that row rather than the whole scan. A message
+# with no timestamp at all is today's.
+def local_day(value: Any) -> str | None:
   if value is None:
     return datetime.now().strftime("%Y-%m-%d")
+  if isinstance(value, str) and value.strip().isdigit():
+    value = int(value.strip())
+  if isinstance(value, bool):
+    return None
   if isinstance(value, (int, float)):
+    seconds = number(value)
+    if seconds <= 0:
+      return None
     # pi message timestamps are milliseconds; other clients use seconds.
-    if value > 10_000_000_000:
-      value = value / 1000
-    return datetime.fromtimestamp(value).strftime("%Y-%m-%d")
-  text = str(value)
+    if seconds > 10_000_000_000:
+      seconds = seconds / 1000
+    try:
+      return datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError):
+      return None
   try:
-    if text.endswith("Z"):
-      dt = datetime.fromisoformat(text[:-1] + "+00:00")
-    else:
-      dt = datetime.fromisoformat(text)
-    if dt.tzinfo is not None:
-      dt = dt.astimezone()
-    return dt.strftime("%Y-%m-%d")
-  except Exception:
-    return datetime.now().strftime("%Y-%m-%d")
+    dt = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+  except ValueError:
+    return None
+  if dt.tzinfo is not None:
+    dt = dt.astimezone()
+  return dt.strftime("%Y-%m-%d")
 
 
 def runtime_env() -> dict[str, str]:
@@ -101,42 +153,6 @@ def empty_bucket() -> dict[str, int]:
     "cacheReadInputTokens": 0,
     "cacheCreationInputTokens": 0,
   }
-
-
-def empty_stats() -> dict[str, Any]:
-  return {
-    "todayPrompts": 0,
-    "todaySessions": 0,
-    "todayTotalTokens": 0,
-    "todayTokensByModel": {},
-    "recentDays": [],
-    "totalPrompts": 0,
-    "totalSessions": 0,
-    "activeDays": 0,
-    "activeDates": [],
-    "modelUsage": {},
-  }
-
-
-def base_record(**overrides: Any) -> dict[str, Any]:
-  record: dict[str, Any] = {
-    "schemaVersion": 1,
-    "id": AGENT_ID,
-    "name": AGENT_NAME,
-    "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": False,
-    "hasLocalStats": True,
-    # Prompt and session counts are real: every pi session message carries
-    # them, so today's tooltip may show "N prompts · M sessions".
-    "hasPromptStats": True,
-    "tierLabel": "",
-    "usageStatusText": "",
-    "authHelpText": "",
-    "limits": [],
-  }
-  record.update(empty_stats())
-  record.update(overrides)
-  return record
 
 
 class Stats:
@@ -197,32 +213,56 @@ class Stats:
     }
 
 
+# ------------------------------------------------------------- pi and omp
+
+# pi's and omp's session trees, each profile's too: `--profile=<name>` moves
+# the whole agent tree under <base>/profiles/<name>/, and PI_CODING_AGENT_DIR
+# moves pi's.
 def pi_session_roots() -> list[Path]:
-  return [
-    Path.home() / ".pi" / "agent" / "sessions",
-    Path.home() / ".omp" / "agent" / "sessions",
-  ]
+  roots: list[Path] = []
+  if os.environ.get("PI_CODING_AGENT_DIR"):
+    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"]).expanduser() / "sessions")
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    roots.append(base / "agent" / "sessions")
+    try:
+      # Sorted so the scan order does not depend on directory order.
+      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      # No profiles directory, or it is unreadable: the default root stands.
+      pass
+  return list(dict.fromkeys(roots))
 
 
-def scan_pi_sessions(stats: Stats) -> None:
-  """Add pi/omp session messages that ran on the deepseek provider."""
-  seen_messages: set[str] = set()
+def scan_pi_sessions(stats: Stats) -> bool:
+  """Add pi/omp session messages that ran on the deepseek provider.
 
-  rg = find_command("rg") or "rg"
-  for root in pi_session_roots():
-    if not root.exists():
-      continue
+  Returns whether every root was read in full, so a partial scan is never
+  cached as the whole story.
+  """
+  roots = [root for root in pi_session_roots() if root.is_dir()]
+  if not roots:
+    return True
+  rg = find_command("rg")
+  if not rg:
+    print("omarchy-agent-usage-deepseek: rg is missing; pi and omp sessions were not scanned", file=sys.stderr)
+    return False
+
+  seen_messages: set[tuple[str, str]] = set()
+  complete = True
+  for root in roots:
     try:
       proc = subprocess.Popen(
-        [rg, "--json", "-e", r'"provider"\s*:\s*"deepseek"', str(root)],
+        # --no-ignore: a home that is itself a git checkout would otherwise
+        # hide every session file behind its ignore rules.
+        [rg, "--json", "--no-ignore", "-e", r'"provider"\s*:\s*"deepseek"', str(root)],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
         errors="replace",
         env=ENV,
       )
-    except FileNotFoundError:
-      continue
+    except OSError:
+      return False
 
     assert proc.stdout is not None
     for raw in proc.stdout:
@@ -233,64 +273,80 @@ def scan_pi_sessions(stats: Stats) -> None:
         line = event.get("data", {}).get("lines", {}).get("text", "")
         path = event.get("data", {}).get("path", {}).get("text", "pi-session")
         entry = json.loads(line)
+        add_pi_entry(stats, entry, path, seen_messages)
       except Exception:
+        # One odd line costs that line, never the scan.
         continue
-
-      if entry.get("type") != "message":
-        continue
-      message_key = path + ":" + str(entry.get("id") or "")
-      if message_key in seen_messages:
-        continue
-      seen_messages.add(message_key)
-      message = entry.get("message") or {}
-      if message.get("role") != "assistant":
-        continue
-      if str(message.get("provider") or "") != "deepseek":
-        continue
-
-      usage = message.get("usage") or {}
-      if not usage:
-        continue
-      total = number(usage.get("totalTokens"))
-      input_tokens = number(usage.get("input"))
-      output_tokens = number(usage.get("output"))
-      cache_read = number(usage.get("cacheRead"))
-      cache_write = number(usage.get("cacheWrite"))
-      if total and not (input_tokens or output_tokens or cache_read or cache_write):
-        input_tokens = total
-      if not (input_tokens or output_tokens or cache_read or cache_write):
-        continue
-
-      day = local_day(entry.get("timestamp") or message.get("timestamp"))
-      stats.add(path, day, model_name(message.get("model")), input_tokens, output_tokens, cache_read, cache_write)
 
     try:
-      proc.wait(timeout=1)
+      # rg exits 1 for no match and 2 when it couldn't read something.
+      if proc.wait(timeout=1) not in (0, 1):
+        complete = False
     except Exception:
       proc.kill()
+      complete = False
+  return complete
 
+
+def add_pi_entry(stats: Stats, entry: Any, path: str, seen_messages: set[tuple[str, str]]) -> None:
+  if not isinstance(entry, dict) or entry.get("type") != "message":
+    return
+  message = obj(entry.get("message"))
+  if message.get("role") != "assistant":
+    return
+  if str(message.get("provider") or "") != "deepseek":
+    return
+  # A fork copies its parent's entries with their id and timestamp, so the
+  # pair names a message across files; an id alone only within its file.
+  # Without an id, each line is its own.
+  message_id = entry.get("id")
+  if message_id:
+    timestamp = entry.get("timestamp")
+    key = (str(message_id), str(timestamp)) if timestamp else (path, str(message_id))
+    if key in seen_messages:
+      return
+    seen_messages.add(key)
+
+  usage = obj(message.get("usage"))
+  if not usage:
+    return
+  input_tokens = usage_tokens(usage, "input", "inputTokens", "input_tokens")
+  output_tokens = usage_tokens(usage, "output", "outputTokens", "output_tokens")
+  cache_read = usage_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens")
+  cache_write = usage_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens")
+  if not (input_tokens or output_tokens or cache_read or cache_write):
+    # Some writers keep only the total; it was still spent.
+    input_tokens = usage_tokens(usage, "totalTokens", "total_tokens")
+    if not input_tokens:
+      return
+
+  day = local_day(entry.get("timestamp") or message.get("timestamp"))
+  if day is None:
+    return
+  stats.add(path, day, model_name(message.get("model")), input_tokens, output_tokens, cache_read, cache_write)
+
+
+# --------------------------------------------------------------- opencode
 
 def opencode_db_path() -> Path:
   data_home = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
   return data_home / "opencode" / "opencode.db"
 
 
-def scan_opencode_sessions(stats: Stats) -> None:
+def scan_opencode_sessions(stats: Stats) -> bool:
   """Add opencode messages on a deepseek provider, mirroring the codex scan.
 
   Read-only: opencode may be writing right now. A scan cut short by a
-  database error keeps what it already read.
+  database error keeps what it already read, but says it is incomplete.
   """
   db = opencode_db_path()
   if not db.is_file():
-    return
-
-  import sqlite3
+    return True
 
   try:
     conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
   except sqlite3.Error:
-    return
+    return False
   try:
     conn.execute("PRAGMA query_only = ON")
     # The json_extract conditions are the authority; the LIKE gates are pure
@@ -309,8 +365,8 @@ def scan_opencode_sessions(stats: Stats) -> None:
           continue
         if str(entry.get("providerID") or "") != "deepseek":
           continue
-        tokens = entry.get("tokens") or {}
-        cache = tokens.get("cache") or {}
+        tokens = obj(entry.get("tokens"))
+        cache = obj(tokens.get("cache"))
         input_tokens = number(tokens.get("input"))
         # opencode keeps thinking tokens out of output; both are generated.
         output_tokens = number(tokens.get("output")) + number(tokens.get("reasoning"))
@@ -318,15 +374,116 @@ def scan_opencode_sessions(stats: Stats) -> None:
         cache_write = number(cache.get("write"))
         if not (input_tokens or output_tokens or cache_read or cache_write):
           continue
-        day = local_day((entry.get("time") or {}).get("created"))
+        day = local_day(obj(entry.get("time")).get("created"))
+        if day is None:
+          continue
         model = model_name(str(entry.get("modelID") or "").rstrip("/").split("/")[-1])
         stats.add("opencode:" + str(session_id), day, model, input_tokens, output_tokens, cache_read, cache_write)
       except Exception:
         continue
   except sqlite3.Error:
-    pass
+    return False
   finally:
     conn.close()
+  return True
+
+
+# ------------------------------------------------------------- scan cache
+
+def cache_root() -> Path:
+  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
+  root.mkdir(parents=True, exist_ok=True)
+  return root
+
+
+def read_json(path: Path) -> dict[str, Any]:
+  try:
+    value = json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    return {}
+  return value if isinstance(value, dict) else {}
+
+
+def read_fresh_json(path: Path, max_age_seconds: float) -> dict[str, Any] | None:
+  if max_age_seconds <= 0 or not path.exists():
+    return None
+  try:
+    # A negative age means the mtime is in the future: the clock moved
+    # backwards since the write, so the scan's freshness cannot be trusted.
+    age = time.time() - path.stat().st_mtime
+    if 0 <= age < max_age_seconds:
+      return read_json(path)
+  except OSError:
+    return None
+  return None
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+  # A temp name unique to this writer: several collectors can run at once,
+  # and a shared temp path means the second replace finds the first one's
+  # file already moved away.
+  handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+  tmp = Path(tmp_name)
+  try:
+    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    tmp.chmod(0o644)
+    tmp.replace(path)
+  except BaseException:
+    tmp.unlink(missing_ok=True)
+    raise
+
+
+def scan_cache_paths() -> tuple[Path, Path]:
+  # The digest covers every data path the scan reads.
+  sources = [str(opencode_db_path())] + [str(root) for root in pi_session_roots()]
+  digest = hashlib.sha1("\n".join(sources).encode("utf-8")).hexdigest()[:16]
+  root = cache_root()
+  return root / f"deepseek-scan-{digest}.json", root / f"deepseek-scan-{digest}.lock"
+
+
+def run_local_scans() -> tuple[dict[str, Any], bool]:
+  stats = Stats()
+  complete = scan_pi_sessions(stats)
+  complete = scan_opencode_sessions(stats) and complete
+  return stats.record(), complete
+
+
+# today* fields only mean "today" on the day they were scanned, so a scan
+# from another local date is a miss whatever its file time says.
+def read_cached_stats(cache_file: Path, max_age: float) -> dict[str, Any] | None:
+  cached = read_fresh_json(cache_file, max_age)
+  if not cached or cached.get("schemaVersion") != 1 or cached.get("scanDate") != datetime.now().strftime("%Y-%m-%d"):
+    return None
+  stats = cached.get("stats")
+  if not isinstance(stats, dict) or not all(key in stats for key in ("todayPrompts", "todayTotalTokens", "recentDays", "activeDates", "modelUsage")):
+    return None
+  return stats
+
+
+def cached_local_stats(max_age: float) -> dict[str, Any]:
+  # The cache is an optimization: any failure of its own degrades to a
+  # direct scan.
+  try:
+    cache_file, lock_file = scan_cache_paths()
+    cached = read_cached_stats(cache_file, max_age)
+    if cached is not None:
+      return cached
+    with lock_file.open("w") as lock:
+      fcntl.flock(lock, fcntl.LOCK_EX)
+      cached = read_cached_stats(cache_file, max_age)
+      if cached is not None:
+        return cached
+      stats, complete = run_local_scans()
+      # An interrupted scan still serves this run, but caching it would hide
+      # the missing usage from every reader until the cache expires.
+      if complete:
+        write_json(cache_file, {"schemaVersion": 1, "scanDate": datetime.now().strftime("%Y-%m-%d"), "stats": stats})
+      return stats
+  except Exception as exc:
+    print(f"omarchy-agent-usage-deepseek: cache unavailable ({exc}); scanning directly", file=sys.stderr)
+    stats, _ = run_local_scans()
+    return stats
 
 
 # -------------------------------------------------------------- credentials
@@ -335,6 +492,8 @@ def read_key_from_dict(parsed: Any, provider: str) -> str:
   if not isinstance(parsed, dict):
     return ""
   entry = parsed.get(provider)
+  if isinstance(entry, str):
+    return entry.strip()
   if not isinstance(entry, dict):
     return ""
   return str(entry.get("key") or entry.get("apiKey") or entry.get("api_key") or "").strip()
@@ -343,19 +502,25 @@ def read_key_from_dict(parsed: Any, provider: str) -> str:
 def read_json_key(path: Path, provider: str) -> str:
   try:
     return read_key_from_dict(json.loads(path.read_text()), provider)
-  except (OSError, json.JSONDecodeError):
+  except (OSError, ValueError):
     return ""
 
 
 def api_key() -> str:
+  # The environment first, then the agents that keep a DeepSeek key, read
+  # only: pi, then opencode.
   env_key = str(os.environ.get("DEEPSEEK_API_KEY", "")).strip()
   if env_key:
     return env_key
-  key = read_json_key(Path.home() / ".pi" / "agent" / "auth.json", "deepseek")
-  if key:
-    return key
   data_home = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
-  return read_json_key(data_home / "opencode" / "auth.json", "deepseek")
+  for read in (
+    lambda: read_json_key(Path.home() / ".pi" / "agent" / "auth.json", "deepseek"),
+    lambda: read_json_key(data_home / "opencode" / "auth.json", "deepseek"),
+  ):
+    key = read()
+    if key:
+      return key
+  return ""
 
 
 def config_path() -> Path:
@@ -367,11 +532,21 @@ def read_config() -> dict[str, Any]:
   try:
     parsed = json.loads(config_path().read_text())
     return parsed if isinstance(parsed, dict) else {}
-  except (OSError, json.JSONDecodeError):
+  except (OSError, ValueError):
     return {}
 
 
 # ----------------------------------------------------------------- balance
+
+def money(value: Any) -> Decimal:
+  if isinstance(value, bool):
+    return Decimal("0")
+  try:
+    amount = Decimal(str(value or "0"))
+  except InvalidOperation:
+    return Decimal("0")
+  return amount if amount.is_finite() else Decimal("0")
+
 
 def fetch_balance(api_base_url: str, key: str) -> dict[str, Any]:
   """GET /user/balance: total_balance, granted_balance, topped_up_balance."""
@@ -382,26 +557,25 @@ def fetch_balance(api_base_url: str, key: str) -> dict[str, Any]:
   )
   try:
     with urllib.request.urlopen(request, timeout=15) as response:
-      payload = json.load(response)
+      body = response.read()
   except urllib.error.HTTPError as error:
-    raise DeepSeekError(f"DeepSeek balance endpoint returned HTTP {error.code}")
-  except urllib.error.URLError as error:
-    raise DeepSeekError("Could not reach the DeepSeek API") from error
-  except (json.JSONDecodeError, TimeoutError) as error:
-    raise DeepSeekError("DeepSeek returned an invalid balance response") from error
+    if error.code in (401, 403):
+      raise DeepSeekError("DeepSeek rejected the saved API key. Set a current one in DEEPSEEK_API_KEY or the agent that holds it.", refused=True)
+    raise DeepSeekError(f"DeepSeek's balance endpoint returned HTTP {error.code}.")
+  except Exception as error:
+    # No answer at all: no route, no DNS, a timeout. Worth a retry soon.
+    raise DeepSeekError("Couldn't reach the DeepSeek API. Retrying shortly.", transport=True) from error
 
+  try:
+    payload = json.loads(body.decode("utf-8", errors="replace"))
+  except ValueError as error:
+    raise DeepSeekError("DeepSeek returned an invalid balance response.") from error
   if not isinstance(payload, dict):
-    raise DeepSeekError("DeepSeek returned an invalid balance response")
+    raise DeepSeekError("DeepSeek returned an invalid balance response.")
   infos = payload.get("balance_infos")
   if not isinstance(infos, list) or not infos or not isinstance(infos[0], dict):
-    raise DeepSeekError("DeepSeek balance response carried no balance_infos")
+    raise DeepSeekError("DeepSeek's balance response carried no balance_infos.")
   first = infos[0]
-
-  def money(value: Any) -> Decimal:
-    try:
-      return Decimal(str(value or "0"))
-    except InvalidOperation:
-      return Decimal("0")
 
   return {
     "remaining": money(first.get("total_balance")),
@@ -411,65 +585,142 @@ def fetch_balance(api_base_url: str, key: str) -> dict[str, Any]:
   }
 
 
-def balance_record(key: str, api_base_url: str) -> dict[str, Any]:
+def balance_record(remaining: Decimal, currency: str) -> dict[str, Any]:
   config = read_config()
-  try:
-    funded = Decimal(str(config.get("fundedAmount") or "0"))
-  except InvalidOperation:
+  funded = money(config.get("fundedAmount"))
+  if funded < 0:
     funded = Decimal("0")
-  if not funded.is_finite() or funded < 0:
-    funded = Decimal("0")
-
-  live = fetch_balance(api_base_url, key)
-  remaining = live["remaining"]
   spent = max(Decimal("0"), funded - remaining) if funded > 0 else Decimal("0")
   return {
     "remaining": float(max(Decimal("0"), remaining)),
     "funded": float(funded),
     "spent": float(spent),
-    "currency": str(live["currency"] or "CNY"),
+    "currency": str(currency or "CNY"),
     # funded/spent derive from the configured fundedAmount, not DeepSeek's
     # own ledger, so they are labelled estimates; remaining is live.
     "estimated": funded > 0,
   }
 
 
-def scan(api_base_url: str) -> dict[str, Any]:
-  stats = Stats()
-  scan_pi_sessions(stats)
-  scan_opencode_sessions(stats)
-  record = base_record()
-  record.update(stats.record())
+# One cache per key and endpoint, so a machine signed in to another account
+# never shows the last one's balance.
+def balance_cache_path(key: str, api_base_url: str) -> Path:
+  digest = hashlib.sha256((api_base_url.rstrip("/") + "\n" + key).encode("utf-8")).hexdigest()[:16]
+  return cache_root() / f"deepseek-limits-{digest}.json"
+
+
+def collect_balance(key: str, api_base_url: str, force: bool) -> dict[str, Any]:
+  result: dict[str, Any] = {"balance": None, "stale": False, "fetchedAtMs": 0, "usageStatusText": "", "authHelpText": "", "retryAdvised": False}
+  cache = None
+  cached: dict[str, Any] = {}
+  try:
+    cache = balance_cache_path(key, api_base_url)
+    cached = read_json(cache)
+  except OSError as exc:
+    print(f"omarchy-agent-usage-deepseek: could not read the balance cache ({exc})", file=sys.stderr)
+  kept = obj(cached.get("balance"))
+  fetched_at = number(cached.get("fetchedAtMs"))
+
+  # A panel opened and closed repeatedly must not become one request per
+  # flick, so a recent answer is reused; --force skips the wait.
+  if kept and not force and 0 <= time.time() - fetched_at / 1000 < PROBE_MIN_INTERVAL_SECONDS:
+    result.update(balance=balance_record(money(kept.get("remaining")), str(kept.get("currency") or "")), fetchedAtMs=fetched_at)
+    return result
+
+  try:
+    live = fetch_balance(api_base_url, key)
+  except DeepSeekError as error:
+    result["retryAdvised"] = error.transport
+    result["authHelpText"] = str(error)
+    if kept:
+      # The last good balance, marked stale with when it was read, beats an
+      # empty section while DeepSeek can't be asked.
+      result.update(balance=balance_record(money(kept.get("remaining")), str(kept.get("currency") or "")), stale=True, fetchedAtMs=fetched_at)
+    if error.refused:
+      result["usageStatusText"] = "Sign-in expired"
+    elif not kept:
+      result["usageStatusText"] = "Balance unavailable"
+    return result
+
+  # Rounded down: rounded up, a run in the same millisecond would find the
+  # answer in the future and ask again.
+  fetched_at = int(time.time() * 1000)
+  if cache is not None:
+    try:
+      write_json(cache, {"fetchedAtMs": fetched_at, "limits": [], "balance": {"remaining": str(live["remaining"]), "currency": live["currency"]}})
+    except OSError as exc:
+      print(f"omarchy-agent-usage-deepseek: could not write the balance cache ({exc})", file=sys.stderr)
+  result.update(balance=balance_record(live["remaining"], live["currency"]), fetchedAtMs=fetched_at)
+  return result
+
+
+# ------------------------------------------------------------------ record
+
+def base_record(stats: dict[str, Any] | None = None) -> dict[str, Any]:
+  record: dict[str, Any] = {
+    "schemaVersion": 1,
+    "id": AGENT_ID,
+    "name": AGENT_NAME,
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "ready": False,
+    "hasLocalStats": True,
+    # Prompt and session counts are real: every pi session message carries
+    # them, so today's tooltip may show "N prompts · M sessions".
+    "hasPromptStats": True,
+    "tierLabel": "",
+    "usageStatusText": "",
+    "authHelpText": "",
+    "limits": [],
+    "limitsStale": False,
+    "limitsFetchedAt": 0,
+  }
+  record.update(stats if stats is not None else Stats().record())
+  return record
+
+
+def collect(api_base_url: str, max_age: float, force: bool) -> dict[str, Any]:
+  record = base_record(cached_local_stats(max_age))
+  record["ready"] = number(record.get("totalPrompts")) > 0
 
   # Without a key the record carries local stats only, with no plan, so the
   # panel leaves out the balance section, and skips the record altogether on
   # a machine that has never used DeepSeek.
   key = api_key()
-  if key:
-    record.update(ready=True, tierLabel="Prepaid")
-    try:
-      record["balance"] = balance_record(key, api_base_url)
-    except DeepSeekError as error:
-      record["usageStatusText"] = "Balance unavailable"
-      record["authHelpText"] = str(error)
+  if not key:
+    return record
+  record.update(ready=True, tierLabel="Prepaid")
+  balance = collect_balance(key, api_base_url, force)
+  if balance["balance"] is not None:
+    record["balance"] = balance["balance"]
+  record.update(
+    usageStatusText=balance["usageStatusText"],
+    authHelpText=balance["authHelpText"],
+    limitsStale=balance["stale"],
+    limitsFetchedAt=balance["fetchedAtMs"],
+  )
+  if balance["retryAdvised"]:
+    record["retryAdvised"] = True
   return record
 
 
 def main() -> int:
   parser = argparse.ArgumentParser(description="Print the DeepSeek usage record as JSON")
-  # Stats are local file scans and the balance is one API call; there is no
-  # cache to force past and no faster limits-only path. The flags exist so
-  # every collector accepts the same invocation.
+  # --force rescans everything and asks DeepSeek past the reuse window.
+  # --limits-only (the panel's quick refresh) may reuse a scan for 15
+  # minutes, but asks for the balance like a normal run.
   parser.add_argument("--force", action="store_true")
   parser.add_argument("--limits-only", action="store_true")
   parser.add_argument("--api-base-url", default=os.environ.get("DEEPSEEK_API_BASE_URL", API_BASE_URL))
   args = parser.parse_args()
 
+  max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
   try:
-    record = scan(args.api_base_url)
+    record = collect(args.api_base_url, max_age, args.force)
   except Exception as error:
-    record = base_record(usageStatusText="DeepSeek unavailable", authHelpText="DeepSeek usage scan failed")
-    print(f"omarchy-agent-usage-deepseek: {type(error).__name__}", file=sys.stderr)
+    # A bug, not a state the panel should explain: an empty record keeps
+    # the panel steady, and stderr says what broke.
+    record = base_record()
+    print(f"omarchy-agent-usage-deepseek: {type(error).__name__}: {error}", file=sys.stderr)
   print(json.dumps(record, separators=(",", ":")))
   return 0
 

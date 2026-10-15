@@ -5,18 +5,33 @@ source "$(dirname "$0")/base-test.sh"
 require_command jq
 require_command python3
 
-TEST_HOME=$(mktemp -d)
-trap 'rm -rf "$TEST_HOME"' EXIT
-
 # A key in the environment would send the collector to DeepSeek.
-unset DEEPSEEK_API_KEY DEEPSEEK_API_BASE_URL
+unset DEEPSEEK_API_KEY DEEPSEEK_API_BASE_URL PI_CODING_AGENT_DIR
 
 timestamp="$(date +%Y-%m-%d)T12:00:00Z"
+now_ms="$(date +%s)000"
+
+HOMES=()
+trap 'rm -rf "${HOMES[@]}"' EXIT
+
+new_home() {
+  local home
+  home=$(mktemp -d)
+  HOMES+=("$home")
+  printf '%s\n' "$home"
+}
+
+# The collector run as it is installed, with every store under one home.
+collect() {
+  local home="$1"
+  shift
+  HOME="$home" XDG_CACHE_HOME="$home/.cache" XDG_DATA_HOME="$home/.local/share" XDG_CONFIG_HOME="$home/.config" \
+    "$ROOT/bin/omarchy-agent-usage-deepseek" "$@" 2>/dev/null
+}
 
 # ---------------------------------------------------------------- pi and omp
 
-PI_HOME=$(mktemp -d)
-trap 'rm -rf "$TEST_HOME" "$PI_HOME"' EXIT
+PI_HOME=$(new_home)
 mkdir -p "$PI_HOME/.pi/agent/sessions/project" "$PI_HOME/.omp/agent/sessions/project"
 
 cat >"$PI_HOME/.pi/agent/sessions/project/pi.jsonl" <<EOF
@@ -28,8 +43,7 @@ cat >"$PI_HOME/.omp/agent/sessions/project/omp.jsonl" <<EOF
 { "type": "message", "id": "omp-1", "timestamp": "$timestamp", "message": { "role": "assistant", "provider": "deepseek", "model": "deepseek-omp", "usage": { "input": 20, "output": 5, "cacheRead": 4, "cacheWrite": 1, "totalTokens": 30 } } }
 EOF
 
-result=$(HOME="$PI_HOME" XDG_DATA_HOME="$PI_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-deepseek" 2>/dev/null)
+result=$(collect "$PI_HOME")
 
 [[ $(jq -r '.todayTotalTokens' <<<"$result") == "49" ]] ||
   fail "DeepSeek collector counts usage from pi and omp sessions" "$result"
@@ -43,24 +57,69 @@ pass "DeepSeek collector filters pi and omp sessions to DeepSeek providers"
   fail "DeepSeek collector counts each message once per session" "$result"
 pass "DeepSeek collector counts each message once per session"
 
-# Without a key the record must still be complete and hidden-by-default:
-# the panel shows local stats and simply omits the balance section.
-[[ $(jq -r '.id + ":" + (.ready|tostring) + ":" + .tierLabel + ":" + (.hasPromptStats|tostring) + ":" + (has("balance")|tostring)' <<<"$result") == "deepseek:false::true:false" ]] ||
+# Local usage alone puts DeepSeek in use; without a key there is no plan and
+# no balance section.
+[[ $(jq -c '{id, ready, tierLabel, hasPromptStats, balance: has("balance"), usageStatusText, authHelpText}' <<<"$result") == '{"id":"deepseek","ready":true,"tierLabel":"","hasPromptStats":true,"balance":false,"usageStatusText":"","authHelpText":""}' ]] ||
   fail "DeepSeek collector prints a valid record without a key" "$result"
 pass "DeepSeek collector prints a valid record without a key"
 
-# Nothing used and no key: a record the panel skips.
-EMPTY_HOME=$(mktemp -d)
-result=$(HOME="$EMPTY_HOME" XDG_DATA_HOME="$EMPTY_HOME/.local/share" "$ROOT/bin/omarchy-agent-usage-deepseek" 2>/dev/null)
-rm -rf "$EMPTY_HOME"
-[[ $(jq -c '{ready, tierLabel, totalPrompts, activeDays, balance: has("balance")}' <<<"$result") == '{"ready":false,"tierLabel":"","totalPrompts":0,"activeDays":0,"balance":false}' ]] ||
+# Nothing used and no key: a record the panel skips, with the full empty
+# stats block.
+EMPTY_HOME=$(new_home)
+result=$(collect "$EMPTY_HOME")
+[[ $(jq -c '{ready, tierLabel, limits, limitsStale, limitsFetchedAt, usageStatusText, authHelpText, totalPrompts, activeDays, activeDates, modelUsage, recentDays: (.recentDays | length), balance: has("balance")}' <<<"$result") == '{"ready":false,"tierLabel":"","limits":[],"limitsStale":false,"limitsFetchedAt":0,"usageStatusText":"","authHelpText":"","totalPrompts":0,"activeDays":0,"activeDates":[],"modelUsage":{},"recentDays":7,"balance":false}' ]] ||
   fail "DeepSeek collector prints a record the panel skips without DeepSeek" "$result"
 pass "DeepSeek collector prints a record the panel skips without DeepSeek"
 
+# Profiles keep their own session trees, PI_CODING_AGENT_DIR moves pi's, and
+# a home that is a git checkout ignoring everything still gets scanned. A
+# fork's copy of its parent's message counts once, a line without an id
+# always counts, a usage block with only a total still counts, and either
+# spelling of the token fields reads.
+ROOTS_HOME=$(new_home)
+mkdir -p "$ROOTS_HOME/.git" "$ROOTS_HOME/.pi/agent/sessions/p" "$ROOTS_HOME/.omp/profiles/work/agent/sessions/p" "$ROOTS_HOME/moved/sessions/p"
+printf '*\n' >"$ROOTS_HOME/.gitignore"
+cat >"$ROOTS_HOME/.pi/agent/sessions/p/parent.jsonl" <<EOF
+{"type":"message","id":"m-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":1}}}
+{"type":"message","timestamp":"$timestamp","message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":2}}}
+{"type":"message","timestamp":"$timestamp","message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":2}}}
+EOF
+cat >"$ROOTS_HOME/.pi/agent/sessions/p/fork.jsonl" <<EOF
+{"type":"message","id":"m-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":1}}}
+EOF
+cat >"$ROOTS_HOME/.omp/profiles/work/agent/sessions/p/omp.jsonl" <<EOF
+{"type":"message","id":"w-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"totalTokens":40}}}
+{"type":"message","id":"w-2","timestamp":"$timestamp","message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"inputTokens":100,"output_tokens":200,"cache_read_input_tokens":300,"cacheWriteTokens":400}}}
+EOF
+cat >"$ROOTS_HOME/moved/sessions/p/pi.jsonl" <<EOF
+{"type":"message","id":"d-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":5000}}}
+EOF
+result=$(PI_CODING_AGENT_DIR="$ROOTS_HOME/moved" collect "$ROOTS_HOME")
+[[ $(jq -c '{todayTotalTokens, totalPrompts, usage: .modelUsage["deepseek-v4"]}' <<<"$result") == '{"todayTotalTokens":6045,"totalPrompts":6,"usage":{"inputTokens":5145,"outputTokens":200,"cacheReadInputTokens":300,"cacheCreationInputTokens":400}}' ]] ||
+  fail "DeepSeek collector reads every pi and omp session root once per message" "$result"
+pass "DeepSeek collector reads every pi and omp session root once per message"
+
+# A timestamp or token count that can't be trusted costs its row or field,
+# never the scan.
+BAD_HOME=$(new_home)
+mkdir -p "$BAD_HOME/.pi/agent/sessions/p"
+cat >"$BAD_HOME/.pi/agent/sessions/p/pi.jsonl" <<EOF
+{"type":"message","id":"b-1","timestamp":true,"message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":1000}}}
+{"type":"message","id":"b-2","timestamp":-5,"message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":1000}}}
+{"type":"message","id":"b-3","timestamp":1e300,"message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":1000}}}
+{"type":"message","id":"b-4","timestamp":"yesterday-ish","message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":1000}}}
+{"type":"message","id":"b-5","timestamp":NaN,"message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":1000}}}
+{"type":"message","id":"b-6","timestamp":"$timestamp","message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":7,"output":true,"cacheRead":-50,"cacheWrite":1e300}}}
+{"type":"message","id":"b-7","timestamp":$now_ms,"message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":3}}}
+EOF
+result=$(collect "$BAD_HOME")
+[[ $(jq -c '{todayTotalTokens, totalPrompts}' <<<"$result") == '{"todayTotalTokens":10,"totalPrompts":2}' ]] ||
+  fail "DeepSeek collector skips untrusted timestamps and token counts" "$result"
+pass "DeepSeek collector skips untrusted timestamps and token counts"
+
 # ---------------------------------------------------------------- opencode
 
-OPENCODE_HOME=$(mktemp -d)
-trap 'rm -rf "$TEST_HOME" "$PI_HOME" "$OPENCODE_HOME"' EXIT
+OPENCODE_HOME=$(new_home)
 
 python3 - "$OPENCODE_HOME/.local/share/opencode/opencode.db" <<'PY'
 import json
@@ -96,8 +155,7 @@ conn.commit()
 conn.close()
 PY
 
-result=$(HOME="$OPENCODE_HOME" XDG_DATA_HOME="$OPENCODE_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-deepseek" 2>/dev/null)
+result=$(collect "$OPENCODE_HOME")
 
 [[ $(jq -r '.todayTotalTokens' <<<"$result") == "157" ]] ||
   fail "DeepSeek collector counts opencode messages on a DeepSeek provider" "$result"
@@ -110,116 +168,46 @@ pass "DeepSeek collector keeps reasoning with output and cache apart in opencode
 # A day active in both pi and opencode is still one active day.
 mkdir -p "$OPENCODE_HOME/.pi/agent/sessions/project"
 cp "$PI_HOME/.pi/agent/sessions/project/pi.jsonl" "$OPENCODE_HOME/.pi/agent/sessions/project/"
-result=$(HOME="$OPENCODE_HOME" XDG_DATA_HOME="$OPENCODE_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-deepseek" 2>/dev/null)
+result=$(collect "$OPENCODE_HOME" --force)
 
 [[ $(jq -r '"\(.todayTotalTokens):\(.totalSessions):\(.activeDays)"' <<<"$result") == "176:2:1" ]] ||
   fail "DeepSeek collector counts a day shared by pi and opencode once" "$result"
 pass "DeepSeek collector counts a day shared by pi and opencode once"
 
-# ---------------------------------------------------------------- balance
+# --------------------------------------------------------------- scan cache
 
-result=$(HOME="$TEST_HOME" XDG_DATA_HOME="$TEST_HOME/.local/share" python3 - "$ROOT/bin/omarchy-agent-usage-deepseek" "$TEST_HOME/.config" <<'PY'
-import importlib.machinery
-import importlib.util
-import json
-import os
-import sys
-from decimal import Decimal
-from pathlib import Path
+# A normal run reuses a scan for a few seconds, --limits-only for longer,
+# and --force rescans.
+CACHE_HOME=$(new_home)
+mkdir -p "$CACHE_HOME/.pi/agent/sessions/p"
+cat >"$CACHE_HOME/.pi/agent/sessions/p/pi.jsonl" <<EOF
+{"type":"message","id":"c-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":7,"output":3}}}
+EOF
+result=$(collect "$CACHE_HOME")
+[[ $(jq -r '.todayTotalTokens' <<<"$result") == "10" ]] ||
+  fail "DeepSeek collector scans without a cache" "$result"
+[[ -n $(find "$CACHE_HOME/.cache/omarchy/agent-usage" -name 'deepseek-scan-*.json' -print -quit) ]] ||
+  fail "DeepSeek collector writes a scan cache"
 
-collector_path = str(Path(sys.argv[1]))
-os.environ["XDG_CONFIG_HOME"] = sys.argv[2]
+cat >>"$CACHE_HOME/.pi/agent/sessions/p/pi.jsonl" <<EOF
+{"type":"message","id":"c-2","timestamp":"$timestamp","message":{"role":"assistant","provider":"deepseek","model":"deepseek-v4","usage":{"input":90}}}
+EOF
+result=$(collect "$CACHE_HOME")
+[[ $(jq -r '.todayTotalTokens' <<<"$result") == "10" ]] ||
+  fail "DeepSeek collector reuses a recent scan" "$result"
+result=$(collect "$CACHE_HOME" --limits-only)
+[[ $(jq -c '{todayTotalTokens, totalPrompts}' <<<"$result") == '{"todayTotalTokens":10,"totalPrompts":1}' ]] ||
+  fail "DeepSeek collector --limits-only emits a complete record from cache" "$result"
+result=$(collect "$CACHE_HOME" --force)
+[[ $(jq -r '.todayTotalTokens' <<<"$result") == "100" ]] ||
+  fail "DeepSeek collector --force rescans" "$result"
+pass "DeepSeek collector caches and reuses local stats"
 
-loader = importlib.machinery.SourceFileLoader("deepseek_collector", collector_path)
-spec = importlib.util.spec_from_loader(loader.name, loader)
-scanner = importlib.util.module_from_spec(spec)
-loader.exec_module(scanner)
-real_fetch_balance = scanner.fetch_balance
-
-config_dir = Path(sys.argv[2]) / "omarchy" / "agents"
-config_dir.mkdir(parents=True, exist_ok=True)
-(config_dir / "deepseek.json").write_text(json.dumps({"fundedAmount": 20}))
-
-scanner.fetch_balance = lambda base_url, key: {
-  "remaining": Decimal("8.15"),
-  "granted": Decimal("0"),
-  "toppedUp": Decimal("8.15"),
-  "currency": "USD",
-}
-balance = scanner.balance_record("test-key", "https://example.invalid")
-summary = {"withConfig": balance}
-
-scanner.fetch_balance = lambda base_url, key: (_ for _ in ()).throw(
-  scanner.DeepSeekError("balance endpoint unavailable")
-)
-scanner.api_key = lambda: "test-key"
-record = scanner.scan("https://example.invalid")
-summary["onFailure"] = {
-  "hasBalance": "balance" in record,
-  "status": record["usageStatusText"],
-  "help": record["authHelpText"],
-}
-scanner.fetch_balance = real_fetch_balance
-
-# The real request must carry the bearer key and hit /user/balance.
-captured = {}
-
-class FakeResponse:
-  def __init__(self, payload):
-    self.payload = payload
-
-  def __enter__(self):
-    return self
-
-  def __exit__(self, *args):
-    return False
-
-  def read(self):
-    return json.dumps({
-      "is_available": True,
-      "balance_infos": [{
-        "currency": "CNY",
-        "total_balance": "42.50",
-        "granted_balance": "2.50",
-        "topped_up_balance": "40.00",
-      }],
-    }).encode("utf-8")
-
-import urllib.request
-real_urlopen = urllib.request.urlopen
-urllib.request.urlopen = lambda request, timeout=15: (
-  captured.update({"url": request.full_url, "auth": request.get_header("Authorization")})
-  or FakeResponse(None)
-)
-try:
-  live = scanner.fetch_balance("https://api.deepseek.com", "key-123")
-finally:
-  urllib.request.urlopen = real_urlopen
-
-summary["liveShape"] = {
-  "remaining": float(live["remaining"]),
-  "granted": float(live["granted"]),
-  "toppedUp": float(live["toppedUp"]),
-  "currency": live["currency"],
-}
-summary["requestShape"] = {"url": captured.get("url"), "auth": captured.get("auth")}
-print(json.dumps(summary, separators=(",", ":")))
-PY
-)
-
-[[ $(jq -c '.withConfig | {remaining, funded, spent, currency, estimated}' <<<"$result") == '{"remaining":8.15,"funded":20.0,"spent":11.85,"currency":"USD","estimated":true}' ]] ||
-  fail "DeepSeek collector derives the estimated ledger from fundedAmount" "$result"
-pass "DeepSeek collector derives the estimated ledger from fundedAmount"
-
-[[ $(jq -c '.onFailure' <<<"$result") == '{"hasBalance":false,"status":"Balance unavailable","help":"balance endpoint unavailable"}' ]] ||
-  fail "DeepSeek collector reports a failed balance lookup in the record" "$result"
-pass "DeepSeek collector reports a failed balance lookup in the record"
-
-[[ $(jq -c '.liveShape' <<<"$result") == '{"remaining":42.5,"granted":2.5,"toppedUp":40.0,"currency":"CNY"}' ]] ||
-  fail "DeepSeek collector parses the live balance response" "$result"
-pass "DeepSeek collector parses the live balance response"
-
-[[ $(jq -c '.requestShape' <<<"$result") == '{"url":"https://api.deepseek.com/user/balance","auth":"Bearer key-123"}' ]] ||
-  fail "DeepSeek collector requests /user/balance with the bearer key" "$result"
-pass "DeepSeek collector requests /user/balance with the bearer key"
+# Without rg the sessions can't be read, and a scan missing them is never
+# cached as the whole story.
+rm -rf "$CACHE_HOME/.cache"
+HOME="$CACHE_HOME" XDG_CACHE_HOME="$CACHE_HOME/.cache" XDG_DATA_HOME="$CACHE_HOME/.local/share" \
+  PATH="$CACHE_HOME/no-bin" "$ROOT/bin/omarchy-agent-usage-deepseek" >/dev/null 2>&1
+[[ -z $(find "$CACHE_HOME/.cache" -name 'deepseek-scan-*.json' 2>/dev/null) ]] ||
+  fail "DeepSeek collector doesn't cache a scan that couldn't read the sessions"
+pass "DeepSeek collector doesn't cache a scan that couldn't read the sessions"
