@@ -702,14 +702,22 @@ def scan_opencode_usage(max_age_seconds: float) -> dict[str, Any] | None:
     # opencode v1 keeps messages in `message`, with the role, provider and model
     # in each row's data. v2 writes `session_message` instead: the role moves to
     # the `type` column and the provider and model nest under data.model. A
-    # database can hold either or both.
+    # database can hold either or both, and a migrated message sits in both
+    # under the same id, so V2 is read first and each id counts once.
+    # A table without an id column keys its rows by table and rowid, which
+    # never matches the other store.
+    def message_key(table: str) -> str:
+      columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+      return "id" if "id" in columns else f"'{table}:' || rowid"
+
     queries = []
-    if "message" in tables:
-      queries.append(("opencode:", "SELECT session_id, data, NULL FROM message"))
     if "session_message" in tables:
-      queries.append(("opencode-v2:", "SELECT session_id, data, type FROM session_message"))
-    rows = ((prefix, row) for prefix, query in queries for row in conn.execute(query))
-    for session_prefix, (session_id, raw, row_type) in rows:
+      queries.append(f"SELECT {message_key('session_message')}, session_id, data, type FROM session_message")
+    if "message" in tables:
+      queries.append(f"SELECT {message_key('message')}, session_id, data, NULL FROM message")
+    seen: set[str] = set()
+    rows = (row for query in queries for row in conn.execute(query))
+    for row_id, session_id, raw, row_type in rows:
       # One malformed row must not abort the scan, so every shape assumption
       # lives inside the try.
       try:
@@ -745,7 +753,11 @@ def scan_opencode_usage(max_age_seconds: float) -> dict[str, Any] | None:
         model = str(model_id or "claude").rstrip("/").split("/")[-1]
       except Exception:
         continue
-      session_key = session_prefix + str(session_id)
+      if str(row_id) in seen:
+        continue
+      seen.add(str(row_id))
+      # One key per session id across both stores: a migrated session is one.
+      session_key = "opencode:" + str(session_id)
       sessions.add(session_key)
       active_days.add(day)
       prompts += 1

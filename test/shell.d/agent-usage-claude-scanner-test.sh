@@ -313,6 +313,27 @@ pass "Claude collector counts Anthropic usage from opencode v2 sessions"
   fail "Claude collector reads the model from opencode v2's nested model" "$result"
 pass "Claude collector reads the model from opencode v2's nested model"
 
+# A migrated message sits in both stores under the same id, and counts once.
+MIGRATED_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
+mkdir -p "$MIGRATED_HOME/.local/share/opencode"
+cp "$OPENCODE_V2_HOME/.local/share/opencode/opencode.db" "$MIGRATED_HOME/.local/share/opencode/opencode.db"
+python3 - "$MIGRATED_HOME/.local/share/opencode/opencode.db" <<'PY'
+import json, sqlite3, sys, time
+conn = sqlite3.connect(sys.argv[1])
+now_ms = int(time.time() * 1000)
+conn.execute("INSERT INTO session_message VALUES ('msg_1', 'ses_1', 'assistant', 1, ?, ?, ?)", (now_ms, now_ms, json.dumps({
+  "model": {"id": "claude-opus-5", "providerID": "anthropic"},
+  "tokens": {"input": 1, "output": 1, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+  "time": {"created": now_ms},
+})))
+conn.commit()
+PY
+result=$(HOME="$MIGRATED_HOME" XDG_CACHE_HOME="$MIGRATED_HOME/.cache" XDG_DATA_HOME="$MIGRATED_HOME/.local/share" \
+  "$ROOT/bin/omarchy-agent-usage-claude" --force)
+[[ $(jq -r '(.todayTotalTokens|tostring) + "/" + (.todaySessions|tostring) + "/" + (.todayPrompts|tostring)' <<<"$result") == "51057/2/2" ]] ||
+  fail "Claude collector counts a message in both opencode stores once" "$result"
+pass "Claude collector counts a message in both opencode stores once"
+
 # A fresh v2 install has no legacy message table at all.
 python3 -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("DROP TABLE message"); c.commit()' \
   "$OPENCODE_V2_HOME/.local/share/opencode/opencode.db"
