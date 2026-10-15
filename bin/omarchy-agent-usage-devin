@@ -1,226 +1,192 @@
 #!/usr/bin/python3
-# omarchy:summary=Print the Devin CLI usage record as JSON
+# omarchy:summary=Print the Devin usage record as JSON
 # omarchy:args=[--force] [--limits-only]
 # omarchy:hidden=true
-"""Collect Devin CLI usage into one display-ready JSON record.
+"""Collect Devin usage into one display-ready JSON record.
 
 Token stats come from the Devin CLI session database at
-~/.local/share/devin/cli/sessions.db. Each assistant message carries
-metadata.metrics with input/output/cache token counts and the generation
-model, so the collector aggregates those by day and by model the same way
-the Claude and Codex collectors do.
+$XDG_DATA_HOME/devin/cli/sessions.db, where each assistant message carries
+metadata.metrics with its input/output/cache token counts and the model that
+generated it, and from pi/omp sessions that ran on the devin provider.
 
-Rate limits (daily and weekly quota percentages with reset times) come from
-the user-status cache that the Devin TUI writes at
-~/.cache/devin/cli/user_status.*.bin on every startup. The TUI fetches
-these from the server via a gRPC call (GetUserStatus); the collector reads
-the cached result so it doesn't need to make its own network call.
+The daily and weekly quota comes from the user-status cache the Devin CLI
+writes at $XDG_CACHE_HOME/devin/cli/user_status.*.bin every time it starts:
+the GetUserStatus answer it fetched, base64 protobuf. The collector reads that
+cache, the same data the CLI's /usage command renders, and makes no network
+call of its own. The agents panel only ever reads the JSON this prints.
 """
 
 import argparse
 import base64
-import datetime as dt
 import fcntl
 import hashlib
 import json
+import math
 import os
+import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 AGENT_ID = "devin"
 AGENT_NAME = "Devin"
+PROVIDER = "devin"
+AUTH_HELP = "Run `devin auth login` so Devin can record its quota."
+REFRESH_HELP = "Devin hasn't recorded its quota since it was signed in. Start Devin to refresh it."
 
 # A scan this recent is only reused to dedup concurrent collector runs (the
 # update command backgrounds one per agent while the panel refreshes on its
-# own); every periodic widget refresh lands a real rescan, however low
-# refreshIntervalSec is set. --limits-only promises only fresh limits, so it
-# may reuse a scan for up to 15 minutes. Devin's limits come from the TUI's
-# user-status cache, not a live API call, so they are always read fresh.
+# own). --limits-only promises only fresh limits, so it may reuse a scan for
+# up to 15 minutes. The quota is a file read, so it is read on every run.
 SCAN_REUSE_SECONDS = 20
 LIMITS_ONLY_REUSE_SECONDS = 900
 
-# Devin's quota comes from a cache the TUI writes, never a live fetch, and
-# cloud sessions keep spending it meanwhile. Numbers this recent still
-# describe the account; older ones are flagged stale with their fetch time.
+# The quota comes from a cache the CLI writes when it starts, never from a
+# check of ours, and cloud sessions keep spending it meanwhile. Numbers this
+# recent still describe the account; older ones are reported stale, with
+# their age.
 LIMITS_CURRENT_ENOUGH_SECONDS = 900
 
+# The plan tiers GetUserStatus numbers, named as Devin names them. Only asked
+# when the plan carries no name of its own.
+TEAMS_TIER = {
+  1: "Teams", 2: "Pro", 3: "Enterprise Saas", 4: "Hybrid", 5: "Enterprise Self Hosted",
+  6: "Waitlist Pro", 7: "Teams Ultimate", 9: "Trial", 10: "Enterprise Self Serve",
+  12: "Devin Enterprise", 14: "Devin Teams", 15: "Devin Teams V2", 16: "Devin Pro",
+  17: "Devin Max", 18: "Max", 19: "Devin Free", 20: "Devin Trial",
+}
 
-def data_dir() -> Path:
-  return Path(os.environ.get("DEVIN_DATA_DIR") or (Path.home() / ".local" / "share" / "devin" / "cli"))
+# Past this a token count or timestamp from disk is garbage, not usage.
+MAX_TOKENS = 10_000_000_000
+EARLIEST_EPOCH = 946_684_800  # 2000-01-01
+LATEST_EPOCH = 4_102_444_800  # 2100-01-01
 
 
-def db_path() -> Path:
-  return data_dir() / "sessions.db"
+# --------------------------------------------------------------- utilities
 
 
-def cache_root() -> Path:
-  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
+def obj(value):
+  return value if isinstance(value, dict) else {}
+
+
+# Token counts and timestamps on disk are untrusted: a boolean, NaN, infinite,
+# negative, huge or non-numeric value reads as nothing.
+def number(value):
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
+    return 0
+  if not math.isfinite(value) or value < 0 or value > MAX_TOKENS:
+    return 0
+  return int(value)
+
+
+def epoch_seconds(value):
+  if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    return None
+  # Session timestamps are seconds or milliseconds.
+  seconds = value / 1000 if value > 100_000_000_000 else value
+  if not EARLIEST_EPOCH <= seconds < LATEST_EPOCH:
+    return None
+  return seconds
+
+
+def parse_time(value):
+  """A timestamp from disk as an aware datetime, or None when it won't read."""
+  seconds = epoch_seconds(value)
+  if seconds is not None:
+    return datetime.fromtimestamp(seconds, timezone.utc)
+  if not isinstance(value, str) or not value.strip():
+    return None
+  try:
+    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+  except ValueError:
+    return None
+  if parsed.tzinfo is None:
+    parsed = parsed.astimezone()
+  if epoch_seconds(parsed.timestamp()) is None:
+    return None
+  return parsed
+
+
+def local_day(value):
+  parsed = parse_time(value)
+  return parsed.astimezone().strftime("%Y-%m-%d") if parsed else None
+
+
+def iso_from_unix(value):
+  seconds = epoch_seconds(value)
+  return datetime.fromtimestamp(seconds, timezone.utc).isoformat() if seconds else ""
+
+
+def model_name(raw):
+  return str(raw or "").strip() or AGENT_ID
+
+
+def runtime_env():
+  home = str(Path.home())
+  path_parts = [
+    os.environ.get("PATH", ""),
+    f"{home}/.local/bin",
+    f"{home}/.npm-global/bin",
+    f"{home}/.local/share/mise/shims",
+  ]
+  env = os.environ.copy()
+  env["PATH"] = os.pathsep.join(part for part in path_parts if part)
+  return env
+
+
+ENV = runtime_env()
+
+
+def find_command(name):
+  return shutil.which(name, path=ENV.get("PATH"))
+
+
+def data_home():
+  return Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+
+
+def xdg_cache_home():
+  return Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+
+
+def cache_root():
+  root = xdg_cache_home() / "omarchy" / "agent-usage"
   root.mkdir(parents=True, exist_ok=True)
   return root
 
 
-def cache_paths() -> tuple[Path, Path]:
-  digest = hashlib.sha1(str(data_dir()).encode("utf-8")).hexdigest()[:16]
-  root = cache_root()
-  return root / f"devin-scan-{digest}.json", root / f"devin-scan-{digest}.lock"
-
-
-def date_string(value: dt.date) -> str:
-  return value.strftime("%Y-%m-%d")
-
-
-def today_string() -> str:
-  return date_string(dt.datetime.now().date())
-
-
-def recent_date_strings() -> list[str]:
-  today = dt.datetime.now().date()
-  return [date_string(today - dt.timedelta(days=offset)) for offset in range(6, -1, -1)]
-
-
-def local_date_string() -> str:
-  return date_string(dt.datetime.now().date())
-
-
-def number(value: Any) -> int:
+def read_json(path):
   try:
-    return int(value or 0)
-  except (TypeError, ValueError):
-    return 0
-
-
-def model_name(raw: Any) -> str:
-  value = str(raw or "devin")
-  return value if value else "devin"
-
-
-def empty_bucket() -> dict[str, int]:
-  return {
-    "inputTokens": 0,
-    "outputTokens": 0,
-    "cacheReadInputTokens": 0,
-    "cacheCreationInputTokens": 0,
-  }
-
-
-# ---------------------------------------------------------------- local scan
-
-
-def run_scan(conn: sqlite3.Connection) -> dict[str, Any]:
-  """Run the full SQLite scan and return the stats dict for caching."""
-  today = dt.datetime.now().date()
-  recent_dates = recent_date_strings()
-  recent: dict[str, int] = {day: 0 for day in recent_dates}
-  today_by_model: dict[str, int] = {}
-  model_usage: dict[str, dict[str, int]] = {}
-  active_dates: set[str] = set()
-
-  # json_extract raises on malformed JSON, aborting the whole query — and the
-  # direct-scan fallback — on a single bad row. CASE only evaluates the
-  # matching branch, so invalid chat_message rows are skipped instead; a bare
-  # AND would not order json_valid before json_extract.
-  for row in conn.execute(
-    """
-    SELECT
-      date(mn.created_at, 'unixepoch', 'localtime') AS day,
-      json_extract(mn.chat_message, '$.metadata.metrics.input_tokens') AS input_tokens,
-      json_extract(mn.chat_message, '$.metadata.metrics.output_tokens') AS output_tokens,
-      json_extract(mn.chat_message, '$.metadata.metrics.cache_read_tokens') AS cache_read_tokens,
-      json_extract(mn.chat_message, '$.metadata.metrics.cache_creation_tokens') AS cache_creation_tokens,
-      json_extract(mn.chat_message, '$.metadata.generation_model') AS model
-    FROM message_nodes mn
-    WHERE CASE WHEN json_valid(mn.chat_message)
-               THEN json_extract(mn.chat_message, '$.metadata.metrics') IS NOT NULL
-               ELSE 0 END
-    """
-  ):
-    inp = number(row["input_tokens"])
-    out = number(row["output_tokens"])
-    cache_read = number(row["cache_read_tokens"])
-    cache_write = number(row["cache_creation_tokens"])
-    total = inp + out + cache_read + cache_write
-    if total <= 0:
-      continue
-
-    model = model_name(row["model"])
-    day = row["day"] or local_date_string()
-
-    bucket = model_usage.setdefault(model, empty_bucket())
-    bucket["inputTokens"] += inp
-    bucket["outputTokens"] += out
-    bucket["cacheReadInputTokens"] += cache_read
-    bucket["cacheCreationInputTokens"] += cache_write
-
-    if day:
-      active_dates.add(day)
-    if day in recent:
-      recent[day] += total
-    if day == date_string(today):
-      today_by_model[model] = today_by_model.get(model, 0) + total
-
-  today_prompts = 0
-  today_sessions = 0
-  total_prompts = 0
-
-  for row in conn.execute(
-    """
-    SELECT
-      date(timestamp, 'unixepoch', 'localtime') AS day,
-      COUNT(*) AS prompts,
-      COUNT(DISTINCT session_id) AS sessions
-    FROM prompt_history
-    GROUP BY day
-    """
-  ):
-    day = row["day"] or local_date_string()
-    prompts = number(row["prompts"])
-    total_prompts += prompts
-    if day == date_string(today):
-      today_prompts = prompts
-      today_sessions = number(row["sessions"])
-
-  # Per-day distinct counts can't be summed: a session spanning midnight
-  # belongs to two days. All-time sessions need their own distinct count.
-  total_sessions = number(
-    conn.execute("SELECT COUNT(DISTINCT session_id) FROM prompt_history").fetchone()[0]
-  )
-
-  return {
-    "todayPrompts": today_prompts,
-    "todaySessions": today_sessions,
-    "todayTotalTokens": sum(today_by_model.values()),
-    "todayTokensByModel": today_by_model,
-    "recentDays": [{"date": day, "messageCount": recent[day]} for day in recent_dates],
-    "totalPrompts": total_prompts,
-    "totalSessions": total_sessions,
-    "activeDays": len(active_dates),
-    "activeDates": sorted(active_dates),
-    "modelUsage": model_usage,
-  }
-
-
-def read_fresh_json(path: Path, max_age_seconds: int) -> Any:
-  if max_age_seconds <= 0 or not path.exists():
-    return None
-  try:
-    age = time.time() - path.stat().st_mtime
-    if 0 <= age <= max_age_seconds:
-      return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))
   except Exception:
     return None
-  return None
 
 
-def write_json(path: Path, payload: Any) -> None:
+def read_fresh_json(path, max_age_seconds):
+  if max_age_seconds <= 0:
+    return None
+  try:
+    # A negative age means the mtime is in the future: the clock moved
+    # backwards since the write, so the cache's freshness cannot be trusted.
+    age = time.time() - path.stat().st_mtime
+  except OSError:
+    return None
+  return read_json(path) if 0 <= age < max_age_seconds else None
+
+
+def write_json(path, payload):
+  # A temp name unique to this writer: several collectors can run at once, and
+  # a shared temp path means the second replace finds the first one's file
+  # already moved away.
   handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
   tmp = Path(tmp_name)
   try:
     with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
-      handle.write(json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n")
+      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
     tmp.chmod(0o644)
     tmp.replace(path)
   except BaseException:
@@ -228,231 +194,569 @@ def write_json(path: Path, payload: Any) -> None:
     raise
 
 
-def read_cached_stats(cache_file: Path, max_age_seconds: int) -> dict[str, Any] | None:
-  cached = read_fresh_json(cache_file, max_age_seconds)
-  if not isinstance(cached, dict) or cached.get("schemaVersion") != 1:
+# ------------------------------------------------------------------- stats
+
+
+def empty_bucket():
+  return {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
+
+
+class Stats:
+  """Token and activity totals shared by every local source. Sessions and days
+  are sets, so a day active in two sources counts once toward activeDays."""
+
+  def __init__(self):
+    now = datetime.now()
+    self.today = now.strftime("%Y-%m-%d")
+    self.recent_dates = [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
+    self.recent = {day: 0 for day in self.recent_dates}
+    self.today_prompts = 0
+    self.today_total_tokens = 0
+    self.today_sessions = set()
+    self.today_tokens_by_model = {}
+    self.total_prompts = 0
+    self.total_sessions = set()
+    self.active_days = set()
+    self.model_usage = {}
+
+  # A session of None is settled later, with add_session.
+  def add_session(self, session, today):
+    if session is not None:
+      self.total_sessions.add(session)
+      if today:
+        self.today_sessions.add(session)
+
+  def add_prompt(self, session, day):
+    self.total_prompts += 1
+    if day == self.today:
+      self.today_prompts += 1
+    self.add_session(session, day == self.today)
+
+  def add(self, session, day, model, input_tokens, output_tokens, cache_read, cache_write, prompt=True):
+    total = input_tokens + output_tokens + cache_read + cache_write
+    if total <= 0:
+      return
+    if prompt:
+      self.add_prompt(session, day)
+    self.add_session(session, day == self.today)
+    self.active_days.add(day)
+    bucket = self.model_usage.setdefault(model, empty_bucket())
+    bucket["inputTokens"] += input_tokens
+    bucket["outputTokens"] += output_tokens
+    bucket["cacheReadInputTokens"] += cache_read
+    bucket["cacheCreationInputTokens"] += cache_write
+    if day in self.recent:
+      # recentDays.messageCount holds tokens, despite the legacy name.
+      self.recent[day] += total
+    if day == self.today:
+      self.today_total_tokens += total
+      self.today_tokens_by_model[model] = self.today_tokens_by_model.get(model, 0) + total
+
+  def record(self):
+    return {
+      "todayPrompts": self.today_prompts,
+      "todaySessions": len(self.today_sessions),
+      "todayTotalTokens": self.today_total_tokens,
+      "todayTokensByModel": self.today_tokens_by_model,
+      "recentDays": [{"date": day, "messageCount": self.recent[day]} for day in self.recent_dates],
+      "totalPrompts": self.total_prompts,
+      "totalSessions": len(self.total_sessions),
+      "activeDays": len(self.active_days),
+      "activeDates": sorted(self.active_days),
+      "modelUsage": self.model_usage,
+    }
+
+
+# ------------------------------------------------------------- Devin CLI
+
+
+def data_dir():
+  return Path(os.environ.get("DEVIN_DATA_DIR") or (data_home() / "devin" / "cli"))
+
+
+def credentials_path():
+  return data_dir().parent / "credentials.toml"
+
+
+def session_databases():
+  """The CLI's own database, or failing that the older layout some builds
+  wrote straight under $XDG_DATA_HOME/devin. Never both: a machine that moved
+  to the newer layout may still have the old files, holding the same work."""
+  primary = data_dir() / "sessions.db"
+  if primary.is_file():
+    return [primary]
+  root = data_home() / "devin"
+  return [path for path in (root / "cli_sessions.db", root / "sessions.db") if path.is_file()]
+
+
+def table_columns(conn, table):
+  return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def scan_message_nodes(conn, stats, prefix):
+  # Every assistant message records what it spent under metadata.metrics.
+  # The LIKE gate skips rows that cannot hold metrics before any parse.
+  for session_id, created_at, raw in conn.execute(
+    "SELECT session_id, created_at, chat_message FROM message_nodes WHERE chat_message LIKE '%\"metrics\"%'"
+  ):
+    try:
+      metadata = obj(obj(json.loads(raw)).get("metadata"))
+    except (TypeError, ValueError):
+      continue
+    metrics = obj(metadata.get("metrics"))
+    day = local_day(created_at)
+    if not metrics or day is None:
+      continue
+    # Prompts are counted from prompt_history, where each one is a row.
+    stats.add(
+      prefix + str(session_id), day, model_name(metadata.get("generation_model")),
+      number(metrics.get("input_tokens")), number(metrics.get("output_tokens")),
+      number(metrics.get("cache_read_tokens")), number(metrics.get("cache_creation_tokens")),
+      prompt=False,
+    )
+
+
+def scan_prompt_history(conn, stats, prefix):
+  for session_id, timestamp in conn.execute("SELECT session_id, timestamp FROM prompt_history"):
+    day = local_day(timestamp)
+    if day is not None:
+      stats.add_prompt(prefix + str(session_id), day)
+
+
+def scan_session_totals(conn, stats, prefix, tables):
+  # The older layout keeps one lifetime total per session and no split by
+  # kind, so the tokens land on the day the session was last active and in
+  # inputTokens, the one bucket that cannot overstate a split it doesn't have.
+  for session_id, model, created_at, last_activity_at, total_tokens in conn.execute(
+    "SELECT id, model, created_at, last_activity_at, total_tokens FROM sessions"
+  ):
+    day = local_day(last_activity_at) or local_day(created_at)
+    if day is not None:
+      stats.add(prefix + str(session_id), day, model_name(model), number(total_tokens), 0, 0, 0, prompt=False)
+  if "messages" in tables and {"role", "timestamp", "session_id"} <= table_columns(conn, "messages"):
+    for session_id, role, timestamp in conn.execute("SELECT session_id, role, timestamp FROM messages WHERE role = 'assistant'"):
+      day = local_day(timestamp)
+      if day is not None:
+        stats.add_prompt(prefix + str(session_id), day)
+
+
+def scan_devin_database(path, stats):
+  """Add one session database. Returns whether it was read to the end."""
+  try:
+    # Read-only: Devin may be writing right now.
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+  except sqlite3.Error:
+    return False
+  prefix = "devin:" + path.name + ":"
+  try:
+    conn.execute("PRAGMA query_only = ON")
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    known = False
+    if "message_nodes" in tables and {"session_id", "created_at", "chat_message"} <= table_columns(conn, "message_nodes"):
+      known = True
+      scan_message_nodes(conn, stats, prefix)
+    if "prompt_history" in tables and {"session_id", "timestamp"} <= table_columns(conn, "prompt_history"):
+      known = True
+      scan_prompt_history(conn, stats, prefix)
+    if not known and "sessions" in tables and {"id", "model", "created_at", "last_activity_at", "total_tokens"} <= table_columns(conn, "sessions"):
+      known = True
+      scan_session_totals(conn, stats, prefix, tables)
+    if not known:
+      # A layout this collector doesn't know: reading it again won't help.
+      print(f"omarchy-agent-usage-devin: {path} has no session tables this collector reads", file=sys.stderr)
+  except sqlite3.Error as error:
+    # Transient lock, schema migration, corruption: the numbers stop here,
+    # incomplete.
+    print(f"omarchy-agent-usage-devin: {path}: {error}", file=sys.stderr)
+    return False
+  finally:
+    conn.close()
+  return True
+
+
+# --------------------------------------------------------------- pi and omp
+
+
+# `omp --profile=<name>` (and pi's equivalent) moves the agent tree under
+# <base>/profiles/<name>/, and PI_CODING_AGENT_DIR moves pi's default one.
+# Sessions are keyed by path, so a profile adds sessions rather than counting
+# the default root again.
+def pi_pattern():
+  return r'"provider"\s*:\s*"devin"'
+
+
+def accept_pi(message):
+  return str(message.get("provider") or "") == PROVIDER
+
+
+def pi_session_roots():
+  pi_agent = os.environ.get("PI_CODING_AGENT_DIR")
+  agent_dirs = [Path(pi_agent).expanduser() if pi_agent else Path.home() / ".pi" / "agent", Path.home() / ".omp" / "agent"]
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    try:
+      agent_dirs.extend(sorted(child / "agent" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      pass
+  roots = []
+  for agent_dir in agent_dirs:
+    root = agent_dir / "sessions"
+    if root.is_dir() and root.resolve() not in [r.resolve() for r in roots]:
+      roots.append(root)
+  return roots
+
+
+def pi_parent_session(path):
+  # A fork names the session it was cut from in its header line.
+  try:
+    with open(path, encoding="utf-8", errors="replace") as handle:
+      header = json.loads(handle.readline())
+  except (OSError, ValueError):
     return None
-  # today* fields only mean "today" on the day they were scanned. A cache
-  # from another local date (midnight passed, or the clock moved) is a miss,
-  # not merely old, whatever its mtime says.
-  if cached.get("scanDate") != today_string():
+  parent = header.get("parentSession") if isinstance(header, dict) else None
+  return os.path.abspath(os.path.expanduser(parent)) if isinstance(parent, str) and parent else None
+
+
+def scan_pi_sessions(stats):
+  """Add the pi/omp assistant messages this collector counts. Returns whether
+  every root was read."""
+  roots = pi_session_roots()
+  if not roots:
+    return True
+  rg = find_command("rg") or "rg"
+  try:
+    proc = subprocess.Popen(
+      # --no-ignore: these are data files, not a source tree. A $HOME that is
+      # a git checkout would otherwise hide every session behind its ignores.
+      [rg, "--json", "--no-ignore", "-e", pi_pattern(), *map(str, roots)],
+      stdout=subprocess.PIPE,
+      stderr=subprocess.DEVNULL,
+      text=True,
+      errors="replace",
+      env=ENV,
+    )
+  except OSError:
+    return False
+
+  counted = set()
+  owned = {}
+  today_owned = {}
+  assert proc.stdout is not None
+  for raw in proc.stdout:
+    try:
+      event = json.loads(raw)
+      if event.get("type") != "match":
+        continue
+      path = os.path.abspath(event["data"]["path"]["text"])
+      line_number = event["data"].get("line_number")
+      entry = json.loads(event["data"]["lines"]["text"])
+    except Exception:
+      continue
+    if not isinstance(entry, dict) or entry.get("type") != "message":
+      continue
+    message = obj(entry.get("message"))
+    if message.get("role") != "assistant" or not accept_pi(message):
+      continue
+    usage = obj(message.get("usage"))
+    input_tokens = number(usage.get("input"))
+    output_tokens = number(usage.get("output"))
+    cache_read = number(usage.get("cacheRead"))
+    cache_write = number(usage.get("cacheWrite"))
+    if not (input_tokens or output_tokens or cache_read or cache_write):
+      input_tokens = number(usage.get("totalTokens"))
+    timestamp = entry.get("timestamp")
+    day = local_day(timestamp) or local_day(message.get("timestamp"))
+    if day is None or not (input_tokens or output_tokens or cache_read or cache_write):
+      continue
+    # A fork repeats its parent's messages with their ids and timestamps, so
+    # the pair says two lines are one message. An id alone is only unique
+    # within its file, and a line without one always counts.
+    message_id = str(entry.get("id") or "")
+    if message_id and timestamp is not None:
+      key = ("entry", message_id, str(timestamp))
+    elif message_id:
+      key = ("path", path, message_id)
+    else:
+      key = ("line", path, line_number)
+    owned.setdefault(path, set()).add(key)
+    if day == stats.today:
+      today_owned.setdefault(path, set()).add(key)
+    if key in counted:
+      continue
+    counted.add(key)
+    stats.add(None, day, model_name(message.get("model")), input_tokens, output_tokens, cache_read, cache_write)
+
+  try:
+    code = proc.wait(timeout=5)
+  except subprocess.TimeoutExpired:
+    proc.kill()
+    return False
+
+  # A message belongs to the oldest session holding it, so a fork is a
+  # session of its own only for what it added, whichever file rg read first.
+  parents = {}
+  for path, keys in owned.items():
+    inherited = set()
+    visited = {path}
+    parent = parents.setdefault(path, pi_parent_session(path))
+    while parent and parent not in visited:
+      visited.add(parent)
+      inherited |= owned.get(parent, set())
+      parent = parents.setdefault(parent, pi_parent_session(parent))
+    if keys - inherited:
+      stats.add_session(path, bool(today_owned.get(path, set()) - inherited))
+  # rg exits 1 when nothing matched and 2 when a file couldn't be read.
+  return code in (0, 1)
+
+
+# -------------------------------------------------------------- scan cache
+
+
+def scan_cache_paths():
+  digest = hashlib.sha1("\n".join([
+    str(Path.home()), str(data_dir()), str(data_home()), os.environ.get("PI_CODING_AGENT_DIR", ""),
+  ]).encode("utf-8")).hexdigest()[:16]
+  root = cache_root()
+  return root / f"devin-scan-{digest}.json", root / f"devin-scan-{digest}.lock"
+
+
+def run_local_scans():
+  stats = Stats()
+  complete = scan_pi_sessions(stats)
+  for path in session_databases():
+    complete = scan_devin_database(path, stats) and complete
+  return stats.record(), complete
+
+
+def read_cached_stats(cache_file, max_age):
+  cached = read_fresh_json(cache_file, max_age)
+  if not isinstance(cached, dict) or cached.get("schemaVersion") != 2:
+    return None
+  # today* fields only mean "today" on the day they were scanned.
+  if cached.get("scanDate") != datetime.now().strftime("%Y-%m-%d"):
     return None
   stats = cached.get("stats")
-  if not isinstance(stats, dict):
-    return None
-  if not all(key in stats for key in ("todayPrompts", "todayTotalTokens", "recentDays", "activeDates", "modelUsage")):
-    return None
-  return stats
+  return stats if isinstance(stats, dict) and set(Stats().record()) <= set(stats) else None
 
 
-def write_cached_stats(cache_file: Path, stats: dict[str, Any]) -> None:
+def cached_local_stats(max_age):
+  """Local stats, with the cache as a pure optimization: any cache-layer
+  failure degrades to a direct scan and a warning on stderr."""
   try:
-    write_json(cache_file, {"schemaVersion": 1, "scanDate": today_string(), "stats": stats})
-  except Exception as exc:
-    print(f"omarchy-agent-usage-devin: could not write usage cache ({exc})", file=sys.stderr)
-
-
-def cached_scan(conn: sqlite3.Connection, force: bool, limits_only: bool) -> dict[str, Any]:
-  """Local stats, with the cache as a pure optimization.
-
-  The cache must never take the collector down: any cache-layer failure
-  (unwritable cache root, lock errors, disk full) degrades to a direct scan
-  and a warning on stderr. The JSON record is the contract; the cache is not.
-  """
-  max_age = 0 if force else (LIMITS_ONLY_REUSE_SECONDS if limits_only else SCAN_REUSE_SECONDS)
-  try:
-    return _cached_scan(conn, max_age)
-  except sqlite3.Error:
-    raise  # a database failure is not a cache-layer problem
-  except Exception as exc:
-    print(f"omarchy-agent-usage-devin: cache unavailable ({exc}); scanning directly", file=sys.stderr)
-    return run_scan(conn)
-
-
-def _cached_scan(conn: sqlite3.Connection, max_age: int) -> dict[str, Any]:
-  cache_file, lock_file = cache_paths()
-
-  cached = read_cached_stats(cache_file, max_age)
-  if cached is not None:
-    return cached
-
-  with lock_file.open("w") as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX)
+    cache_file, lock_file = scan_cache_paths()
     cached = read_cached_stats(cache_file, max_age)
     if cached is not None:
       return cached
-    stats = run_scan(conn)
-    write_cached_stats(cache_file, stats)
-    return stats
+    with lock_file.open("w") as lock:
+      fcntl.flock(lock, fcntl.LOCK_EX)
+      cached = read_cached_stats(cache_file, max_age)
+      if cached is not None:
+        return cached
+      stats, complete = run_local_scans()
+      # A scan that couldn't read everything serves this run, but caching it
+      # would hide the missing usage from every reader until it expires.
+      if complete:
+        write_json(cache_file, {"schemaVersion": 2, "scanDate": datetime.now().strftime("%Y-%m-%d"), "stats": stats})
+      return stats
+  except Exception as exc:
+    print(f"omarchy-agent-usage-devin: cache unavailable ({exc}); scanning directly", file=sys.stderr)
+    return run_local_scans()[0]
 
 
-# ------------------------------------------------------------------- limits
+# ------------------------------------------------------------------ quota
 #
-# Devin does not expose rate limits through a CLI command or REST API. The
-# TUI fetches GetUserStatus from the server on startup and caches the
-# protobuf response at ~/.cache/devin/cli/user_status.*.bin. The collector
-# reads that cache — the same data the /usage slash command renders — so it
-# doesn't need credentials or a network call of its own.
+# GetUserStatus is protobuf, and the record needs a handful of its fields, so
+# they are walked by hand rather than through generated code. In the cached
+# UserStatus, field 10 is the plan tier and field 13 the PlanStatus; inside
+# that, field 1 is the PlanInfo, 3 the plan's end, 5-7 the credits used,
+# 14/15 the daily/weekly percent remaining and 17/18 their reset times.
 
 
-def user_status_dir() -> Path:
-  return Path(os.environ.get("DEVIN_CACHE_DIR") or (Path.home() / ".cache" / "devin" / "cli"))
-
-
-def credentials_mtime() -> float | None:
-  # The CLI rewrites credentials.toml on sign-in, so a user-status file fetched
-  # before that write describes a previous account. The fetch can land a beat
-  # before the file flush, hence the small skew allowance.
-  try:
-    return (data_dir().parent / "credentials.toml").stat().st_mtime - 30
-  except OSError:
-    return None
-
-
-def _decode_varint(data: bytes, pos: int) -> tuple[int, int]:
+def decode_varint(data, pos):
   result = 0
   shift = 0
   while True:
     byte = data[pos]
     result |= (byte & 0x7F) << shift
     pos += 1
-    if not (byte & 0x80):
-      break
+    if not byte & 0x80:
+      return result, pos
     shift += 7
-  return result, pos
+    if shift > 63:
+      raise ValueError("varint too long")
 
 
-def _find_field(data: bytes, target_fn: int) -> bytes | int | None:
-  """Return the value of field `target_fn` in a protobuf message, or None."""
+def proto_fields(data):
+  """field number -> first value: an int for a varint, bytes for a message."""
+  found = {}
   pos = 0
-  while pos < len(data):
-    try:
-      tag, pos = _decode_varint(data, pos)
-      fn = tag >> 3
-      wt = tag & 0x07
-      if wt == 0:  # varint
-        val, pos = _decode_varint(data, pos)
-        if fn == target_fn:
-          return val
-      elif wt == 1:  # 64-bit
-        pos += 8
-      elif wt == 2:  # length-delimited
-        length, pos = _decode_varint(data, pos)
-        val = data[pos:pos + length]
-        pos += length
-        if fn == target_fn:
-          return val
-      elif wt == 5:  # 32-bit
-        pos += 4
+  try:
+    while pos < len(data):
+      tag, pos = decode_varint(data, pos)
+      number_, wire = tag >> 3, tag & 0x07
+      if wire == 0:
+        value, pos = decode_varint(data, pos)
+      elif wire == 1:
+        value, pos = None, pos + 8
+      elif wire == 2:
+        length, pos = decode_varint(data, pos)
+        value, pos = bytes(data[pos:pos + length]), pos + length
+      elif wire == 5:
+        value, pos = None, pos + 4
       else:
         break
-    except IndexError:
-      break
-  return None
+      if value is not None:
+        found.setdefault(number_, value)
+  except (IndexError, ValueError):
+    pass
+  return found
 
 
-def _iso_from_unix(unix_ts: int | None) -> str:
-  if not unix_ts or unix_ts <= 0:
-    return ""
-  return dt.datetime.fromtimestamp(unix_ts, tz=dt.timezone.utc).isoformat()
+def message(fields, number_):
+  value = fields.get(number_)
+  return proto_fields(value) if isinstance(value, bytes) else {}
 
 
-# A cached percentage outlives the TUI session that measured it, but only
-# until its window rolls over: once a window has reset, the figure describes
-# a period that is over, and a stale 69% would misreport a fresh allowance.
-# A window with no reset time, or one that won't parse, is kept — an
-# unreadable timestamp is no reason to throw away a real number.
-def _limit_window_open(entry: dict[str, Any], now: dt.datetime) -> bool:
+def varint(fields, number_):
+  value = fields.get(number_)
+  if not isinstance(value, int):
+    return None
+  return value - (1 << 64) if value >= (1 << 63) else value
+
+
+def text(fields, number_):
+  value = fields.get(number_)
+  return value.decode("utf-8", errors="replace").strip() if isinstance(value, bytes) else ""
+
+
+def quota_window(label, remaining, reset):
+  # The percent is what's left; the panel wants what's spent. Proto3 leaves a
+  # zero off the wire, so a window with nothing left carries no percent.
+  remaining = max(0, min(100, remaining or 0))
+  return {"label": label, "percent": (100 - remaining) / 100.0, "resetsAt": iso_from_unix(reset)}
+
+
+def parse_user_status(payload):
+  status = proto_fields(payload)
+  plan_status = message(status, 13)
+  plan = message(plan_status, 1)
+  devin_info = message(plan, 33)
+  tier = text(devin_info, 2) or text(plan, 2) or TEAMS_TIER.get(varint(plan, 1)) or TEAMS_TIER.get(varint(status, 10)) or ""
+
+  limits = []
+  if plan_status:
+    # A credit plan leaves the quota percents at their defaults, so a window
+    # only shows when the server dates its reset or the plan bills by quota,
+    # and never when the plan hides it.
+    quota_plan = varint(plan, 35) == 2
+    windows = (("Daily", 36, 14, 17), ("Weekly", 37, 15, 18))
+    for label, hidden, remaining, reset in windows:
+      if varint(plan, hidden):
+        continue
+      if (varint(plan_status, reset) or 0) > 0 or quota_plan:
+        limits.append(quota_window(label, varint(plan_status, remaining), varint(plan_status, reset)))
+
+    # Monthly credit buckets exist only on credit plans, and last until the
+    # plan's period ends; a quota plan reports no grant and is skipped.
+    plan_end = iso_from_unix(varint(message(plan_status, 3), 1))
+    for label, limit_field, used_field in (("Prompt credits", 12, 6), ("Flow credits", 13, 5), ("Flex credits", 14, 7)):
+      limit = varint(plan, limit_field) or 0
+      used = max(0, varint(plan_status, used_field) or 0)
+      if limit > 0:
+        limits.append({"label": label, "percent": min(1.0, used / limit), "resetsAt": plan_end})
+  return {"tierLabel": tier, "limits": limits}
+
+
+def user_status_dir():
+  return Path(os.environ.get("DEVIN_CACHE_DIR") or (xdg_cache_home() / "devin" / "cli"))
+
+
+def sign_in_time():
+  # The CLI rewrites credentials.toml on sign-in, so a status fetched before
+  # that write describes the account signed in before. The fetch can land a
+  # beat before the file is flushed, hence the small allowance.
+  try:
+    return credentials_path().stat().st_mtime - 30
+  except OSError:
+    return None
+
+
+def limit_window_open(entry, now):
   raw = str(entry.get("resetsAt") or "")
   if raw == "":
     return True
   try:
-    resets_at = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-  except Exception:
+    resets_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+  except ValueError:
     return True
   if resets_at.tzinfo is None:
-    resets_at = resets_at.replace(tzinfo=dt.timezone.utc)
+    resets_at = resets_at.replace(tzinfo=timezone.utc)
   return resets_at > now
 
 
-def parse_quota() -> dict[str, Any]:
-  """Read the user-status caches and return limits + tier label.
+# A window whose reset has passed is untouched, not unknown: it comes back at
+# zero with no reset time until the CLI fetches the next one.
+def usable_limits(entries):
+  now = datetime.now(timezone.utc)
+  return [entry if limit_window_open(entry, now) else dict(entry, percent=0.0, resetsAt="") for entry in entries]
 
-  The PlanStatus nested message carries daily/weekly quota percentages and
-  reset timestamps. Multiple cache files may exist (one per sign-in session),
-  and the CLI exposes no active-identity marker. The freshest fetch wins, but
-  files fetched before the last credentials write belong to a signed-out
-  account: after a switch with no fetch since, nothing qualifies and no quota
-  is reported rather than the previous account's. Without a credentials file
-  to date the sign-in, stale data beats none.
+
+def read_quota():
+  """The newest user-status cache fetched under the current sign-in, or None.
+
+  The CLI keeps one cache per sign-in and no marker of which is active, so
+  the newest fetch wins, and fetches from before the last sign-in are dropped:
+  after a switch with no fetch since, nothing qualifies rather than the
+  previous account's numbers. Without a credentials file to date the sign-in,
+  the newest fetch stands.
   """
-  candidates: list[tuple[float, dict[str, Any]]] = []
-  for path in sorted(user_status_dir().glob("user_status.*.bin")):
-    try:
-      cache = json.loads(path.read_text(encoding="utf-8"))
-      fetched_at = number(cache.get("fetched_at_secs"))
-      payload_b64 = cache.get("payload")
-      if not payload_b64:
-        continue
-      payload = base64.b64decode(payload_b64)
-      plan_status = _find_field(payload, 13)
-      if not isinstance(plan_status, (bytes, bytearray)):
-        continue
-      plan_info = _find_field(plan_status, 1)
-      plan_name = None
-      if isinstance(plan_info, (bytes, bytearray)):
-        raw_name = _find_field(plan_info, 2)
-        if isinstance(raw_name, (bytes, bytearray)):
-          plan_name = raw_name.decode("utf-8", errors="replace")
-      daily_remaining_pct = _find_field(plan_status, 14)
-      weekly_remaining_pct = _find_field(plan_status, 15)
-      daily_reset = _find_field(plan_status, 17)
-      weekly_reset = _find_field(plan_status, 18)
-      limits: list[dict[str, Any]] = []
-      # Both fields are *remaining* percent from GetUserStatus; the panel
-      # expects *used*, so invert: 99% remaining -> 1% used.
-      if isinstance(daily_remaining_pct, int) and daily_remaining_pct >= 0:
-        limits.append({
-          "label": "Daily",
-          "percent": (100 - daily_remaining_pct) / 100.0,
-          "resetsAt": _iso_from_unix(daily_reset if isinstance(daily_reset, int) else None),
-        })
-      if isinstance(weekly_remaining_pct, int) and weekly_remaining_pct >= 0:
-        limits.append({
-          "label": "Weekly",
-          "percent": (100 - weekly_remaining_pct) / 100.0,
-          "resetsAt": _iso_from_unix(weekly_reset if isinstance(weekly_reset, int) else None),
-        })
-      now = dt.datetime.now(dt.timezone.utc)
-      limits = [e for e in limits if _limit_window_open(e, now)]
-      candidates.append((fetched_at, {
-        "tierLabel": plan_name or "",
-        "limits": limits,
-      }))
-    except Exception:
+  cutoff = sign_in_time()
+  best = None
+  try:
+    paths = sorted(user_status_dir().glob("user_status.*.bin"))
+  except OSError:
+    paths = []
+  for path in paths:
+    cache = read_json(path)
+    if not isinstance(cache, dict) or not isinstance(cache.get("payload"), str):
       continue
-  cutoff = credentials_mtime()
-  if cutoff is not None:
-    candidates = [c for c in candidates if c[0] >= cutoff]
-  if not candidates:
-    return {}
-  fetched_at, quota = max(candidates, key=lambda c: c[0])
-  quota["limitsFetchedAt"] = fetched_at * 1000
-  quota["limitsStale"] = time.time() - fetched_at > LIMITS_CURRENT_ENOUGH_SECONDS
-  return quota
+    fetched_at = epoch_seconds(cache.get("fetched_at_secs"))
+    if fetched_at is None or (cutoff is not None and fetched_at < cutoff):
+      continue
+    try:
+      quota = parse_user_status(base64.b64decode(cache["payload"], validate=True))
+    except ValueError:
+      continue
+    if not quota["limits"] and not quota["tierLabel"]:
+      continue
+    if best is None or fetched_at > best[0]:
+      best = (fetched_at, quota)
+  if best is None:
+    return None
+  fetched_at, quota = best
+  age = time.time() - fetched_at
+  return {
+    "tierLabel": quota["tierLabel"],
+    "limits": usable_limits(quota["limits"]),
+    "limitsFetchedAt": round(fetched_at * 1000),
+    "limitsStale": not 0 <= age < LIMITS_CURRENT_ENOUGH_SECONDS,
+  }
 
 
-# -------------------------------------------------------------------- record
+# ------------------------------------------------------------------ record
 
 
-def base_record(**overrides: Any) -> dict[str, Any]:
-  record: dict[str, Any] = {
+def build_record(stats):
+  quota = read_quota()
+  signed_in = credentials_path().is_file()
+  in_use = number(stats.get("totalPrompts")) > 0 or bool(stats.get("modelUsage"))
+
+  record = {
     "schemaVersion": 1,
     "id": AGENT_ID,
     "name": AGENT_NAME,
-    "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
-    "ready": False,
-    "hasLocalStats": False,
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "ready": in_use or signed_in or bool(quota and quota["limits"]),
+    "hasLocalStats": True,
     "tierLabel": "",
     "usageStatusText": "",
     "authHelpText": "",
@@ -460,73 +764,26 @@ def base_record(**overrides: Any) -> dict[str, Any]:
     "limitsStale": False,
     "limitsFetchedAt": 0,
   }
-  record.update({
-    "todayPrompts": 0,
-    "todaySessions": 0,
-    "todayTotalTokens": 0,
-    "todayTokensByModel": {},
-    "recentDays": [{"date": day, "messageCount": 0} for day in recent_date_strings()],
-    "totalPrompts": 0,
-    "totalSessions": 0,
-    "activeDays": 0,
-    "activeDates": [],
-    "modelUsage": {},
-  })
-  record.update(overrides)
+  if quota:
+    record.update(quota)
+  elif signed_in:
+    record["usageStatusText"] = "Devin limits unavailable"
+    record["authHelpText"] = REFRESH_HELP
+  elif in_use:
+    record["usageStatusText"] = "Waiting for auth"
+    record["authHelpText"] = AUTH_HELP
+  record.update(stats)
   return record
 
 
-def scan(force: bool = False, limits_only: bool = False) -> dict[str, Any]:
-  quota = parse_quota()
-
-  path = db_path()
-  if not path.is_file():
-    if quota.get("limits"):
-      # A live status cache means the CLI ran under this account; the database
-      # is absent or lives elsewhere, so this is "no local stats", not "not
-      # installed".
-      return base_record(ready=True, **quota)
-    return base_record(usageStatusText="Devin CLI not installed", authHelpText="Install it with: curl -fsSL https://cli.devin.ai/install.sh | bash", **quota)
-
-  conn = None
-  try:
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only = ON")
-    stats = cached_scan(conn, force, limits_only)
-    ready = number(stats.get("totalPrompts")) > 0 or len(quota.get("limits", [])) > 0
-    return base_record(ready=ready, hasLocalStats=True, **stats, **quota)
-  except Exception as error:
-    # A locked or damaged history database must not hide quota already read
-    # from the user-status cache; it only costs the local stats.
-    detail = str(error) if isinstance(error, sqlite3.Error) else f"{type(error).__name__}: {error}"
-    print(f"omarchy-agent-usage-devin: {detail}", file=sys.stderr)
-    return base_record(
-      ready=len(quota.get("limits", [])) > 0,
-      usageStatusText="Devin usage unavailable",
-      authHelpText=detail,
-      **quota,
-    )
-  finally:
-    if conn is not None:
-      conn.close()
-
-
-def main() -> int:
-  parser = argparse.ArgumentParser(description="Print the Devin CLI usage record as JSON")
-  parser.add_argument("--force", action="store_true")
-  parser.add_argument("--limits-only", action="store_true")
+def main():
+  parser = argparse.ArgumentParser(description="Print the Devin usage record as JSON")
+  parser.add_argument("--force", action="store_true", help="rescan local sessions, ignoring the scan cache")
+  parser.add_argument("--limits-only", action="store_true", help="reuse a recent local scan")
   args = parser.parse_args()
 
-  try:
-    record = scan(force=args.force, limits_only=args.limits_only)
-  except sqlite3.Error as error:
-    record = base_record(usageStatusText="Devin usage unavailable", authHelpText=str(error))
-    print(f"omarchy-agent-usage-devin: {error}", file=sys.stderr)
-  except Exception as error:
-    record = base_record(usageStatusText="Devin usage unavailable", authHelpText=f"{type(error).__name__}: {error}")
-    print(f"omarchy-agent-usage-devin: {type(error).__name__}: {error}", file=sys.stderr)
-  print(json.dumps(record, separators=(",", ":"), sort_keys=True))
+  max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
+  print(json.dumps(build_record(cached_local_stats(max_age)), separators=(",", ":"), sort_keys=True))
   return 0
 
 
