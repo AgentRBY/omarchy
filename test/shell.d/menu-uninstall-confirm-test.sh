@@ -14,6 +14,7 @@ const fs = require('fs')
 const vm = require('vm')
 const menuQml = fs.readFileSync(path.join(root, 'shell/plugins/menu/Menu.qml'), 'utf8')
 const confirmQml = fs.readFileSync(path.join(root, 'shell/Ui/ConfirmDialog.qml'), 'utf8')
+const MenuModel = requireFromRoot('shell/plugins/menu/MenuModel.js')
 
 function functionSource(qml, name) {
   const match = qml.match(new RegExp(`\\n  function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}\\n`))
@@ -37,7 +38,7 @@ function menuHarness() {
   const menu = {
     mode: 'menu', get dmenuActive() { return this.mode === 'select' || this.mode === 'input' },
     requestSerial: 0, applySerial: 0, requestActive: false, selectionFile: '', doneFile: '', dmenuPrompt: '',
-    dmenuOptions: [], dmenuWidth: 300, dmenuMaxHeight: 0, activeMenu: 'root', pendingInitialMenu: 'root', navStack: [],
+    dmenuOptions: [], dmenuMultiple: false, dmenuOnChange: [], dmenuChangeKey: '', dmenuSelected: [], dmenuSaved: [], dmenuWidth: 300, dmenuMaxHeight: 0, activeMenu: 'root', pendingInitialMenu: 'root', navStack: [],
     filterText: '', selectedIndex: 0, cursorActive: true, fontFamily: '', deleteConfirmOpen: false, deleteTarget: null,
     items: { root: { kind: 'menu' }, apps: { kind: 'menu' } },
     appLibrary: { remove(appId) { removed.push(appId) }, refreshIcons() {} },
@@ -58,9 +59,10 @@ function menuHarness() {
   const context = {
     root: menu, deleteConfirm, Qt, JSON, Math, Number, String, Array,
     displayModel: { get count() { return rows.length }, get(index) { return rows[index] } },
-    keyCatcher: { forceActiveFocus() {} },
+    filterInput: { forceActiveFocus() {} },
+    MenuModel,
     resultProc: { command: [], set running(value) { if (value) answers.push(this.command[2]) } },
-    Util: { shellQuote: s => `'${s}'`, editsFilter: () => false }
+    Util: { shellQuote: s => `'${s}'`, editsFilter: () => false, readingKey: event => event.key }
   }
   Object.assign(menu, vm.runInNewContext(`(function() { with (root) {
     ${names.map(name => functionSource(menuQml, name)).join('\n')}
