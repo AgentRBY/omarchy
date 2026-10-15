@@ -11,7 +11,6 @@ panel only ever reads the JSON this prints.
 """
 
 import argparse
-import base64
 import hashlib
 import json
 import math
@@ -31,17 +30,20 @@ sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", 
 from collectors import (  # noqa: E402
   LimitsCache,
   Stats,
+  account_entry,
   base_record,
   cache_root,
   cached_scan,
   emit,
   find_command,
+  jwt_claims,
   local_day,
   now_ms,
   number,
   opencode_db,
   pi_session_roots,
   read_json,
+  registered_accounts,
   runtime_env,
   scan_max_age,
   scan_opencode,
@@ -141,19 +143,8 @@ def codex_home():
   return Path(ENV.get("CODEX_HOME") or (Path.home() / ".codex"))
 
 
-class FileStats(Stats):
-  """The record's stats, fed whole file records as well as single replies."""
-
-  def add_totals(self, day, session, model, input_tokens, output_tokens, cache_read, cache_write, prompts):
-    """`prompts` replies' worth of tokens at once, as a file record keeps them."""
-    self.add(day, session, model, input_tokens, output_tokens, cache_read, cache_write)
-    self.total_prompts += prompts - 1
-    if day == self.today:
-      self.today_prompts += prompts - 1
-
-
 # Every source folds into one run's totals.
-STATS = FileStats()
+STATS = Stats()
 
 
 # One session file's totals, the unit the file cache stores: day -> model ->
@@ -173,10 +164,11 @@ def record_usage(record, day, model, input_tokens, output_tokens, cache_read, ca
 
 
 def merge_file_record(session_key, record):
-  """Fold one file's totals, freshly read or replayed from cache, into the run."""
+  """Fold one file's totals, freshly read or replayed from cache, into the run:
+  each day and model's tokens at once, with the replies they took."""
   for day, models in record["days"].items():
-    for model, totals in models.items():
-      STATS.add_totals(day, session_key, model, *totals)
+    for model, (input_tokens, output_tokens, cache_read, cache_write, prompts) in models.items():
+      STATS.add(day, session_key, model, input_tokens, output_tokens, cache_read, cache_write, prompts=prompts)
 
 
 # pi and omp sessions that ran through openai-codex, by provider or by the
@@ -407,7 +399,7 @@ def local_stats():
 # A forced scan (no reuse at all) reads every session file again.
 def run_local_scans(max_age):
   global STATS
-  STATS = FileStats()
+  STATS = Stats()
   cached_files = read_file_cache() if max_age > 0 else {}
   scanned_files = {}
   complete = scan_pi_sessions_into_stats()
@@ -746,8 +738,7 @@ def signed_in_identity(codex_home):
   # so the user comes from the ID token's claims, read as Codex reads them.
   try:
     tokens = json.loads((codex_home / "auth.json").read_text(encoding="utf-8"))["tokens"]
-    payload = tokens["id_token"].split(".")[1]
-    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["https://api.openai.com/auth"]
+    claims = jwt_claims(tokens["id_token"])["https://api.openai.com/auth"]
     workspace = str(tokens["account_id"] or "")
     user = str(claims.get("chatgpt_user_id") or claims.get("user_id") or "")
   except Exception:
@@ -825,48 +816,13 @@ def collect_limits(home=None, force=False):
   return rpc
 
 
-# The accounts `omarchy agent account` registered, read straight from its
-# registry. Only a registry holding a second account matters: with one, the
-# record is exactly what it always was.
-def registered_accounts():
-  state = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
-  registry = read_json(state / "omarchy" / "agents" / "accounts" / "codex.json")
-  accounts = [a for a in registry.get("accounts") or [] if isinstance(a, dict) and a.get("id")]
-  if len(accounts) < 2:
-    return []
-  active_id = registry.get("active") or accounts[0]["id"]
-  if not any(a["id"] == active_id for a in accounts):
-    active_id = accounts[0]["id"]
-  for account in accounts:
-    account["active"] = account["id"] == active_id
-    account["switch"] = {
-      "mode": "auto" if registry.get("switch") == "auto" else "manual",
-      "threshold": registry.get("threshold") or 95,
-    }
-  return accounts
-
-
 # Each account's app-server runs in that account's home, so it answers for that
 # login and refreshes that login's tokens there.
 def account_limits(account, force):
   # The primary is ~/.codex by definition, not whatever CODEX_HOME this run
   # happened to inherit — that would report another account's limits as Main's.
   rpc = collect_limits(account.get("home") or (Path.home() / ".codex"), force)
-  return {
-    "id": account["id"],
-    "label": str(account.get("label") or account["id"]),
-    "email": str(account.get("email") or ""),
-    "plan": rpc["tierLabel"] or str(account.get("plan") or ""),
-    "active": account["active"],
-    "primary": bool(account.get("primary")),
-    "limits": rpc["limits"],
-    "stale": not rpc["live"],
-    "fetchedAt": rpc["fetchedAtMs"],
-    "usageStatusText": rpc["usageStatusText"],
-    "authHelpText": rpc["authHelpText"],
-    "retryAdvised": bool(rpc.get("retryAdvised")),
-    "resetCredits": rpc.get("resetCredits"),
-  }
+  return account_entry(account, rpc, rpc["tierLabel"], resetCredits=rpc.get("resetCredits"))
 
 
 # Codex is in use here once its CLI or a launcher for it is on PATH, its home
@@ -895,7 +851,7 @@ def main():
   args = parser.parse_args()
 
   stats = cached_local_stats(scan_max_age(args.force, args.limits_only))
-  registered = registered_accounts()
+  registered = registered_accounts(AGENT_ID)
   accounts = [account_limits(account, args.force) for account in registered]
   current = next((a for a in accounts if a["active"]), None)
   if current:
