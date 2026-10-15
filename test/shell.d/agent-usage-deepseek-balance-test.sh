@@ -4,7 +4,7 @@ source "$(dirname "$0")/base-test.sh"
 
 require_command python3
 
-unset DEEPSEEK_API_KEY DEEPSEEK_API_BASE_URL DSH_HOME PI_CODING_AGENT_DIR
+unset DEEPSEEK_API_KEY DEEPSEEK_API_BASE_URL DSH_HOME PI_CODING_AGENT_DIR OPENCODE_DB
 
 # The balance comes from DeepSeek's API, so the reader that interprets its
 # answer is exercised on its own: the collector loads as a module, and a fake

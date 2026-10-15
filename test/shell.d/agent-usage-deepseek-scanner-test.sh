@@ -6,7 +6,7 @@ require_command jq
 require_command python3
 
 # A key in the environment would send the collector to DeepSeek.
-unset DEEPSEEK_API_KEY DEEPSEEK_API_BASE_URL DSH_HOME PI_CODING_AGENT_DIR
+unset DEEPSEEK_API_KEY DEEPSEEK_API_BASE_URL DSH_HOME PI_CODING_AGENT_DIR OPENCODE_DB
 
 timestamp="$(date +%Y-%m-%d)T12:00:00Z"
 now_ms="$(date +%s)000"
@@ -173,6 +173,67 @@ result=$(collect "$OPENCODE_HOME" --force)
 [[ $(jq -r '"\(.todayTotalTokens):\(.totalSessions):\(.activeDays)"' <<<"$result") == "176:2:1" ]] ||
   fail "DeepSeek collector counts a day shared by pi and opencode once" "$result"
 pass "DeepSeek collector counts a day shared by pi and opencode once"
+
+# OpenCode V2 nests the provider under `model` and spends tokens on
+# compactions too. A message migrated into both stores counts once, and a
+# fork's copies of its source's messages don't count again. OPENCODE_DB
+# points at the database the way opencode itself reads it.
+V2_HOME=$(new_home)
+
+python3 - "$V2_HOME/elsewhere/opencode-dev.db" <<'PY'
+import json
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+db = Path(sys.argv[1])
+db.parent.mkdir(parents=True, exist_ok=True)
+conn = sqlite3.connect(db)
+conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
+conn.execute("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, time_created integer NOT NULL, data text NOT NULL)")
+conn.execute("CREATE TABLE session_v2 (id text PRIMARY KEY, fork_session_id text, time_created integer NOT NULL)")
+now_ms = int(time.time() * 1000)
+forked_ms = now_ms - 1000
+
+def v2(id, session, kind, provider, model, input, created=now_ms):
+  return (id, session, kind, created, json.dumps({
+    "model": {"providerID": provider, "id": model},
+    "tokens": {"input": input, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+    "time": {"created": created},
+  }))
+
+conn.executemany("INSERT INTO session_v2 VALUES (?, ?, ?)", [("ses_a", None, now_ms - 5000), ("ses_b", "ses_a", forked_ms)])
+conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?)", [
+  v2("msg_1", "ses_a", "assistant", "deepseek", "deepseek-v4", 100, now_ms - 4000),
+  v2("msg_2", "ses_a", "compaction", "deepseek", "deepseek-v4", 10, now_ms - 3000),
+  v2("msg_3", "ses_a", "assistant", "deepseek-proxy", "deepseek-v4", 999),
+  v2("msg_4", "ses_b", "assistant", "deepseek", "deepseek-v4", 100, forked_ms - 4000),
+  v2("msg_5", "ses_b", "assistant", "deepseek", "deepseek-v4", 1),
+])
+conn.execute("INSERT INTO message VALUES ('msg_1', 'ses_a', ?, ?, ?)", (now_ms, now_ms, json.dumps({
+  "role": "assistant", "providerID": "deepseek", "modelID": "deepseek-v4",
+  "tokens": {"input": 100, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+  "time": {"created": now_ms - 4000},
+})))
+conn.commit()
+conn.close()
+PY
+
+result=$(OPENCODE_DB="$V2_HOME/elsewhere/opencode-dev.db" collect "$V2_HOME")
+[[ $(jq -c '{todayTotalTokens, totalPrompts, totalSessions, models: (.modelUsage | keys)}' <<<"$result") == '{"todayTotalTokens":111,"totalPrompts":3,"totalSessions":2,"models":["deepseek-v4"]}' ]] ||
+  fail "DeepSeek collector reads opencode V2 records once each, without fork copies" "$result"
+pass "DeepSeek collector reads opencode V2 records once each, without fork copies"
+
+# Only a build whose channel was "v2" wrote opencode-v2.db; it is read when
+# the usual database is missing.
+LEGACY_HOME=$(new_home)
+mkdir -p "$LEGACY_HOME/.local/share/opencode"
+cp "$V2_HOME/elsewhere/opencode-dev.db" "$LEGACY_HOME/.local/share/opencode/opencode-v2.db"
+result=$(collect "$LEGACY_HOME")
+[[ $(jq -r '.todayTotalTokens' <<<"$result") == "111" ]] ||
+  fail "DeepSeek collector falls back to opencode-v2.db" "$result"
+pass "DeepSeek collector falls back to opencode-v2.db"
 
 # ---------------------------------------------------------- DeepSeek Harness
 
