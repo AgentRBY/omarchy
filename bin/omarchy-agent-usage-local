@@ -4,22 +4,23 @@
 # omarchy:hidden=true
 """Collect self-hosted model usage into one display-ready JSON record.
 
-Every other collector answers "what did this subscription cost me". This one
-answers the question none of them can: how much work ran on hardware you own.
-It counts the turns the subscription collectors deliberately skip — Codex CLI
-pointed at Ollama, opencode on a local gateway, pi on llama.cpp — whether the
-endpoint is this machine or a box down the hall.
+Every other collector counts what a subscription or a provider bills. This
+one counts the turns that ran on hardware you own: Codex CLI pointed at
+Ollama, opencode on a local gateway, pi on llama.cpp, whether the endpoint is
+this machine or a box down the hall. It is the exact complement of the
+provider collectors: a provider id another collector counts is never counted
+here, and the Codex collector's own `openai` rollouts never are either.
 
-An endpoint is self-hosted when its URL resolves to a loopback, private, or
-link-local address, or to a bare/LAN hostname (`server.home`, `gpu-box`).
-Provider ids with no URL to resolve fall back to a list of well-known local
-runtimes. Neither is exhaustive, so `~/.config/omarchy/agents/local.json` can
-name more:
+A provider is self-hosted when it is a well-known local runtime, an id named
+in ~/.config/omarchy/agents/local.json, or a Codex model_providers entry whose
+base_url is on a loopback, private, link-local or LAN address:
 
     {"providers": ["homelab", "my-gateway"]}
 
-There are no limits and no balance to report: the meter on self-hosted work is
-the electricity bill.
+Ollama's cloud models (a `:cloud` or `-cloud` tag) run on Ollama's servers
+even when the local daemon fronts them, so they are never counted here. There
+are no limits and no balance: the meter on self-hosted work is the
+electricity bill. The agents panel only ever reads the JSON this prints.
 """
 
 import argparse
@@ -27,82 +28,419 @@ import fcntl
 import hashlib
 import ipaddress
 import json
+import math
 import os
+import re
+import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
 import tomllib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 AGENT_ID = "local"
-AGENT_NAME = "Local"
-TIER_LABEL = "Self-hosted"
+AGENT_NAME = "Local models"
 
-# Runtimes that serve models from your own hardware. Used when a provider id
-# carries no URL to classify — opencode and pi record the id but not the
-# endpoint, and Codex's built-in `--oss` provider has no config.toml entry.
+# Runtimes that serve models from your own hardware, for provider ids with no
+# URL to classify: opencode and pi record the id but not the endpoint, and
+# Codex's built-in `--oss` providers have no config.toml entry.
 KNOWN_LOCAL_PROVIDERS = {
   "gpt4all", "jan", "koboldcpp", "llama-cpp", "llamacpp", "llamafile",
   "lm-studio", "lmstudio", "local", "localai", "mlx", "ollama",
   "openai-local", "oss", "sglang", "tabby", "text-generation-webui", "vllm",
 }
 
-# Session files are scanned back this far, matching the Codex collector's
-# window. Pi transcripts carry no rollover, so they are read in full.
+# Provider ids the provider collectors count, from pi, omp and opencode. A
+# local.json naming one of them would count its tokens twice, so they are
+# never local, whatever the configuration says.
+CLAIMED_PROVIDERS = {
+  "anthropic", "deepseek", "devin", "litellm", "meta", "minimax", "minimax-coding",
+  "minimax-token-plan", "ollama-cloud", "openai", "openai-codex", "opencode",
+  "opencode-go", "openrouter", "synthetic", "zai", "zhipu",
+}
+
+# The Codex collector counts rollouts on the built-in provider, and ones too
+# old to name a provider at all.
+CODEX_NATIVE_PROVIDER = "openai"
+
+# Codex rollouts are read back this far, matching the Codex collector.
 NATIVE_WINDOW_DAYS = 30
 
-# Same reuse windows as the subscription collectors: a no-flag run reuses a
-# scan only long enough to dedup the concurrent collectors the update command
-# backgrounds, while --limits-only promises nothing about stats freshness and
-# may reuse one for far longer. This collector has no limits to fetch, so
-# --limits-only is purely a cheap way to redraw.
 SCAN_REUSE_SECONDS = 20
 LIMITS_ONLY_REUSE_SECONDS = 900
 
-today = datetime.now().strftime("%Y-%m-%d")
+# Per-file totals of Codex rollouts survive between runs, so a rescan only
+# reads the files that changed. Bumping it retires every older record.
+FILE_CACHE_SCHEMA = 1
+
+# Past this a token count or timestamp from disk is garbage, not usage.
+MAX_TOKENS = 10_000_000_000
+EARLIEST_EPOCH = 946_684_800  # 2000-01-01
+LATEST_EPOCH = 4_102_444_800  # 2100-01-01
+
+
+# --------------------------------------------------------------- utilities
+
+
+def obj(value):
+  return value if isinstance(value, dict) else {}
+
+
+# Token counts and timestamps on disk are untrusted: a boolean, NaN, infinite,
+# negative, huge or non-numeric value reads as nothing.
+def number(value):
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
+    return 0
+  if not math.isfinite(value) or value < 0 or value > MAX_TOKENS:
+    return 0
+  return int(value)
+
+
+def finite(value):
+  if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    return None
+  return float(value)
+
+
+def epoch_seconds(value):
+  if finite(value) is None:
+    return None
+  # Session timestamps are seconds or milliseconds.
+  seconds = value / 1000 if value > 100_000_000_000 else value
+  return seconds if EARLIEST_EPOCH <= seconds < LATEST_EPOCH else None
 
 
 def local_day(value):
-  if value is None:
-    return datetime.now().strftime("%Y-%m-%d")
-  if isinstance(value, (int, float)):
-    # pi message timestamps are milliseconds; Codex timestamps are seconds.
-    if value > 10_000_000_000:
-      value = value / 1000
-    return datetime.fromtimestamp(value).strftime("%Y-%m-%d")
-  text = str(value)
+  seconds = epoch_seconds(value)
+  if seconds is not None:
+    return datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
+  if not isinstance(value, str) or not value.strip():
+    return None
   try:
-    if text.endswith("Z"):
-      dt = datetime.fromisoformat(text[:-1] + "+00:00")
+    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+  except ValueError:
+    return None
+  if epoch_seconds(parsed.timestamp()) is None:
+    return None
+  return parsed.astimezone().strftime("%Y-%m-%d") if parsed.tzinfo else parsed.strftime("%Y-%m-%d")
+
+
+def model_name(raw):
+  return str(raw or "").strip() or AGENT_ID
+
+
+def runtime_env():
+  home = str(Path.home())
+  path_parts = [
+    os.environ.get("PATH", ""),
+    f"{home}/.local/bin",
+    f"{home}/.npm-global/bin",
+    f"{home}/.local/share/mise/shims",
+  ]
+  env = os.environ.copy()
+  env["PATH"] = os.pathsep.join(part for part in path_parts if part)
+  return env
+
+
+ENV = runtime_env()
+
+
+def find_command(name):
+  return shutil.which(name, path=ENV.get("PATH"))
+
+
+def data_home():
+  return Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+
+
+def cache_root():
+  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
+  root.mkdir(parents=True, exist_ok=True)
+  return root
+
+
+def read_json(path):
+  try:
+    return json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    return None
+
+
+def read_fresh_json(path, max_age_seconds):
+  if max_age_seconds <= 0:
+    return None
+  try:
+    # A negative age means the mtime is in the future: the clock moved
+    # backwards since the write, so the cache's freshness cannot be trusted.
+    age = time.time() - path.stat().st_mtime
+  except OSError:
+    return None
+  return read_json(path) if 0 <= age < max_age_seconds else None
+
+
+def write_json(path, payload):
+  # A temp name unique to this writer: several collectors can run at once, and
+  # a shared temp path means the second replace finds the first one's file
+  # already moved away.
+  handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+  tmp = Path(tmp_name)
+  try:
+    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    tmp.chmod(0o644)
+    tmp.replace(path)
+  except BaseException:
+    tmp.unlink(missing_ok=True)
+    raise
+
+
+# ------------------------------------------------------------------- stats
+
+
+def empty_bucket():
+  return {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
+
+
+class Stats:
+  """Token and activity totals shared by every local source. Sessions and days
+  are sets, so a day active in two sources counts once toward activeDays."""
+
+  def __init__(self):
+    now = datetime.now()
+    self.today = now.strftime("%Y-%m-%d")
+    self.recent_dates = [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
+    self.recent = {day: 0 for day in self.recent_dates}
+    self.today_prompts = 0
+    self.today_total_tokens = 0
+    self.today_sessions = set()
+    self.today_tokens_by_model = {}
+    self.total_prompts = 0
+    self.total_sessions = set()
+    self.active_days = set()
+    self.model_usage = {}
+
+  def add(self, session, day, model, input_tokens, output_tokens, cache_read, cache_write):
+    total = input_tokens + output_tokens + cache_read + cache_write
+    if total <= 0:
+      return
+    self.total_prompts += 1
+    self.active_days.add(day)
+    if session is not None:
+      self.total_sessions.add(session)
+    bucket = self.model_usage.setdefault(model, empty_bucket())
+    bucket["inputTokens"] += input_tokens
+    bucket["outputTokens"] += output_tokens
+    bucket["cacheReadInputTokens"] += cache_read
+    bucket["cacheCreationInputTokens"] += cache_write
+    if day in self.recent:
+      # recentDays.messageCount holds tokens, despite the legacy name.
+      self.recent[day] += total
+    if day == self.today:
+      self.today_prompts += 1
+      if session is not None:
+        self.today_sessions.add(session)
+      self.today_total_tokens += total
+      self.today_tokens_by_model[model] = self.today_tokens_by_model.get(model, 0) + total
+
+  # A Codex rollout's totals arrive per day and model, prompts counted.
+  def add_totals(self, session, day, model, input_tokens, output_tokens, cache_read, cache_write, prompts):
+    if input_tokens + output_tokens + cache_read + cache_write <= 0:
+      return
+    self.add(session, day, model, input_tokens, output_tokens, cache_read, cache_write)
+    self.total_prompts += prompts - 1
+    if day == self.today:
+      self.today_prompts += prompts - 1
+
+  def add_session(self, session, today):
+    self.total_sessions.add(session)
+    if today:
+      self.today_sessions.add(session)
+
+  def record(self):
+    return {
+      "todayPrompts": self.today_prompts,
+      "todaySessions": len(self.today_sessions),
+      "todayTotalTokens": self.today_total_tokens,
+      "todayTokensByModel": self.today_tokens_by_model,
+      "recentDays": [{"date": day, "messageCount": self.recent[day]} for day in self.recent_dates],
+      "totalPrompts": self.total_prompts,
+      "totalSessions": len(self.total_sessions),
+      "activeDays": len(self.active_days),
+      "activeDates": sorted(self.active_days),
+      "modelUsage": self.model_usage,
+    }
+
+
+# --------------------------------------------------------------- pi and omp
+# --------------------------------------------------------------- pi and omp
+
+
+def pi_agent_dirs():
+  pi_agent = os.environ.get("PI_CODING_AGENT_DIR")
+  dirs = [Path(pi_agent).expanduser() if pi_agent else Path.home() / ".pi" / "agent", Path.home() / ".omp" / "agent"]
+  # `omp --profile=<name>` (and pi's equivalent) moves the agent tree under
+  # <base>/profiles/<name>/.
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    try:
+      dirs.extend(sorted(child / "agent" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      pass
+  return dirs
+
+
+def pi_session_roots():
+  roots = []
+  for agent_dir in pi_agent_dirs():
+    root = agent_dir / "sessions"
+    if root.is_dir() and root.resolve() not in [r.resolve() for r in roots]:
+      roots.append(root)
+  return roots
+
+
+def pi_parent_session(path):
+  # A fork names the session it was cut from in its header line.
+  try:
+    with open(path, encoding="utf-8", errors="replace") as handle:
+      header = json.loads(handle.readline())
+  except (OSError, ValueError):
+    return None
+  parent = header.get("parentSession") if isinstance(header, dict) else None
+  return os.path.abspath(os.path.expanduser(parent)) if isinstance(parent, str) and parent else None
+
+
+def scan_pi_sessions(stats):
+  """Add the pi/omp assistant messages this collector counts. Returns whether
+  every root was read."""
+  roots = pi_session_roots()
+  if not roots:
+    return True
+  rg = find_command("rg") or "rg"
+  try:
+    proc = subprocess.Popen(
+      # --no-ignore: these are data files, not a source tree. A $HOME that is
+      # a git checkout would otherwise hide every session behind its ignores.
+      [rg, "--json", "--no-ignore", "-e", pi_pattern(), *map(str, roots)],
+      stdout=subprocess.PIPE,
+      stderr=subprocess.DEVNULL,
+      text=True,
+      errors="replace",
+      env=ENV,
+    )
+  except OSError:
+    return False
+
+  counted = set()
+  owned = {}
+  today_owned = {}
+  assert proc.stdout is not None
+  for raw in proc.stdout:
+    try:
+      event = json.loads(raw)
+      if event.get("type") != "match":
+        continue
+      path = os.path.abspath(event["data"]["path"]["text"])
+      line_number = event["data"].get("line_number")
+      entry = json.loads(event["data"]["lines"]["text"])
+    except Exception:
+      continue
+    if not isinstance(entry, dict) or entry.get("type") != "message":
+      continue
+    message = obj(entry.get("message"))
+    if message.get("role") != "assistant" or not accept_pi(message):
+      continue
+    usage = obj(message.get("usage"))
+    input_tokens = number(usage.get("input"))
+    output_tokens = number(usage.get("output"))
+    cache_read = number(usage.get("cacheRead"))
+    cache_write = number(usage.get("cacheWrite"))
+    if not (input_tokens or output_tokens or cache_read or cache_write):
+      input_tokens = number(usage.get("totalTokens"))
+    timestamp = entry.get("timestamp")
+    day = local_day(timestamp) or local_day(message.get("timestamp"))
+    if day is None or not (input_tokens or output_tokens or cache_read or cache_write):
+      continue
+    # A fork repeats its parent's messages with their ids and timestamps, so
+    # the pair says two lines are one message. An id alone is only unique
+    # within its file, and a line without one always counts.
+    message_id = str(entry.get("id") or "")
+    if message_id and timestamp is not None:
+      key = ("entry", message_id, str(timestamp))
+    elif message_id:
+      key = ("path", path, message_id)
     else:
-      dt = datetime.fromisoformat(text)
-    if dt.tzinfo is not None:
-      dt = dt.astimezone()
-    return dt.strftime("%Y-%m-%d")
-  except Exception:
-    return datetime.now().strftime("%Y-%m-%d")
+      key = ("line", path, line_number)
+    owned.setdefault(path, set()).add(key)
+    if day == stats.today:
+      today_owned.setdefault(path, set()).add(key)
+    if key in counted:
+      continue
+    counted.add(key)
+    stats.add(None, day, model_name(message.get("model")), input_tokens, output_tokens, cache_read, cache_write)
 
-
-def number(value):
   try:
-    return max(0, int(value or 0))
-  except Exception:
-    return 0
+    code = proc.wait(timeout=5)
+  except subprocess.TimeoutExpired:
+    proc.kill()
+    return False
+
+  # A message belongs to the oldest session holding it, so a fork is a
+  # session of its own only for what it added, whichever file rg read first.
+  parents = {}
+  for path, keys in owned.items():
+    inherited = set()
+    visited = {path}
+    parent = parents.setdefault(path, pi_parent_session(path))
+    while parent and parent not in visited:
+      visited.add(parent)
+      inherited |= owned.get(parent, set())
+      parent = parents.setdefault(parent, pi_parent_session(parent))
+    if keys - inherited:
+      stats.add_session(path, bool(today_owned.get(path, set()) - inherited))
+  # rg exits 1 when nothing matched and 2 when a file couldn't be read.
+  return code in (0, 1)
 
 
-def model_name(value):
-  text = str(value or "").strip()
-  return text or "local"
+# ---------------------------------------------------------------- opencode
+# --------------------------------------------------------- classification
+
+
+def config_path():
+  return Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "omarchy" / "agents" / "local.json"
+
+
+def configured_providers():
+  names = obj(read_json(config_path())).get("providers")
+  if not isinstance(names, list):
+    return set()
+  return {str(name).strip().lower() for name in names if isinstance(name, str) and name.strip()}
+
+
+def codex_home():
+  return Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+
+
+def codex_endpoints():
+  """provider id -> base_url, from the Codex CLI's own config."""
+  try:
+    with (codex_home() / "config.toml").open("rb") as handle:
+      config = tomllib.load(handle)
+  except (OSError, tomllib.TOMLDecodeError):
+    return {}
+  providers = config.get("model_providers")
+  if not isinstance(providers, dict):
+    return {}
+  return {str(name).lower(): str(entry.get("base_url") or "") for name, entry in providers.items() if isinstance(entry, dict)}
 
 
 def is_self_hosted(url):
   """True when a base URL points at hardware the user controls."""
   try:
     host = urlparse(str(url or "")).hostname
-  except Exception:
+  except ValueError:
     return False
   if not host:
     return False
@@ -121,413 +459,412 @@ def is_self_hosted(url):
   return host.endswith((".home", ".lan", ".local", ".internal", ".localdomain", ".home.arpa"))
 
 
-def configured_providers():
-  path = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "omarchy" / "agents" / "local.json"
-  try:
-    data = json.loads(path.read_text())
-  except Exception:
-    return set()
-  names = data.get("providers") if isinstance(data, dict) else None
-  if not isinstance(names, list):
-    return set()
-  return {str(name).strip().lower() for name in names if str(name).strip()}
+def is_cloud_model(model):
+  # Ollama names its hosted models with a cloud tag ("gpt-oss:120b-cloud",
+  # "glm-4.6:cloud"); the local daemon only forwards them, so Ollama's
+  # servers did the work.
+  tag = str(model or "").lower().rpartition(":")[2] if ":" in str(model or "") else ""
+  return tag == "cloud" or tag.endswith("-cloud")
 
 
-def codex_endpoints():
-  """provider id -> base_url, from the Codex CLI's own config."""
-  codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
-  try:
-    with (codex_home / "config.toml").open("rb") as handle:
-      config = tomllib.load(handle)
-  except Exception:
-    return {}
-  providers = config.get("model_providers")
-  if not isinstance(providers, dict):
-    return {}
-  endpoints = {}
-  for name, entry in providers.items():
-    if isinstance(entry, dict):
-      endpoints[str(name).lower()] = str(entry.get("base_url") or "")
-  return endpoints
-
-
-class Scan:
+class Classifier:
   def __init__(self):
-    self.extra_providers = configured_providers()
+    self.configured = configured_providers()
     self.endpoints = codex_endpoints()
-    self.today = today
-    self.recent_days = [
-      (datetime.now() - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)
-    ]
-    self.recent = {day: 0 for day in self.recent_days}
-    self.today_prompts = 0
-    self.today_sessions = set()
-    self.today_tokens = 0
-    self.today_by_model = {}
-    self.total_prompts = 0
-    self.total_sessions = set()
-    self.active_days = set()
-    self.model_usage = {}
-    self.providers_seen = set()
-    self.endpoints_seen = set()
-    self.seen_pi_messages = set()
-    self.complete = True
+    ids = set(KNOWN_LOCAL_PROVIDERS) | self.configured
+    ids |= {pid for pid, url in self.endpoints.items() if url and is_self_hosted(url)}
+    self.local_ids = ids - CLAIMED_PROVIDERS
 
   def provider_is_local(self, provider):
-    pid = str(provider or "").strip().lower()
-    if not pid:
-      return False
-    if pid in self.extra_providers or pid in KNOWN_LOCAL_PROVIDERS:
-      return True
-    url = self.endpoints.get(pid)
-    return bool(url) and is_self_hosted(url)
+    return str(provider or "").strip().lower() in self.local_ids
 
-  def local_provider_ids(self):
-    """Every id this scan would accept, for pushing filters down into SQL."""
-    ids = set(KNOWN_LOCAL_PROVIDERS) | set(self.extra_providers)
-    for pid, url in self.endpoints.items():
-      if url and is_self_hosted(url):
-        ids.add(pid)
-    return ids
+  def accepts(self, provider, model):
+    return self.provider_is_local(provider) and not is_cloud_model(model)
 
-  def note_provider(self, provider):
-    pid = str(provider or "").strip().lower()
-    self.providers_seen.add(pid)
-    url = self.endpoints.get(pid)
-    if url:
-      host = urlparse(url).hostname
-      if host:
-        self.endpoints_seen.add(host.lower())
+  def fingerprint(self):
+    return sorted(self.local_ids)
 
-  def add(self, day, session_key, model, input_tokens, output_tokens, cache_read, cache_write):
-    total = input_tokens + output_tokens + cache_read + cache_write
-    if total <= 0:
-      return
-    self.total_prompts += 1
-    self.total_sessions.add(session_key)
-    self.active_days.add(day)
-    if day in self.recent:
-      self.recent[day] += total
-    if day == self.today:
-      self.today_prompts += 1
-      self.today_sessions.add(session_key)
-      self.today_tokens += total
-      self.today_by_model[model] = self.today_by_model.get(model, 0) + total
-    bucket = self.model_usage.setdefault(
-      model,
-      {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
+
+CLASSIFIER = None
+
+
+def classifier():
+  global CLASSIFIER
+  if CLASSIFIER is None:
+    CLASSIFIER = Classifier()
+  return CLASSIFIER
+
+
+def pi_pattern():
+  ids = "|".join(re.escape(pid) for pid in sorted(classifier().local_ids))
+  return r'(?i)"provider"\s*:\s*"(?:' + ids + ')"'
+
+
+def accept_pi(message):
+  # The Codex collector also counts any message on its openai-codex API,
+  # whatever the provider id says.
+  if str(message.get("api") or "").startswith("openai-codex"):
+    return False
+  return classifier().accepts(message.get("provider"), message.get("model"))
+
+
+# ------------------------------------------------------------------- Codex
+
+
+def file_cache_zone():
+  # Records hold local days, so they are only true in the timezone that wrote
+  # them.
+  return [os.environ.get("TZ"), list(time.tzname), time.timezone, time.altzone]
+
+
+def file_cache_path():
+  return cache_root() / f"local-codex-files-{scan_digest()}.json"
+
+
+def valid_file_record(value):
+  try:
+    counts = [totals for models in value["days"].values() for totals in models.values()]
+    return (
+      type(value["mtime"]) in (int, float) and type(value["size"]) is int and isinstance(value["provider"], str)
+      and all(len(totals) == 5 and all(type(n) is int for n in totals) for totals in counts)
     )
-    bucket["inputTokens"] += input_tokens
-    bucket["outputTokens"] += output_tokens
-    bucket["cacheReadInputTokens"] += cache_read
-    bucket["cacheCreationInputTokens"] += cache_write
+  except Exception:
+    return False
 
-  # ------------------------------------------------------------ native codex
-  def scan_codex(self):
-    codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
-    cutoff = time.time() - NATIVE_WINDOW_DAYS * 24 * 60 * 60
-    for root in (codex_home / "sessions", codex_home / "archived_sessions"):
-      if not root.exists():
-        continue
-      for path in root.rglob("*.jsonl"):
-        try:
-          if path.stat().st_mtime < cutoff:
-            continue
-        except OSError:
+
+def read_file_cache():
+  """Per-file totals of Codex rollouts from earlier scans, keyed by path.
+
+  Rollouts are append-only, so a file whose mtime and size both match its
+  record cannot have grown a turn since. A record keeps the rollout's
+  provider and every turn whatever that provider is, so a change to which
+  providers count as local needs no rereading.
+  """
+  payload = obj(read_json(file_cache_path()))
+  if payload.get("schemaVersion") != FILE_CACHE_SCHEMA or payload.get("zone") != file_cache_zone():
+    return {}
+  files = obj(payload.get("files"))
+  return {path: record for path, record in files.items() if valid_file_record(record)}
+
+
+def write_file_cache(files):
+  # Only the files this scan saw are written back, so deleted rollouts and
+  # ones past the window leave the cache.
+  try:
+    write_json(file_cache_path(), {"schemaVersion": FILE_CACHE_SCHEMA, "zone": file_cache_zone(), "files": files})
+  except OSError as exc:
+    print(f"omarchy-agent-usage-local: could not write file cache ({exc})", file=sys.stderr)
+
+
+def read_codex_rollout(path, stat_result):
+  """One rollout's provider and day -> model -> [input, output, cacheRead,
+  cacheWrite, prompts], counted the way the Codex collector counts its own."""
+  record = {"mtime": stat_result.st_mtime, "size": stat_result.st_size, "provider": "", "days": {}}
+  current_model = "local"
+  seen_meta = False
+  previous_total_usage = None
+  try:
+    with path.open(errors="replace") as handle:
+      for raw in handle:
+        if '"token_count"' not in raw and '"turn_context"' not in raw and '"session_meta"' not in raw:
           continue
-        self._scan_codex_file(path)
-
-  def _scan_codex_file(self, path):
-    current_model = "local"
-    try:
-      with path.open(errors="replace") as handle:
-        for raw in handle:
-          try:
-            entry = json.loads(raw)
-          except Exception:
-            continue
-          if entry.get("type") == "session_meta":
-            provider = (entry.get("payload") or {}).get("model_provider")
-            # The subscription collector counts these; this one must not.
-            if not self.provider_is_local(provider):
-              return
-            self.note_provider(provider)
-            continue
-          if entry.get("type") == "turn_context":
-            payload = entry.get("payload") or {}
-            current_model = model_name(payload.get("model") or payload.get("model_slug") or current_model)
-            continue
-          payload = entry.get("payload") or entry
-          if entry.get("type") == "response_item" and isinstance(payload, dict):
-            payload = payload.get("payload") or payload
-          if not isinstance(payload, dict) or payload.get("type") != "token_count":
-            continue
-          usage = (payload.get("info") or {}).get("last_token_usage") or {}
-          cache_read = number(usage.get("cached_input_tokens"))
-          cache_write = number(usage.get("cache_write_input_tokens"))
-          input_tokens = max(0, number(usage.get("input_tokens")) - cache_read - cache_write)
-          output_tokens = number(usage.get("output_tokens"))
-          day = local_day(entry.get("timestamp") or path.stat().st_mtime)
-          self.add(day, str(path), current_model, input_tokens, output_tokens, cache_read, cache_write)
-    except Exception:
-      return
-
-  # ----------------------------------------------------------------- pi / omp
-  def scan_pi(self):
-    for root in (Path.home() / ".pi" / "agent" / "sessions", Path.home() / ".omp" / "agent" / "sessions"):
-      if not root.exists():
-        continue
-      for path in root.rglob("*.jsonl"):
-        try:
-          with path.open(errors="replace") as handle:
-            for raw in handle:
-              try:
-                entry = json.loads(raw)
-              except Exception:
-                continue
-              message = entry.get("message") or {}
-              if not isinstance(message, dict) or message.get("role") != "assistant":
-                continue
-              provider = message.get("provider") or message.get("api")
-              if not self.provider_is_local(provider):
-                continue
-              key = str(entry.get("id") or entry.get("uuid") or f"{path}:{raw[:64]}")
-              if key in self.seen_pi_messages:
-                continue
-              self.seen_pi_messages.add(key)
-              self.note_provider(provider)
-              usage = message.get("usage") or {}
-              day = local_day(entry.get("timestamp") or message.get("timestamp"))
-              self.add(
-                day, str(path), model_name(message.get("model")),
-                number(usage.get("input")), number(usage.get("output")),
-                number(usage.get("cacheRead")), number(usage.get("cacheWrite")),
-              )
-        except Exception:
-          continue
-
-  # ----------------------------------------------------------------- opencode
-  def scan_opencode(self):
-    db = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode" / "opencode.db"
-    if not db.exists():
-      return
-    try:
-      conn = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
-    except Exception:
-      return
-    # OpenCode DBs hold every historical message with its JSON, so the
-    # provider filter belongs in SQL rather than in a Python loop over every
-    # row. The candidate ids are known before the query runs: the well-known
-    # runtimes, whatever the user configured, and any Codex provider whose
-    # endpoint resolves to hardware they host. json_valid() guards the
-    # extract so one malformed row cannot abort the scan.
-    candidates = sorted(self.local_provider_ids())
-    if not candidates:
-      return
-    placeholders = ",".join("?" * len(candidates))
-    try:
-      for session_id, raw in conn.execute(
-        "SELECT session_id, data FROM message"
-        " WHERE data LIKE '%\"role\"%:%\"assistant\"%'"
-        " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END = 'assistant'"
-        " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.providerID') END"
-        f" IN ({placeholders})",
-        candidates,
-      ):
         try:
           entry = json.loads(raw)
-        except Exception:
+        except ValueError:
           continue
-        # Exact match again in Python: the SQL narrowed the rows, it did not
-        # vet them.
-        if not isinstance(entry, dict) or not self.provider_is_local(entry.get("providerID")):
+        if not isinstance(entry, dict):
           continue
-        self.note_provider(entry.get("providerID"))
-        tokens = entry.get("tokens") or {}
-        cache = tokens.get("cache") or {}
-        created = (entry.get("time") or {}).get("created")
-        # opencode keeps thinking tokens out of output; both are generated.
-        self.add(
-          local_day(created), "opencode:" + str(session_id), model_name(entry.get("modelID")),
-          number(tokens.get("input")), number(tokens.get("output")) + number(tokens.get("reasoning")),
-          number(cache.get("read")), number(cache.get("write")),
-        )
-    except Exception:
-      # A scan cut short by a database error must not be cached as the whole
-      # story, or the missing usage stays suppressed until the cache expires.
-      self.complete = False
-      return
-    finally:
+        if entry.get("type") == "session_meta":
+          # A forked rollout copies its parent's session_meta after its own,
+          # so only the first one, as Codex reads it, says who served this.
+          if seen_meta:
+            continue
+          seen_meta = True
+          record["provider"] = str(obj(entry.get("payload")).get("model_provider") or "").strip().lower()
+          # The built-in provider, or none recorded, is the Codex
+          # collector's: nothing here can count it.
+          if record["provider"] in ("", CODEX_NATIVE_PROVIDER):
+            break
+          continue
+        if not seen_meta:
+          continue
+        if entry.get("type") == "turn_context":
+          payload = obj(entry.get("payload"))
+          current_model = str(payload.get("model") or payload.get("model_slug") or current_model)
+          continue
+        payload = entry.get("payload") or entry
+        if entry.get("type") == "response_item" and isinstance(payload, dict):
+          payload = payload.get("payload") or payload
+        if not isinstance(payload, dict) or payload.get("type") != "token_count":
+          continue
+        info = obj(payload.get("info"))
+        # total_token_usage is cumulative for the session; the last turn is
+        # what this one spent.
+        usage = obj(info.get("last_token_usage"))
+        cache_read = number(usage.get("cached_input_tokens"))
+        cache_write = number(usage.get("cache_write_input_tokens"))
+        # Cached tokens are inside input_tokens, and reasoning inside
+        # output_tokens.
+        input_tokens = max(0, number(usage.get("input_tokens")) - cache_read - cache_write)
+        output_tokens = number(usage.get("output_tokens"))
+        if not (input_tokens or output_tokens or cache_read or cache_write):
+          continue
+        # Quota updates can repeat the previous request's last_token_usage.
+        # Only an unchanged cumulative snapshot proves this is a repeat:
+        # separate requests may spend identical counts.
+        total_usage = info.get("total_token_usage")
+        if isinstance(total_usage, dict) and total_usage:
+          if total_usage == previous_total_usage:
+            continue
+          previous_total_usage = total_usage
+        day = local_day(entry.get("timestamp")) or local_day(stat_result.st_mtime)
+        if day is None:
+          continue
+        totals = record["days"].setdefault(day, {}).setdefault(current_model, [0, 0, 0, 0, 0])
+        totals[0] += input_tokens
+        totals[1] += output_tokens
+        totals[2] += cache_read
+        totals[3] += cache_write
+        totals[4] += 1
+  except OSError:
+    # Keep what was read, but a partial record must not be cached as the
+    # file's whole story.
+    record["mtime"] = None
+  return record
+
+
+def scan_codex(stats, use_file_cache):
+  cached_files = read_file_cache() if use_file_cache else {}
+  scanned_files = {}
+  cutoff = time.time() - NATIVE_WINDOW_DAYS * 24 * 60 * 60
+  complete = True
+  for root in (codex_home() / "sessions", codex_home() / "archived_sessions"):
+    if not root.is_dir():
+      continue
+    for path in root.rglob("*.jsonl"):
       try:
-        conn.close()
-      except Exception:
-        pass
+        stat_result = path.stat()
+      except OSError:
+        continue
+      if stat_result.st_mtime < cutoff:
+        continue
+      key = str(path)
+      record = cached_files.get(key)
+      if record is None or record["mtime"] != stat_result.st_mtime or record["size"] != stat_result.st_size:
+        record = read_codex_rollout(path, stat_result)
+      if record["mtime"] is None:
+        complete = False
+      else:
+        scanned_files[key] = record
+      if not classifier().provider_is_local(record["provider"]):
+        continue
+      for day, models in record["days"].items():
+        for model, (input_tokens, output_tokens, cache_read, cache_write, prompts) in models.items():
+          if not is_cloud_model(model):
+            stats.add_totals(key, day, model, input_tokens, output_tokens, cache_read, cache_write, prompts)
+  write_file_cache(scanned_files)
+  return complete
 
-  def stats(self):
-    """Snapshot the aggregated local usage into the record's stats dict."""
-    return {
-      "todayPrompts": self.today_prompts,
-      "todaySessions": len(self.today_sessions),
-      "todayTotalTokens": self.today_tokens,
-      "todayTokensByModel": self.today_by_model,
-      "recentDays": [{"date": day, "messageCount": self.recent[day]} for day in self.recent_days],
-      "totalPrompts": self.total_prompts,
-      "totalSessions": len(self.total_sessions),
-      "activeDays": len(self.active_days),
-      "activeDates": sorted(self.active_days),
-      "modelUsage": self.model_usage,
-    }
+
+# ---------------------------------------------------------------- opencode
 
 
-def cache_root():
-  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
-  root.mkdir(parents=True, exist_ok=True)
-  return root
+def opencode_db():
+  # OPENCODE_DB points opencode at another database, as the CLI itself reads
+  # it; a relative name lives beside the default one. Only a build whose
+  # channel was literally "v2" wrote opencode-v2.db.
+  root = data_home() / "opencode"
+  configured = os.environ.get("OPENCODE_DB", "").strip()
+  if configured:
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else root / path
+  normal = root / "opencode.db"
+  legacy = root / "opencode-v2.db"
+  return legacy if not normal.is_file() and legacy.is_file() else normal
+
+
+def table_columns(conn, table):
+  return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def opencode_row(stats, seen, message_id, session_id, entry, row_type, created):
+  # The original `message` store keeps the provider and model at the top
+  # level; the V2 `session_message` store nests them under `model` and keeps
+  # the role in its `type` column, with a compaction's tokens spent like any
+  # reply's.
+  if not isinstance(entry, dict) or (entry.get("role") or row_type) not in ("assistant", "compaction"):
+    return
+  model = entry.get("model")
+  provider = entry.get("providerID") or (model.get("providerID") if isinstance(model, dict) else "")
+  model_id = entry.get("modelID") or (model.get("id") or model.get("modelID") if isinstance(model, dict) else model)
+  if not classifier().accepts(provider, model_id):
+    return
+  tokens = obj(entry.get("tokens"))
+  cache = obj(tokens.get("cache"))
+  input_tokens = number(tokens.get("input"))
+  # opencode keeps thinking tokens out of output; both are generated.
+  output_tokens = number(tokens.get("output")) + number(tokens.get("reasoning"))
+  cache_read = number(cache.get("read"))
+  cache_write = number(cache.get("write"))
+  if not (input_tokens or output_tokens or cache_read or cache_write):
+    return
+  # A migrated message can sit in both stores under the same id.
+  if message_id in seen:
+    return
+  seen.add(message_id)
+  day = local_day(obj(entry.get("time")).get("created")) or local_day(created)
+  if day is None:
+    return
+  stats.add("opencode:" + str(session_id), day, model_name(model_id), input_tokens, output_tokens, cache_read, cache_write)
+
+
+def scan_opencode(stats):
+  """Add opencode messages on a local provider, from both of its stores.
+  Returns whether the database was read to the end."""
+  db = opencode_db()
+  ids = sorted(classifier().local_ids)
+  if not db.is_file() or not ids:
+    return True
+  try:
+    # Read-only, and not immutable: opencode writes through a WAL, and an
+    # immutable open would miss what hasn't been checkpointed yet.
+    conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+  except sqlite3.Error:
+    return False
+  # The LIKE gates skip rows whose JSON cannot name a local provider before
+  # any parse; the classifier stays the authority. LIKE ignores ASCII case,
+  # like the ids.
+  gates = ["%\"providerID\"%:%\"" + pid + "\"%" for pid in ids]
+  seen = set()
+  try:
+    conn.execute("PRAGMA query_only = ON")
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "session_message" in tables and {"id", "session_id", "type", "data"} <= table_columns(conn, "session_message"):
+      columns = table_columns(conn, "session_message")
+      created = "m.time_created" if "time_created" in columns else "NULL"
+      source, fork_filter = "session_message m", ""
+      if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= table_columns(conn, "session_v2"):
+        # A fork copies its source session's messages under new ids; only
+        # what came after the fork was spent in it.
+        source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
+        fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
+      gate = " OR ".join(["m.data LIKE ?"] * len(gates))
+      for message_id, session_id, row_type, time_created, raw in conn.execute(
+        f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
+        f" WHERE m.type IN ('assistant', 'compaction') AND ({gate})" + fork_filter, gates
+      ):
+        try:
+          opencode_row(stats, seen, str(message_id), session_id, json.loads(raw), str(row_type or ""), time_created)
+        except (TypeError, ValueError):
+          continue
+    if "message" in tables and {"session_id", "data"} <= table_columns(conn, "message"):
+      message_id = "id" if "id" in table_columns(conn, "message") else "rowid"
+      gate = " OR ".join(["data LIKE ?"] * len(gates))
+      for row_id, session_id, raw in conn.execute(f"SELECT {message_id}, session_id, data FROM message WHERE {gate}", gates):
+        try:
+          opencode_row(stats, seen, str(row_id), session_id, json.loads(raw), "", None)
+        except (TypeError, ValueError):
+          continue
+  except sqlite3.Error:
+    # Transient lock, schema migration, corruption: the numbers stop here,
+    # incomplete.
+    return False
+  finally:
+    conn.close()
+  return True
+
+
+# -------------------------------------------------------------- scan cache
+
+
+def scan_digest():
+  # Every path the scan reads, and which providers it counts as local, so a
+  # changed local.json or Codex config is a new scan rather than a stale one.
+  parts = [str(Path.home()), str(codex_home()), str(opencode_db()), os.environ.get("PI_CODING_AGENT_DIR", ""), json.dumps(classifier().fingerprint())]
+  return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
 def scan_cache_paths():
-  codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
-  db = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode" / "opencode.db"
-  config = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "omarchy" / "agents" / "local.json"
-  # The digest covers every path the scan reads: the codex session roots and
-  # its config.toml, the opencode DB, the provider config, and (via
-  # Path.home()) the pi/omp session roots.
-  digest = hashlib.sha1(
-    "\n".join(str(part) for part in (Path.home(), codex_home, db, config)).encode("utf-8")
-  ).hexdigest()[:16]
   root = cache_root()
+  digest = scan_digest()
   return root / f"local-scan-{digest}.json", root / f"local-scan-{digest}.lock"
 
 
-def read_fresh_json(path, max_age_seconds):
-  if max_age_seconds <= 0 or not path.exists():
+def run_local_scans(max_age):
+  stats = Stats()
+  complete = scan_codex(stats, use_file_cache=max_age > 0)
+  complete = scan_pi_sessions(stats) and complete
+  complete = scan_opencode(stats) and complete
+  return stats.record(), complete
+
+
+def read_cached_stats(cache_file, max_age):
+  cached = read_fresh_json(cache_file, max_age)
+  if not isinstance(cached, dict) or cached.get("schemaVersion") != 2:
     return None
-  try:
-    # A negative age means the mtime is in the future: the clock moved
-    # backwards since the write, so the cache's freshness cannot be trusted.
-    age = time.time() - path.stat().st_mtime
-    if 0 <= age <= max_age_seconds:
-      return json.loads(path.read_text(encoding="utf-8"))
-  except Exception:
-    return None
-  return None
-
-
-def write_json(path, payload):
-  # A temp name unique to this writer, not derived from the target: several
-  # collectors can run at once, and a shared temp path means the second
-  # replace finds the first one's file already moved away.
-  handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-  tmp = Path(tmp_name)
-  try:
-    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
-      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
-    # mkstemp opens at 0600; nothing in the cache is sensitive, so open it
-    # up to the usual 0644.
-    tmp.chmod(0o644)
-    tmp.replace(path)
-  except BaseException:
-    tmp.unlink(missing_ok=True)
-    raise
-
-
-# The cache payload is a versioned envelope around the stats dict, so a
-# corrupted or foreign-shaped file is a cache miss (rescan + rewrite) instead
-# of a crash or a garbage record.
-def read_cached_stats(cache_file, max_age_seconds):
-  cached = read_fresh_json(cache_file, max_age_seconds)
-  if not isinstance(cached, dict) or cached.get("schemaVersion") != 1:
-    return None
-  # today* fields only mean "today" on the day they were scanned. A cache
-  # from another local date (midnight passed, or the clock moved) is a miss,
-  # not merely old, whatever its mtime says.
-  if cached.get("scanDate") != today:
+  # today* fields only mean "today" on the day they were scanned.
+  if cached.get("scanDate") != datetime.now().strftime("%Y-%m-%d"):
     return None
   stats = cached.get("stats")
-  if not isinstance(stats, dict):
-    return None
-  if not all(key in stats for key in ("todayPrompts", "todayTotalTokens", "recentDays", "activeDates", "modelUsage")):
-    return None
-  return stats
+  return stats if isinstance(stats, dict) and set(Stats().record()) <= set(stats) else None
 
 
-def write_cached_stats(cache_file, stats):
+def cached_local_stats(max_age):
+  """Local stats, with the cache as a pure optimization: any cache-layer
+  failure degrades to a direct scan and a warning on stderr."""
   try:
-    write_json(cache_file, {"schemaVersion": 1, "scanDate": today, "stats": stats})
-  except Exception as exc:
-    print(f"omarchy-agent-usage-local: could not write usage cache ({exc})", file=sys.stderr)
-
-
-def run_local_scan():
-  scan = Scan()
-  scan.scan_codex()
-  scan.scan_pi()
-  scan.scan_opencode()
-  return scan.stats(), scan.complete
-
-
-def cached_stats(max_age):
-  """Stats, with the cache as a pure optimization.
-
-  The cache must never take the collector down: any cache-layer failure
-  (unwritable cache root, lock errors, disk full) degrades to a direct scan
-  and a warning on stderr. The JSON record is the contract; the cache is not.
-  """
-  try:
-    return _cached_stats(max_age)
-  except Exception as exc:
-    print(f"omarchy-agent-usage-local: cache unavailable ({exc}); scanning directly", file=sys.stderr)
-    stats, _ = run_local_scan()
-    return stats
-
-
-def _cached_stats(max_age):
-  cache_file, lock_file = scan_cache_paths()
-
-  cached = read_cached_stats(cache_file, max_age)
-  if cached is not None:
-    return cached
-
-  with lock_file.open("w") as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX)
+    cache_file, lock_file = scan_cache_paths()
     cached = read_cached_stats(cache_file, max_age)
     if cached is not None:
       return cached
-    stats, complete = run_local_scan()
-    # An interrupted scan still serves this run, but caching it would
-    # suppress the missing usage for every reader until the cache expires.
-    if complete:
-      write_cached_stats(cache_file, stats)
-    return stats
+    with lock_file.open("w") as lock:
+      fcntl.flock(lock, fcntl.LOCK_EX)
+      cached = read_cached_stats(cache_file, max_age)
+      if cached is not None:
+        return cached
+      stats, complete = run_local_scans(max_age)
+      # A scan that couldn't read everything serves this run, but caching it
+      # would hide the missing usage from every reader until it expires.
+      if complete:
+        write_json(cache_file, {"schemaVersion": 2, "scanDate": datetime.now().strftime("%Y-%m-%d"), "stats": stats})
+      return stats
+  except Exception as exc:
+    print(f"omarchy-agent-usage-local: cache unavailable ({exc}); scanning directly", file=sys.stderr)
+    return run_local_scans(0)[0]
+
+
+# ------------------------------------------------------------------ record
 
 
 def main():
-  parser = argparse.ArgumentParser()
-  # Accepted for parity with the other collectors: the update command passes
-  # them to everything it runs. There are no limits to fetch here, so
-  # --limits-only just means "a redraw may reuse an older scan".
-  parser.add_argument("--force", action="store_true")
-  parser.add_argument("--limits-only", action="store_true")
+  parser = argparse.ArgumentParser(description="Print the self-hosted model usage record as JSON")
+  # There are no limits to fetch, so --limits-only only means a redraw may
+  # reuse an older scan.
+  parser.add_argument("--force", action="store_true", help="rescan every session, ignoring caches")
+  parser.add_argument("--limits-only", action="store_true", help="reuse a recent scan")
   args = parser.parse_args()
 
   max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
-
+  stats = cached_local_stats(max_age)
   record = {
     "schemaVersion": 1,
     "id": AGENT_ID,
     "name": AGENT_NAME,
-    "updatedAt": datetime.now().astimezone().isoformat(),
-    "ready": True,
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "ready": number(stats.get("totalPrompts")) > 0,
     "hasLocalStats": True,
-    "tierLabel": TIER_LABEL,
+    # Self-hosted work has no plan.
+    "tierLabel": "",
     "usageStatusText": "",
     "authHelpText": "",
-    # Nothing meters self-hosted work, so the panel draws no limit rows.
     "limits": [],
+    "limitsStale": False,
+    "limitsFetchedAt": 0,
   }
-  record.update(cached_stats(max_age))
-  print(json.dumps(record, separators=(",", ":")))
+  record.update(stats)
+  print(json.dumps(record, separators=(",", ":"), sort_keys=True))
+  return 0
 
 
 if __name__ == "__main__":
-  main()
+  raise SystemExit(main())
