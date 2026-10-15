@@ -1,23 +1,21 @@
 #!/usr/bin/python3
-# omarchy:summary=Print the Kiro usage record as JSON
-# omarchy:args=[--force]
+# omarchy:summary=Print the Kiro CLI usage record as JSON
+# omarchy:args=[--force] [--limits-only]
 # omarchy:hidden=true
 """Collect Kiro CLI usage into one display-ready JSON record.
 
-Local stats come from Kiro CLI session files in ~/.kiro/sessions/cli/.
-Each session JSON contains per-turn metering_usage (credits consumed),
-model information, and timestamps. Kiro does not expose per-request token
-counts, so the record reports credits as the primary metric and uses
-request counts as the messageCount equivalent for daily charts.
-
-No rate-limit endpoint exists for Kiro subscriptions, so the record
-carries local stats only.
+Local stats come from the session files Kiro CLI writes under
+~/.kiro/sessions/cli/: one JSON document per session whose
+conversation_metadata keeps a row per user turn, with the model, the time the
+turn ended, and the token counts the service reported. Those counts are often
+zero (Kiro's Auto agent stores zeros), and such a turn still counts as a
+prompt with no tokens; nothing is estimated from text length. Kiro bills in
+credits against a monthly allowance, but neither the allowance nor the
+month's use is kept on disk, so the record carries no meter. The agents panel
+only ever reads the JSON this prints.
 """
 
-from __future__ import annotations
-
 import argparse
-import datetime as dt
 import fcntl
 import hashlib
 import json
@@ -25,238 +23,380 @@ import os
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 AGENT_ID = "kiro"
 AGENT_NAME = "Kiro"
 
+# A scan this recent is only reused to dedup concurrent collector runs (the
+# update command backgrounds one per agent while the panel refreshes on its
+# own). --limits-only promises only fresh limits, and Kiro has none to read,
+# so it may reuse a scan for 15 minutes.
 SCAN_REUSE_SECONDS = 20
+LIMITS_ONLY_REUSE_SECONDS = 900
+
+CACHE_SCHEMA_VERSION = 1
+INDEX_VERSION = 1
+
+# Counts and times read from disk are untrusted. Anything past these bounds is
+# a corrupt or crafted field, not usage.
+MAX_TOKENS = 10**12
+MIN_EPOCH_SECONDS = 946_684_800  # 2000-01-01
+MAX_MODEL_NAME_LEN = 120
 
 
-def sessions_dir() -> Path:
-    return Path(os.environ.get("KIRO_HOME") or (Path.home() / ".kiro")) / "sessions" / "cli"
+def token_count(value):
+  """A token field as a whole number, or 0 when it isn't a plausible count.
 
-
-def cache_root() -> Path:
-    root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "omarchy" / "agent-usage"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
-def number(value: Any) -> float:
-    try:
-        return float(value or 0)
-    except Exception:
-        return 0.0
-
-
-def local_date_from_iso(value: str | None) -> str:
-    """Parse an ISO-8601 timestamp to a local YYYY-MM-DD date string."""
-    if not value:
-        return dt.datetime.now().strftime("%Y-%m-%d")
-    try:
-        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is not None:
-            parsed = parsed.astimezone()
-        return parsed.strftime("%Y-%m-%d")
-    except Exception:
-        return dt.datetime.now().strftime("%Y-%m-%d")
-
-
-def recent_date_strings() -> list[str]:
-    today = dt.datetime.now().date()
-    return [(today - dt.timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
-
-
-def empty_bucket() -> dict[str, float]:
-    return {
-        "credits": 0.0,
-        "requests": 0,
-    }
-
-
-def read_fresh_json(path: Path, max_age_seconds: float) -> dict[str, Any] | None:
-    if max_age_seconds <= 0 or not path.exists():
-        return None
-    try:
-        if time.time() - path.stat().st_mtime <= max_age_seconds:
-            return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    return None
-
-
-def write_json(path: Path, payload: dict[str, Any]) -> None:
-    handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n")
-        tmp.chmod(0o644)
-        tmp.replace(path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-
-
-def scan_sessions(sessions_path: Path) -> dict[str, Any]:
-    today = dt.datetime.now().strftime("%Y-%m-%d")
-    recent_dates = recent_date_strings()
-    recent = {day: {"date": day, "messageCount": 0} for day in recent_dates}
-
-    sessions: set[str] = set()
-    active_days: set[str] = set()
-    today_sessions: set[str] = set()
-    today_credits_by_model: dict[str, float] = {}
-    credits_by_model: dict[str, dict[str, float]] = {}
-    total_prompts = 0
-    today_prompt_count = 0
-    today_total_credits = 0.0
-    total_credits = 0.0
-
-    if not sessions_path.is_dir():
-        return _empty_stats(recent_dates)
-
-    for path in sessions_path.glob("*.json"):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-
-        session_id = data.get("session_id") or path.stem
-        created_at = data.get("created_at")
-        state = data.get("session_state")
-        if not isinstance(state, dict):
-            continue
-        meta = state.get("conversation_metadata")
-        if not isinstance(meta, dict):
-            continue
-        turns = meta.get("user_turn_metadatas")
-        if not isinstance(turns, list):
-            continue
-
-        for turn in turns:
-            if not isinstance(turn, dict):
-                continue
-
-            # Determine the day: prefer end_timestamp, fall back to created_at
-            timestamp = turn.get("end_timestamp") or created_at
-            day = local_date_from_iso(timestamp)
-
-            model = str(turn.get("model") or "auto")
-            request_count = int(number(turn.get("total_request_count")) or 1)
-
-            # Sum credits from metering_usage array
-            metering = turn.get("metering_usage")
-            turn_credits = 0.0
-            if isinstance(metering, list):
-                for entry in metering:
-                    if isinstance(entry, dict):
-                        turn_credits += number(entry.get("value"))
-
-            if turn_credits <= 0 and request_count <= 0:
-                continue
-
-            total_prompts += 1
-            sessions.add(session_id)
-            active_days.add(day)
-            total_credits += turn_credits
-
-            bucket = credits_by_model.setdefault(model, empty_bucket())
-            bucket["credits"] += turn_credits
-            bucket["requests"] += request_count
-
-            if day in recent:
-                # Use request count as the daily chart metric (analogous to
-                # messageCount in other collectors)
-                recent[day]["messageCount"] += request_count
-
-            if day == today:
-                today_prompt_count += 1
-                today_sessions.add(session_id)
-                today_total_credits += turn_credits
-                today_credits_by_model[model] = today_credits_by_model.get(model, 0.0) + turn_credits
-
-    return {
-        "todayPrompts": today_prompt_count,
-        "todaySessions": len(today_sessions),
-        "todayTotalCredits": round(today_total_credits, 6),
-        "todayCreditsByModel": {k: round(v, 6) for k, v in today_credits_by_model.items()},
-        "recentDays": [recent[day] for day in recent_dates],
-        "modelUsage": {
-            model: {"credits": round(b["credits"], 6), "requests": int(b["requests"])}
-            for model, b in credits_by_model.items()
-        },
-        "totalPrompts": total_prompts,
-        "totalSessions": len(sessions),
-        "totalCredits": round(total_credits, 6),
-        "activeDays": len(active_days),
-        "activeDates": sorted(active_days),
-    }
-
-
-def _empty_stats(recent_dates: list[str]) -> dict[str, Any]:
-    return {
-        "todayPrompts": 0,
-        "todaySessions": 0,
-        "todayTotalCredits": 0.0,
-        "todayCreditsByModel": {},
-        "recentDays": [{"date": day, "messageCount": 0} for day in recent_dates],
-        "modelUsage": {},
-        "totalPrompts": 0,
-        "totalSessions": 0,
-        "totalCredits": 0.0,
-        "activeDays": 0,
-        "activeDates": [],
-    }
-
-
-def cached_scan(sessions_path: Path, max_age_seconds: float) -> dict[str, Any]:
-    digest = hashlib.sha1(str(sessions_path).encode("utf-8")).hexdigest()[:16]
-    cache_file = cache_root() / f"kiro-scan-{digest}.json"
-    lock_file = cache_root() / f"kiro-scan-{digest}.lock"
-
-    cached = read_fresh_json(cache_file, max_age_seconds)
-    if cached is not None:
-        return cached
-
-    with lock_file.open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        cached = read_fresh_json(cache_file, max_age_seconds)
-        if cached is not None:
-            return cached
-        summary = scan_sessions(sessions_path)
-        write_json(cache_file, summary)
-        return summary
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--force", action="store_true", help="rescan sessions ignoring caches")
-    parser.add_argument("--limits-only", action="store_true", help="reuse recent scan (no limits to fetch for Kiro)")
-    args = parser.parse_args()
-
-    scan_age = 0 if args.force else SCAN_REUSE_SECONDS
-    stats = cached_scan(sessions_dir(), scan_age)
-
-    record: dict[str, Any] = {
-        "schemaVersion": 1,
-        "id": AGENT_ID,
-        "name": AGENT_NAME,
-        "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "ready": stats.get("totalPrompts", 0) > 0,
-        "hasLocalStats": True,
-        "hasPromptStats": True,
-        "tierLabel": "",
-        "usageStatusText": "",
-        "authHelpText": "",
-        "limits": [],
-    }
-    record.update(stats)
-    print(json.dumps(record, separators=(",", ":"), sort_keys=True))
+  bool is an int subclass, and a string, NaN, negative, or absurd value is a
+  bad field: it counts as nothing rather than skewing the totals.
+  """
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
     return 0
+  if value != value or value <= 0 or value > MAX_TOKENS:
+    return 0
+  return int(value)
+
+
+def epoch_seconds(value):
+  """Seconds since the epoch for an ISO string or a seconds/milliseconds
+  number, or None when the value can't be a real moment of use."""
+  if value is None or isinstance(value, bool):
+    return None
+  if isinstance(value, (int, float)):
+    seconds = float(value)
+  elif isinstance(value, str) and value.strip():
+    text = value.strip()
+    try:
+      seconds = float(text)
+    except ValueError:
+      try:
+        parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+      except ValueError:
+        return None
+      if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+      seconds = parsed.timestamp()
+  else:
+    return None
+  if seconds != seconds:
+    return None
+  if seconds > 10_000_000_000:
+    seconds /= 1000
+  # A day of slack past now covers a clock a little behind the writer's.
+  if seconds < MIN_EPOCH_SECONDS or seconds > time.time() + 86_400:
+    return None
+  return seconds
+
+
+def local_day(seconds):
+  return datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
+
+
+def obj(value):
+  return value if isinstance(value, dict) else {}
+
+
+def model_label(raw):
+  """A model id fit for the record, or None when it is too long to be one."""
+  value = str(raw or "").strip()
+  if len(value) > MAX_MODEL_NAME_LEN:
+    return None
+  return value or "auto"
+
+
+def empty_bucket():
+  return {
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+  }
+
+
+class Stats:
+  def __init__(self):
+    now = datetime.now()
+    self.today = now.strftime("%Y-%m-%d")
+    self.recent_dates = [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
+    self.recent = {day: 0 for day in self.recent_dates}
+    self.today_prompts = 0
+    self.today_total_tokens = 0
+    self.today_sessions = set()
+    self.today_tokens_by_model = {}
+    self.total_prompts = 0
+    self.total_sessions = set()
+    self.active_days = set()
+    self.model_usage = {}
+
+  def add(self, session, day, model, input_tokens, output_tokens, cache_read, cache_write):
+    """One user turn: a prompt, with whatever tokens Kiro recorded for it."""
+    total = input_tokens + output_tokens + cache_read + cache_write
+    self.total_prompts += 1
+    self.total_sessions.add(session)
+    self.active_days.add(day)
+    if total > 0:
+      bucket = self.model_usage.setdefault(model, empty_bucket())
+      bucket["inputTokens"] += input_tokens
+      bucket["outputTokens"] += output_tokens
+      bucket["cacheReadInputTokens"] += cache_read
+      bucket["cacheCreationInputTokens"] += cache_write
+    if day in self.recent:
+      # recentDays.messageCount holds tokens, despite the shared legacy name.
+      self.recent[day] += total
+    if day == self.today:
+      self.today_prompts += 1
+      self.today_sessions.add(session)
+      self.today_total_tokens += total
+      if total > 0:
+        self.today_tokens_by_model[model] = self.today_tokens_by_model.get(model, 0) + total
+
+  def record(self):
+    return {
+      "todayPrompts": self.today_prompts,
+      "todaySessions": len(self.today_sessions),
+      "todayTotalTokens": self.today_total_tokens,
+      "todayTokensByModel": self.today_tokens_by_model,
+      "recentDays": [{"date": day, "messageCount": self.recent[day]} for day in self.recent_dates],
+      "totalPrompts": self.total_prompts,
+      "totalSessions": len(self.total_sessions),
+      # The dates travel too: merging snapshots from several machines needs
+      # their union, which a count alone cannot give.
+      "activeDays": len(self.active_days),
+      "activeDates": sorted(self.active_days),
+      "modelUsage": self.model_usage,
+    }
+
+
+def sessions_dir():
+  return Path.home() / ".kiro" / "sessions" / "cli"
+
+
+def parse_session(path):
+  """One session file's index entry: its id and a row per user turn,
+  [endSeconds, model, input, output, cacheRead, cacheWrite].
+
+  A turn that never ran (no request, no tokens) is no prompt. A turn whose
+  end time is missing or unreadable falls back to the session's creation
+  time, and is skipped when that is unreadable too.
+  """
+  data = json.loads(path.read_text(encoding="utf-8"))
+  if not isinstance(data, dict):
+    return {"session": path.stem, "rows": []}
+  state = obj(data.get("session_state"))
+  turns = obj(state.get("conversation_metadata")).get("user_turn_metadatas")
+  session_model = obj(obj(state.get("rts_model_state")).get("model_info")).get("model_id")
+  created = epoch_seconds(data.get("created_at"))
+  rows = []
+  for turn in turns if isinstance(turns, list) else []:
+    if not isinstance(turn, dict):
+      continue
+    input_tokens = token_count(turn.get("input_token_count"))
+    output_tokens = token_count(turn.get("output_token_count"))
+    cache_read = token_count(turn.get("cache_read_input_token_count"))
+    cache_write = token_count(turn.get("cache_write_input_token_count"))
+    requests = token_count(turn.get("total_request_count"))
+    if not (requests or input_tokens or output_tokens or cache_read or cache_write):
+      continue
+    ended = epoch_seconds(turn.get("end_timestamp"))
+    if ended is None:
+      ended = created
+    # A turn without a model of its own ran on the session's.
+    model = turn.get("model")
+    if not isinstance(model, str) or not model.strip():
+      model = session_model if isinstance(session_model, str) else ""
+    model = model_label(model)
+    if ended is None or model is None:
+      continue
+    rows.append([ended, model, input_tokens, output_tokens, cache_read, cache_write])
+  session = data.get("session_id")
+  return {"session": str(session) if isinstance(session, str) and session else path.stem, "rows": rows}
+
+
+def load_index(path):
+  try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    return {}
+  if isinstance(data, dict) and data.get("version") == INDEX_VERSION and isinstance(data.get("files"), dict):
+    return data["files"]
+  return {}
+
+
+def scan_sessions(stats, index_file):
+  """Add every session's turns. Kiro rewrites a session file whole on every
+  turn, so the index keeps each file's parsed turns by size and mtime and
+  only rereads files that changed. Returns whether every file was read."""
+  root = sessions_dir()
+  previous = load_index(index_file) if index_file else {}
+  current = {}
+  complete = True
+  try:
+    paths = sorted(root.glob("*.json")) if root.is_dir() else []
+  except OSError:
+    return False
+  for path in paths:
+    key = str(path)
+    try:
+      stat = path.stat()
+      signature = [stat.st_size, stat.st_mtime_ns]
+      held = previous.get(key)
+      if isinstance(held, dict) and held.get("sig") == signature:
+        entry = held
+      else:
+        entry = dict(parse_session(path), sig=signature)
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+      # Mid-write or unreadable: skip it this run, uncached.
+      print(f"omarchy-agent-usage-kiro: skipping {path}: {type(exc).__name__}", file=sys.stderr)
+      complete = False
+      continue
+    current[key] = entry
+    for row in entry.get("rows") or []:
+      try:
+        ended, model, input_tokens, output_tokens, cache_read, cache_write = row
+        day = local_day(float(ended))
+        counts = [int(input_tokens), int(output_tokens), int(cache_read), int(cache_write)]
+      except (TypeError, ValueError, OverflowError, OSError):
+        continue
+      stats.add(str(entry.get("session") or key), day, str(model), *counts)
+
+  if index_file and current != previous:
+    try:
+      write_json(index_file, {"version": INDEX_VERSION, "files": current})
+    except Exception as exc:
+      print(f"omarchy-agent-usage-kiro: could not write session index ({exc})", file=sys.stderr)
+  return complete
+
+
+# ---------------------------------------------------------------- cache
+
+
+def cache_root():
+  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
+  root.mkdir(parents=True, exist_ok=True)
+  return root
+
+
+def cache_paths():
+  digest = hashlib.sha1(str(sessions_dir()).encode("utf-8")).hexdigest()[:16]
+  root = cache_root()
+  return root / f"kiro-scan-{digest}.json", root / f"kiro-scan-{digest}.lock", root / f"kiro-index-{digest}.json"
+
+
+def read_fresh_json(path, max_age_seconds):
+  if max_age_seconds <= 0:
+    return None
+  try:
+    # A negative age means the mtime is in the future: the clock moved
+    # backwards since the write, so the cache's freshness cannot be trusted.
+    age = time.time() - path.stat().st_mtime
+    if 0 <= age < max_age_seconds:
+      return json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    return None
+  return None
+
+
+def write_json(path, payload):
+  # A temp name unique to this writer: several collectors can run at once, and
+  # a shared temp path means the second replace finds the first one's file
+  # already moved away.
+  handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+  tmp = Path(tmp_name)
+  try:
+    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    tmp.chmod(0o644)
+    tmp.replace(path)
+  except BaseException:
+    tmp.unlink(missing_ok=True)
+    raise
+
+
+STATS_KEYS = ("todayPrompts", "todaySessions", "todayTotalTokens", "todayTokensByModel", "recentDays", "totalPrompts", "totalSessions", "activeDays", "activeDates", "modelUsage")
+
+
+def read_cached_stats(cache_file, max_age_seconds):
+  cached = read_fresh_json(cache_file, max_age_seconds)
+  if not isinstance(cached, dict) or cached.get("schemaVersion") != CACHE_SCHEMA_VERSION:
+    return None
+  # today* fields only mean "today" on the day they were scanned.
+  if cached.get("scanDate") != datetime.now().strftime("%Y-%m-%d"):
+    return None
+  stats = cached.get("stats")
+  if not isinstance(stats, dict) or not all(key in stats for key in STATS_KEYS):
+    return None
+  return stats
+
+
+def run_scan(index_file):
+  stats = Stats()
+  complete = scan_sessions(stats, index_file)
+  return stats.record(), complete
+
+
+def cached_local_stats(max_age):
+  """Local stats, with the cache as a pure optimization: any cache failure
+  degrades to a direct scan and a warning on stderr."""
+  try:
+    cache_file, lock_file, index_file = cache_paths()
+    cached = read_cached_stats(cache_file, max_age)
+    if cached is not None:
+      return cached
+    with lock_file.open("w") as lock:
+      fcntl.flock(lock, fcntl.LOCK_EX)
+      cached = read_cached_stats(cache_file, max_age)
+      if cached is not None:
+        return cached
+      stats, complete = run_scan(index_file)
+      # An interrupted scan still serves this run, but caching it would hide
+      # the missing usage from every reader until the cache expires.
+      if complete:
+        try:
+          write_json(cache_file, {"schemaVersion": CACHE_SCHEMA_VERSION, "scanDate": datetime.now().strftime("%Y-%m-%d"), "stats": stats})
+        except Exception as exc:
+          print(f"omarchy-agent-usage-kiro: could not write usage cache ({exc})", file=sys.stderr)
+      return stats
+  except Exception as exc:
+    print(f"omarchy-agent-usage-kiro: cache unavailable ({exc}); scanning directly", file=sys.stderr)
+    stats, _ = run_scan(None)
+    return stats
+
+
+def main():
+  parser = argparse.ArgumentParser(description="Print the Kiro CLI usage record as JSON")
+  # --force rescans everything. --limits-only only promises fresh limits, and
+  # Kiro keeps none on disk, so it reuses a scan far longer than a normal run.
+  parser.add_argument("--force", action="store_true")
+  parser.add_argument("--limits-only", action="store_true")
+  args = parser.parse_args()
+
+  max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
+  stats = cached_local_stats(max_age)
+
+  # There is no allowance to read, so nothing waits on a sign-in: the status
+  # stays empty and local stats show alone. A machine that never ran Kiro
+  # prints a record the panel skips.
+  record = {
+    "schemaVersion": 1,
+    "id": AGENT_ID,
+    "name": AGENT_NAME,
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "ready": stats["totalPrompts"] > 0,
+    "hasLocalStats": True,
+    "hasPromptStats": True,
+    "tierLabel": "",
+    "usageStatusText": "",
+    "authHelpText": "",
+    "limits": [],
+    "limitsStale": False,
+    "limitsFetchedAt": 0,
+  }
+  record.update(stats)
+  print(json.dumps(record, separators=(",", ":")))
+  return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+  raise SystemExit(main())
