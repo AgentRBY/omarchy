@@ -120,6 +120,23 @@ pass "Vibe collector skips bad times and bad token fields without losing the rec
   fail "Vibe collector does not cache a scan that could not read every session"
 pass "Vibe collector does not cache a scan that could not read every session"
 
+# Nor does a pi session rg couldn't read, even when another file matched.
+if (( EUID != 0 )); then
+  home=$(new_home pi-unreadable)
+  pi_dir="$home/.pi/agent/sessions/--work--"
+  mkdir -p "$pi_dir"
+  printf '{"type":"message","id":"m1","timestamp":"%s","message":{"role":"assistant","provider":"mistral","model":"devstral-2","usage":{"input":5,"output":6}}}\n' "$now_iso" >"$pi_dir/readable.jsonl"
+  printf '{"type":"message","id":"m2","timestamp":"%s","message":{"role":"assistant","provider":"mistral","model":"devstral-2","usage":{"input":50,"output":60}}}\n' "$now_iso" >"$pi_dir/locked.jsonl"
+  chmod 000 "$pi_dir/locked.jsonl"
+  record=$(collect "$home" --force 2>/dev/null)
+  chmod 644 "$pi_dir/locked.jsonl"
+  [[ $(jq -r '.todayTotalTokens' <<<"$record") == "11" ]] ||
+    fail "Vibe collector counts the pi sessions it could read" "$record"
+  [[ -z $(find "$home/.cache/omarchy/agent-usage" -name 'vibe-scan-*.json' 2>/dev/null) ]] ||
+    fail "Vibe collector does not cache a scan with an unreadable pi session"
+  pass "Vibe collector does not cache a scan with an unreadable pi session"
+fi
+
 # ---------------------------------------------------------------- plan
 
 home=$(new_home plan)
