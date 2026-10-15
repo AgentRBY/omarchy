@@ -364,9 +364,17 @@ def carried_stats(key: str, today: date) -> dict[str, Any]:
     if name in previous:
       stats[name] = previous[name]
   if cached.get("scanDate") != today.isoformat():
-    counts = {str(row.get("date")): row.get("messageCount", 0) for row in stats["recentDays"] if isinstance(row, dict)}
     week = [window[0] for window in day_windows(today, RECENT_DAYS)]
-    stats["recentDays"] = [{"date": day, "messageCount": counts.get(day, 0)} for day in week]
+    kept_days = {str(day): usage for day, usage in cached.get("days") or [] if isinstance(usage, dict)}
+    if kept_days:
+      # Summed again over the new week, so the day that fell out leaves the
+      # model totals and active days along with the chart.
+      stats.update(summarize_usage([(day, kept_days.get(day, {})) for day in week]), hasLocalStats=stats["hasLocalStats"])
+    else:
+      counts = {str(row.get("date")): row.get("messageCount", 0) for row in stats["recentDays"] if isinstance(row, dict)}
+      stats["recentDays"] = [{"date": day, "messageCount": counts.get(day, 0)} for day in week]
+      stats["activeDates"] = [day for day in stats.get("activeDates") or [] if day in week]
+      stats["activeDays"] = len(stats["activeDates"])
     stats["todayTotalTokens"] = 0
     stats["todayTokensByModel"] = {}
   return stats
@@ -382,11 +390,13 @@ def collect_stats(client: CursorClient, today: date, key: str) -> dict[str, Any]
   windows = day_windows(today, RECENT_DAYS)
   with ThreadPoolExecutor(max_workers=4) as pool:
     rows = list(pool.map(lambda window: client.aggregations(window[1], window[2]), windows))
-  stats = summarize_usage([(window[0], summarize_day(day_rows)) for window, day_rows in zip(windows, rows)])
+  days = [(window[0], summarize_day(day_rows)) for window, day_rows in zip(windows, rows)]
+  stats = summarize_usage(days)
   # The cache only spares later runs a fetch; failing to keep it never costs
-  # this run's answer.
+  # this run's answer. Each day's usage is kept too, so a scan carried past
+  # midnight can be summed again over the new week.
   try:
-    write_json(stats_cache(key), {"scanDate": today.isoformat(), "scannedAtMs": now_ms(), "stats": stats})
+    write_json(stats_cache(key), {"scanDate": today.isoformat(), "scannedAtMs": now_ms(), "stats": stats, "days": days})
   except OSError:
     pass
   return stats
@@ -433,14 +443,15 @@ def summarize_limits(period: dict[str, Any]) -> list[dict[str, Any]]:
   limit_cents = number(spend.get("individualLimit"))
   if limit_cents > 0:
     used_cents = number(spend.get("individualUsed"))
-    label = f"On-demand ${used_cents / 100:.2f} / ${limit_cents / 100:.2f}"
-    limits.append({
-      "label": label,
-      "title": f"{label} Monthly",
-      "percent": min(1.0, used_cents / limit_cents),
-      "resetsAt": resets_at,
-    })
+    limits.append(dict(on_demand_names(used_cents, limit_cents), percent=min(1.0, used_cents / limit_cents), resetsAt=resets_at, onDemandLimitCents=limit_cents))
   return limits
+
+
+# The on-demand meter names its dollars, so a kept one that resets to zero
+# is renamed with the spend it now stands at.
+def on_demand_names(used_cents: float, limit_cents: float) -> dict[str, str]:
+  label = f"On-demand ${used_cents / 100:.2f} / ${limit_cents / 100:.2f}"
+  return {"label": label, "title": f"{label} Monthly"}
 
 
 def cache_root() -> Path:
@@ -498,7 +509,10 @@ def open_limits(limits: Any) -> list[dict[str, Any]]:
     if resets_at is None or resets_at > now:
       kept.append(limit)
     else:
-      kept.append(dict(limit, percent=0.0, resetsAt=""))
+      reset = dict(limit, percent=0.0, resetsAt="")
+      if number(limit.get("onDemandLimitCents")) > 0:
+        reset.update(on_demand_names(0, number(limit["onDemandLimitCents"])))
+      kept.append(reset)
   return kept
 
 

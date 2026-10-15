@@ -135,14 +135,21 @@ cache = collector.stats_cache(key)
 scan = json.loads(cache.read_text())
 yesterday_scan = dict(scan, scanDate=yesterday.isoformat())
 yesterday_scan["stats"] = dict(scan["stats"], recentDays=[{"date": (today - timedelta(days=offset)).isoformat(), "messageCount": offset} for offset in range(7, 0, -1)])
+# Each day's usage rides along, so the day that falls out of the week leaves
+# the model totals and active days as well as the chart.
+yesterday_scan["days"] = [[(today - timedelta(days=offset)).isoformat(), {"carried-model": {"inputTokens": offset}}] for offset in range(7, 0, -1)]
 cache.write_text(json.dumps(yesterday_scan))
 overnight = collector.carried_stats(key, today)
+# A scan cached before days were kept still moves onto the new week.
+cache.write_text(json.dumps({k: v for k, v in yesterday_scan.items() if k != "days"}))
+overnight_legacy = collector.carried_stats(key, today)
 cache.write_text(json.dumps(scan))
 
 # A kept limit whose billing cycle has ended comes back at zero.
 limits_cache = collector.limits_cache(key)
 good = json.loads(limits_cache.read_text())
-limits_cache.write_text(json.dumps(dict(good, limits=[dict(good["limits"][0], resetsAt="2020-01-01T00:00:00+00:00")] + good["limits"][1:])))
+past = "2020-01-01T00:00:00+00:00"
+limits_cache.write_text(json.dumps(dict(good, limits=[dict(good["limits"][0], resetsAt=past)] + good["limits"][1:3] + [dict(good["limits"][3], resetsAt=past)])))
 collector.CursorClient = DownForOther
 lapsed = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False, force=True)
 limits_cache.write_text(json.dumps(good))
@@ -168,7 +175,9 @@ refused = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME
 print(json.dumps({
   "other": other,
   "overnight": overnight,
+  "overnightLegacy": overnight_legacy,
   "lapsed": [[limit["label"], round(limit["percent"] * 100), limit["resetsAt"]] for limit in lapsed["limits"][:2]],
+  "lapsedOnDemand": {name: lapsed["limits"][3][name] for name in ("label", "title", "percent", "resetsAt")},
   "down": down,
   "refused": refused,
   "record": record,
@@ -239,10 +248,16 @@ pass "Cursor collector never carries another account's numbers"
 
 [[ $(jq -c '.overnight | {todayTotalTokens, todayTokensByModel, counts: [.recentDays[].messageCount], last: .recentDays[6].date}' <<<"$result") == "{\"todayTotalTokens\":0,\"todayTokensByModel\":{},\"counts\":[6,5,4,3,2,1,0],\"last\":\"$(TZ=UTC date +%F)\"}" ]] ||
   fail "Cursor collector moves a scan from yesterday onto today's week" "$result"
+[[ $(jq -c '.overnight | {model: .modelUsage["carried-model"].inputTokens, activeDays, dates: (.activeDates | length)}' <<<"$result") == '{"model":21,"activeDays":6,"dates":6}' ]] ||
+  fail "Cursor collector drops the day that left the week from the model totals" "$result"
+[[ $(jq -c '.overnightLegacy | {todayTotalTokens, counts: [.recentDays[].messageCount]}' <<<"$result") == '{"todayTotalTokens":0,"counts":[6,5,4,3,2,1,0]}' ]] ||
+  fail "Cursor collector moves an older cached scan onto today's week" "$result"
 pass "Cursor collector moves a scan from yesterday onto today's week"
 
 [[ $(jq -c '.lapsed' <<<"$result") == '[["Included total",0,""],["Auto models",12,"2026-10-15T21:32:06+00:00"]]' ]] ||
   fail "Cursor collector resets a kept limit whose cycle ended" "$result"
+[[ $(jq -c '.lapsedOnDemand | {label, title, zero: (.percent == 0), resetsAt}' <<<"$result") == '{"label":"On-demand $0.00 / $10.00","title":"On-demand $0.00 / $10.00 Monthly","zero":true,"resetsAt":""}' ]] ||
+  fail "Cursor collector renames an on-demand meter that reset with its new spend" "$result"
 pass "Cursor collector resets a kept limit whose cycle ended"
 
 # Days that spring forward or fall back are 23 or 25 hours long.
