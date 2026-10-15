@@ -791,11 +791,15 @@ def dollars(value: Any) -> float | None:
 
 
 # Balance: total purchased minus total used, or None for an account that never
-# bought credits.
+# bought credits. An answer missing either total says nothing about the
+# balance, so it is a failed check that keeps the last good one, not an empty
+# balance that would replace it.
 def credits_balance(credits: dict) -> dict | None:
-  total_credits = dollars(credits.get("total_credits"))
-  total_usage = dollars(credits.get("total_usage"))
-  if not total_credits or total_credits <= 0 or total_usage is None:
+  total_credits = dollars(credits.get("total_credits")) if credits.get("total_credits") is not None else None
+  total_usage = dollars(credits.get("total_usage")) if credits.get("total_usage") is not None else None
+  if total_credits is None or total_usage is None:
+    raise OpenRouterError("OpenRouter answered /credits without a balance.")
+  if total_credits <= 0:
     return None
   return {
     "remaining": round(max(0.0, total_credits - total_usage), 6),
@@ -870,12 +874,12 @@ def probe(endpoint: str, key: str, cache: Path, parse, force: bool) -> tuple[dic
     return kept, None
   try:
     payload = api_get(endpoint, key)
+    data = payload.get("data")
+    # Floored, never rounded: a stamp half a millisecond ahead reads as a
+    # clock that went back and fails the 0 <= age guard on the very next run.
+    part = dict(parse(data if isinstance(data, dict) else {}), fetchedAtMs=int(time.time() * 1000))
   except OpenRouterError as error:
     return kept, error
-  data = payload.get("data")
-  # Floored, never rounded: a stamp half a millisecond ahead reads as a clock
-  # that went back and fails the 0 <= age guard on the very next run.
-  part = dict(parse(data if isinstance(data, dict) else {}), fetchedAtMs=int(time.time() * 1000))
   try:
     remember(cache, part)
   except OSError as exc:

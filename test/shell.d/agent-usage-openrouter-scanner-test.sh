@@ -357,6 +357,22 @@ PY
 check "$(jq -c '.kept | {remaining: .balance.remaining, limitsStale, usageStatusText}' <<<"$balance")" '{"remaining":9.0,"limitsStale":true,"usageStatusText":""}' "a failed balance check keeps the last balance, stale"
 check "$(jq -c '.missing | {balance, limitsStale, usageStatusText}' <<<"$balance")" '{"balance":null,"limitsStale":true,"usageStatusText":"Balance unavailable"}' "a failed balance check with nothing kept says so"
 
+# 11b. A /credits answer without both totals is a failed check, not an empty
+# balance: it never overwrites the last good one, so a later failure still
+# has it to keep.
+incomplete=$(run_py <<'PY'
+answers.update({"/key": METER, "/credits": CREDITS})
+mod.scan(Args(force=True))
+answers["/credits"] = {"data": {"total_usage": 1}}
+partial = mod.scan(Args(force=True))
+answers["/credits"] = mod.OpenRouterError("OpenRouter's API returned status 502.")
+later = mod.scan(Args(force=True))
+print(json.dumps({"partial": pick(partial), "later": pick(later)}))
+PY
+)
+check "$(jq -c '.partial | {remaining: .balance.remaining, limitsStale, usageStatusText, retryAdvised}' <<<"$incomplete")" '{"remaining":9.0,"limitsStale":true,"usageStatusText":"","retryAdvised":null}' "an incomplete balance answer keeps the last balance, stale"
+check "$(jq -c '.later | {remaining: .balance.remaining, limitsStale}' <<<"$incomplete")" '{"remaining":9.0,"limitsStale":true}' "an incomplete balance answer never replaces the cached balance"
+
 # 12. retryAdvised marks only a service that couldn't be reached at all.
 retry=$(run_py <<'PY'
 answers.update({"/key": UNREACHABLE, "/credits": CREDITS})
