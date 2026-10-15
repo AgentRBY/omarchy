@@ -34,6 +34,7 @@ cat >"$TEST_HOME/.pi/agent/sessions/p/a.jsonl" <<EOF
 {"type":"message","id":"m2","timestamp":"$timestamp","message":{"role":"assistant","provider":"openai","model":"gpt","usage":{"input":999}}}
 EOF
 cat >"$TEST_HOME/.omp/profiles/work/agent/sessions/p/b.jsonl" <<EOF
+{"type":"session","id":"fork","parentSession":"$TEST_HOME/.pi/agent/sessions/p/a.jsonl"}
 {"type":"message","id":"m1","timestamp":"$timestamp","message":{"role":"assistant","provider":"minimax","model":"MiniMax-M2","usage":{"input":100,"output":50}}}
 {"type":"message","id":"m3","timestamp":"$timestamp","message":{"role":"assistant","provider":"minimax-cn","model":"MiniMax-M2","usage":{"input":1000}}}
 EOF

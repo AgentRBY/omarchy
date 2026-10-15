@@ -175,7 +175,7 @@ import io
 class Response(io.BytesIO):
   def __enter__(self): return self
   def __exit__(self, *a): return False
-scanner.urlopen = lambda request, timeout: Response(json.dumps({"base_resp": {"status_code": 1004, "status_msg": "login fail"}}).encode())
+scanner.urllib.request.urlopen = lambda request, timeout: Response(json.dumps({"base_resp": {"status_code": 1004, "status_msg": "login fail"}}).encode())
 try:
   fetch_quota("k", "https://example.invalid")
   out["baseRespRejected"] = False
