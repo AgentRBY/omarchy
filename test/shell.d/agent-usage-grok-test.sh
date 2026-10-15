@@ -69,7 +69,18 @@ export PERIOD_END="$period_end"
 record=$(collect)
 [[ $(jq -c '{ready, tierLabel, limits}' <<<"$record") == '{"ready":false,"tierLabel":"","limits":[]}' ]] ||
   fail "a machine nobody signed in to Grok on gives an empty record" "$record"
+[[ $(jq -c '{hasLocalStats, totalPrompts, totalSessions, todayTotalTokens, days: (.recentDays | length), modelUsage, status: .usageStatusText}' <<<"$record") == '{"hasLocalStats":false,"totalPrompts":0,"totalSessions":0,"todayTotalTokens":0,"days":7,"modelUsage":{},"status":"Waiting for auth"}' ]] ||
+  fail "an empty Grok record still carries the full stats block" "$record"
 pass "a machine nobody signed in to Grok on gives an empty record"
+
+# Sessions on disk put Grok in use here even with no sign-in, which is then
+# what's missing.
+mkdir -p "$test_tmp/orphan/sessions/%2Fhome%2Fme/one"
+jq -n '{last_active_at: "2026-01-02T10:00:00Z", num_messages: 2}' >"$test_tmp/orphan/sessions/%2Fhome%2Fme/one/summary.json"
+record=$(GROK_HOME="$test_tmp/orphan" collect)
+[[ $(jq -c '{ready, totalSessions, status: .usageStatusText}' <<<"$record") == '{"ready":true,"totalSessions":1,"status":"Waiting for auth"}' ]] ||
+  fail "Grok sessions with no sign-in are in use, waiting for auth" "$record"
+pass "Grok sessions with no sign-in are in use, waiting for auth"
 
 # A home chosen with GROK_HOME is the one read, as the CLI itself does.
 signed_in "$test_tmp/custom-grok" token-main u-main "$future" "SuperGrok"

@@ -392,16 +392,19 @@ def main():
     limits = collect_limits(home, cache_key(home, "main"), args.force)
     stale, fetched_at = not limits["live"], limits["fetchedAtMs"]
 
-  # Nobody signed in to Grok here: an empty record, which the panel skips.
   # With accounts registered, the primary is ~/.grok by definition.
   stats_home = Path.home() / ".grok" if accounts else default_home()
-  signed_in = bool(accounts) or bool(login(stats_home))
+  scan_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
+  stats = cached_local_stats(stats_home, scan_age)
+  # In use here once someone signed in or ran a session; otherwise an empty
+  # record, which the panel skips.
+  in_use = bool(accounts) or bool(login(stats_home)) or stats["totalSessions"] > 0
   record = {
     "schemaVersion": 1,
     "id": AGENT_ID,
     "name": AGENT_NAME,
     "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": signed_in,
+    "ready": in_use,
     "tierLabel": tier,
     "usageStatusText": limits["usageStatusText"],
     "authHelpText": limits["authHelpText"],
@@ -411,8 +414,7 @@ def main():
   }
   if limits.get("retryAdvised"):
     record["retryAdvised"] = True
-  scan_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
-  record.update(cached_local_stats(stats_home, scan_age))
+  record.update(stats)
   if accounts:
     record["accountSwitch"] = registered[0]["switch"]
     record["accounts"] = accounts
