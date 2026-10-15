@@ -370,3 +370,47 @@ result_v2=$(HOME="$v2_home" XDG_DATA_HOME="$v2_home/data" XDG_CACHE_HOME="$v2_ho
 [[ $(jq -c '{todayTotalTokens, totalPrompts, totalSessions}' <<<"$result_v2") == '{"todayTotalTokens":115,"totalPrompts":2,"totalSessions":1}' ]] ||
   fail "Muse collector reads OpenCode V2 records once each" "$result_v2"
 pass "Muse collector reads OpenCode V2 records once each"
+
+# Current Muse logs carry a completion as record_type "event" with no payload
+# kind, and report cached tokens inside input_tokens; a cache figure larger
+# than its input never claims more than the input.
+index_home="$TEST_HOME/index"
+mkdir -p "$index_home/muse-data/sessions/2026/10/12/demo"
+cat >"$index_home/muse-data/sessions/2026/10/12/demo/session.jsonl" <<EOF
+{"schema_version": 1, "recorded_at": $now_us, "record_type": "event", "payload_type": "runtime.session", "payload": {"event": {"kind": "model_completed", "model": "muse-wonder-1.0", "usage": {"input_tokens": 38219, "output_tokens": 290, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
+{"schema_version": 1, "recorded_at": $((now_us + 1000)), "record_type": "event", "payload_type": "runtime.session", "payload": {"event": {"kind": "model_completed", "model": "muse-wonder-1.0", "usage": {"input_tokens": 42901, "output_tokens": 357, "cache_read_tokens": 38132, "cache_write_tokens": 0}}}}
+{"schema_version": 1, "recorded_at": $((now_us + 2000)), "record_type": "event", "payload_type": "runtime.session", "payload": {"event": {"kind": "model_completed", "model": "muse-wonder-1.0", "usage": {"input_tokens": 10, "output_tokens": 1, "cache_read_tokens": 50, "cache_write_tokens": 7}}}}
+{"payload": {"event": {"kind": "model_completed", "model": "muse", "usage": {"estimated_tokens": 5}}}}
+{"payload": {"event": {"kind": "tool_completed", "usage": {"input_tokens": 999}}}}
+EOF
+index_env=(env HOME="$index_home" XDG_DATA_HOME="$index_home/data" XDG_CACHE_HOME="$index_home/cache" MUSE_DATA_DIR="$index_home/muse-data")
+result_noindex=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
+[[ $(jq -c '{totalPrompts, totalSessions, todayPrompts, todayTotalTokens, m: .modelUsage["muse-wonder-1.0"]}' <<<"$result_noindex") == '{"totalPrompts":3,"totalSessions":1,"todayPrompts":3,"todayTotalTokens":81778,"m":{"cacheCreationInputTokens":0,"cacheReadInputTokens":38142,"inputTokens":42988,"outputTokens":648}}' ]] ||
+  fail "Muse collector reads current event logs and clamps cache tokens to input" "$result_noindex"
+pass "Muse collector reads current event logs and clamps cache tokens to input"
+
+# The CLI's session index holds the real prompt and session counts: a session
+# nobody prompted isn't one, and an undated row counts on no day. Without the
+# index (above) completions stand in for prompts.
+sqlite3 "$index_home/muse-data/session-index.db" <<EOF
+CREATE TABLE sessions (session_id TEXT PRIMARY KEY, prompt_count INTEGER NOT NULL DEFAULT 0, created_at_us INTEGER);
+INSERT INTO sessions VALUES ('demo', 2, $now_us);
+INSERT INTO sessions VALUES ('earlier', 5, $old_us);
+INSERT INTO sessions VALUES ('opened', 0, $now_us);
+INSERT INTO sessions VALUES ('undated', 1, 'soon');
+EOF
+result_index=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
+[[ $(jq -c --arg old "$old_date" '{totalPrompts, totalSessions, todayPrompts, todaySessions, todayTotalTokens, old: (.activeDates | index($old) != null)}' <<<"$result_index") == '{"totalPrompts":8,"totalSessions":3,"todayPrompts":2,"todaySessions":1,"todayTotalTokens":81778,"old":true}' ]] ||
+  fail "Muse collector takes prompt and session counts from the session index" "$result_index"
+pass "Muse collector takes prompt and session counts from the session index"
+
+# An index that's there but unreadable falls back on completions, and that
+# scan isn't cached.
+printf 'not a database' >"$index_home/muse-data/session-index.db"
+rm -rf "$index_home/cache"
+result_badindex=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse")
+[[ $(jq -c '{totalPrompts, totalSessions}' <<<"$result_badindex") == '{"totalPrompts":3,"totalSessions":1}' ]] ||
+  fail "Muse collector counts completions past an unreadable session index" "$result_badindex"
+! compgen -G "$index_home/cache/omarchy/agent-usage/muse-scan-*.json" >/dev/null ||
+  fail "Muse collector doesn't cache a scan past an unreadable session index" "$(ls "$index_home/cache/omarchy/agent-usage")"
+pass "Muse collector falls back on completions past an unreadable session index"

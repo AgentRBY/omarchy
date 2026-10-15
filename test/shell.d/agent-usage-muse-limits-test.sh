@@ -227,6 +227,13 @@ custom=$(run_collector --force)
 pass "Muse collector honors MUSE_AUTH_PATH over the default login"
 unset MUSE_AUTH_PATH
 
+# A session window that is a whole number of hours says so in hours.
+set_payload '{"body":{"subs_tier_name":"T","subs_usage":{"window":{"used_percent":5,"window_duration_mins":120,"resets_at":4102444800},"weekly":{"used_percent":1,"resets_at":4103049600}}}}'
+hours=$(run_collector --force)
+[[ $(jq -r '.limits[0].label' <<<"$hours") == "Session (2-hour)" ]] ||
+  fail "Muse collector labels a whole-hour session window in hours" "$hours"
+pass "Muse collector labels a whole-hour session window in hours"
+
 # A probe this recent is reused, and --force asks again.
 run_collector --force >/dev/null
 : >"$STUB_SEEN_FILE"

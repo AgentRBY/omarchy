@@ -8,6 +8,8 @@ Local metering (always available, no network): token counts, prompt and
 session counts, per-day and per-model breakdowns. Sources (all local):
   - native `muse` CLI sessions in $XDG_DATA_HOME/muse/sessions, defaulting to
     ~/.local/share/muse/sessions (`model_completed` events carry usage),
+    with the real prompt and session counts from the CLI's own
+    session-index.db beside them when it is there,
   - opencode sessions with providerID == "meta" (any Muse Spark model).
     Muse Spark served through OpenCode Zen (providerID == "opencode") is
     Zen usage, and the opencode record counts it.
@@ -56,8 +58,9 @@ MAX_MODEL_NAME_LEN = 120
 MAX_SESSION_BYTES = 512 * 1024 * 1024
 
 # Cache schema version. Bump when the cached stats shape changes so old
-# caches are rescanned instead of trusted.
-CACHE_SCHEMA_VERSION = 2
+# caches are rescanned instead of trusted. 3: prompts and sessions from the
+# session index.
+CACHE_SCHEMA_VERSION = 3
 
 # A token count past this is a corrupt field, not a model call.
 MAX_TOKENS = 1_000_000_000_000
@@ -175,14 +178,18 @@ total_prompts = 0
 total_sessions = set()
 
 
-# An undated row (day None) counts in the totals only.
-def add_usage(day, session_key, model, input_tokens, output_tokens, cache_read, cache_write):
+# `counted` is False for native completions once the session index has
+# supplied the real prompt and session counts: their tokens still count, but
+# a completion is a model call, not a prompt. An undated row (day None)
+# counts in the totals only.
+def add_usage(day, session_key, model, input_tokens, output_tokens, cache_read, cache_write, counted=True):
   global today_prompts, today_total_tokens, total_prompts
   total = input_tokens + output_tokens + cache_read + cache_write
   if total <= 0:
     return
-  total_prompts += 1
-  total_sessions.add(session_key)
+  if counted:
+    total_prompts += 1
+    total_sessions.add(session_key)
   if day is not None:
     active_days.add(day)
 
@@ -200,19 +207,66 @@ def add_usage(day, session_key, model, input_tokens, output_tokens, cache_read, 
   if day in recent:
     recent[day] += total
   if day == today:
-    today_prompts += 1
-    today_sessions.add(session_key)
+    if counted:
+      today_prompts += 1
+      today_sessions.add(session_key)
     today_total_tokens += total
     today_tokens_by_model[model] = today_tokens_by_model.get(model, 0) + total
 
 
-def muse_sessions_root():
+def muse_data_dir():
   override = (os.environ.get("MUSE_DATA_DIR") or "").strip()
   if override:
-    base = Path(os.path.expandvars(os.path.expanduser(override)))
-  else:
-    base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "muse"
-  return base / "sessions"
+    return Path(os.path.expandvars(os.path.expanduser(override)))
+  return Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "muse"
+
+
+# The Muse CLI keeps one row per session in session-index.db with the number
+# of prompts typed into it, the real counts a completion tally can only
+# approximate (one prompt can run many model calls). Returns whether the
+# index supplied them, and whether it could be read: an index that's there
+# but unreadable falls back on completions without caching that scan. A
+# session nobody prompted isn't counted, and a row whose creation time isn't
+# a plausible moment counts in the totals only.
+def scan_session_index():
+  global today_prompts, total_prompts
+  database = muse_data_dir() / "session-index.db"
+  if not database.is_file():
+    return False, True
+  try:
+    conn = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+  except sqlite3.Error:
+    return False, False
+  try:
+    conn.execute("PRAGMA query_only = ON")
+    rows = conn.execute("SELECT session_id, created_at_us, prompt_count FROM sessions").fetchall()
+  except sqlite3.Error:
+    return False, False
+  finally:
+    try:
+      conn.close()
+    except Exception:
+      pass
+  for session_id, created_at_us, prompt_count in rows:
+    prompts = token_number(prompt_count)
+    if not prompts:
+      continue
+    session_key = "muse-index:" + str(session_id)
+    total_prompts += prompts
+    total_sessions.add(session_key)
+    # created_at_us is microseconds, which local_day recognises by size.
+    day = local_day(created_at_us)
+    if day is None:
+      continue
+    active_days.add(day)
+    if day == today:
+      today_prompts += prompts
+      today_sessions.add(session_key)
+  return True, True
+
+
+def muse_sessions_root():
+  return muse_data_dir() / "sessions"
 
 
 def iter_native_events(path):
@@ -224,6 +278,12 @@ def iter_native_events(path):
   try:
     with path.open(errors="replace") as handle:
       for raw in handle:
+        # Session logs run to hundreds of megabytes, mostly lines without
+        # usage. Only completions ("usage", escaped or not inside a
+        # retained frame) and the model records ("model_id") matter, so
+        # everything else skips the JSON parse.
+        if "usage" not in raw and "model_id" not in raw:
+          continue
         raw = raw.strip()
         if not raw:
           continue
@@ -257,7 +317,7 @@ def iter_native_events(path):
     return
 
 
-def scan_native_muse_sessions():
+def scan_native_muse_sessions(counted=True):
   root = muse_sessions_root()
   if not root.exists():
     return
@@ -309,7 +369,10 @@ def scan_native_muse_sessions():
         if isinstance(record, dict) and record.get("model_id"):
           current_model = model_name(record.get("model_id"))
         continue
-      if kind != "run":
+      # Older logs wrap a completion as payload kind "run"; current ones
+      # (record_type "event", payload_type "runtime.session") carry the event
+      # with no payload kind at all.
+      if kind not in ("run", None):
         continue
       event = payload.get("event") or {}
       if not isinstance(event, dict):
@@ -330,11 +393,12 @@ def scan_native_muse_sessions():
       input_tokens = token_number(usage.get("input_tokens"))
       # Native Muse reports reasoning as a subset of output_tokens.
       output_tokens = token_number(usage.get("output_tokens"))
-      cache_read = token_number(usage.get("cache_read_tokens", usage.get("cached_tokens")))
-      cache_write = token_number(usage.get("cache_write_tokens"))
       # Cached tokens are a subset of input: keep the split without double
-      # counting (same convention as the codex collector).
-      input_tokens = max(0, input_tokens - cache_read - cache_write)
+      # counting (same convention as the codex collector), and never let a
+      # cache figure claim more than the input it is part of.
+      cache_read = min(input_tokens, token_number(usage.get("cache_read_tokens", usage.get("cached_tokens"))))
+      cache_write = min(input_tokens - cache_read, token_number(usage.get("cache_write_tokens")))
+      input_tokens = input_tokens - cache_read - cache_write
       if not (input_tokens or output_tokens or cache_read or cache_write):
         continue
       # Native record IDs survive copies and retained-frame wrapping. Claim
@@ -352,7 +416,7 @@ def scan_native_muse_sessions():
       # it spawned.
       session_key = "muse:" + re.sub(r"(/subagent/.*)?/session\.jsonl$", "", str(path))
       add_usage(day, session_key, model,
-                input_tokens, output_tokens, cache_read, cache_write)
+                input_tokens, output_tokens, cache_read, cache_write, counted)
 
 
 def opencode_db():
@@ -587,7 +651,10 @@ def probe_key(access_token: str) -> dict:
     percent = percent_number(window.get("used_percent"))
     if percent >= 0:
       mins = number(window.get("window_duration_mins"))
-      label = "Session (5-hour)" if mins == 300 else (f"Session ({mins}m)" if mins > 0 else "Session")
+      if mins >= 60 and mins % 60 == 0:
+        label = f"Session ({mins // 60}-hour)"
+      else:
+        label = f"Session ({mins}m)" if mins > 0 else "Session"
       limits.append({"label": label, "percent": percent, "resetsAt": normalize_reset_at(window.get("resets_at"))})
   weekly = usage.get("weekly") or {}
   if isinstance(weekly, dict) and weekly.get("used_percent") is not None:
@@ -805,9 +872,10 @@ def local_stats():
 
 
 def run_local_scans():
-  scan_native_muse_sessions()
+  indexed, index_read = scan_session_index()
+  scan_native_muse_sessions(counted=not indexed)
   complete = scan_opencode_sessions()
-  return local_stats(), complete
+  return local_stats(), complete and index_read
 
 
 def cached_local_stats(max_age):
