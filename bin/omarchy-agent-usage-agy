@@ -399,7 +399,7 @@ def collect_limits(entries, force):
 
   def answered(entry, tier, limits):
     # A plan with no quota windows to report is healthy, with no meters.
-    fetched = round(time.time() * 1000)
+    fetched = int(time.time() * 1000)
     result.update(limits=limits, tierLabel=tier, live=True, fetchedAtMs=fetched)
     path = limits_cache(entry)
     if path:

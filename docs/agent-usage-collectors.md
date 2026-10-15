@@ -52,7 +52,7 @@ The detail goes in `authHelpText`: what failed and the one thing to do about it.
 ## Limits
 
 - Each credential or account caches its own last good answer at `cache_root() / "<id>-limits-<key>.json"`, `{fetchedAtMs, limits, ...}`, where `cache_root()` is `$XDG_CACHE_HOME/omarchy/agent-usage` and `<key>` is a short hash of who the credential signs in as (a JWT subject, an email, an account id) or of the credential itself. Another sign-in never shows this one's numbers.
-- The cache is read whatever its file time, so a clock that went back doesn't lose it, and every age check is `0 <= age < N`.
+- The cache is read whatever its file time, so a clock that went back doesn't lose it, and every age check is `0 <= age < N`. Stamps are floored (`int(time.time() * 1000)`), never rounded: a stamp half a millisecond ahead reads as a clock that went back, and the next run probes again.
 - A failed check keeps the cached limits with `limitsStale: true` and their `limitsFetchedAt`. The panel shows their age on hover.
 - A kept window whose `resetsAt` has passed comes back at `percent: 0` with `resetsAt: ""`, never dropped: a reset allowance is untouched, not unknown. A window with no reset time is kept as it is. Reset times are only ever the service's own, never computed.
 - A meter for a balance or allowance is a real ratio of the service's numbers, never estimated from local usage unless its label says `(est.)`.

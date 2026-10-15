@@ -757,7 +757,7 @@ def collect_limits(force: bool) -> dict:
   if probe["ok"]:
     result["limits"] = probe["limits"]
     result["tierLabel"] = probe.get("tierLabel") or result["tierLabel"]
-    result["fetchedAtMs"] = round(time.time() * 1000)
+    result["fetchedAtMs"] = int(time.time() * 1000)
     if probe_cache is not None:
       try:
         write_json(probe_cache, {"fetchedAtMs": result["fetchedAtMs"], "limits": probe["limits"], "tierLabel": result["tierLabel"]})

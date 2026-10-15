@@ -497,7 +497,7 @@ def open_limits(limits: Any) -> list[dict[str, Any]]:
 
 
 def now_ms() -> int:
-  return round(datetime.now(timezone.utc).timestamp() * 1000)
+  return int(datetime.now(timezone.utc).timestamp() * 1000)
 
 
 def scan(api_base_url: str, auth_path: Path, limits_only: bool, state_db: Path | None = None, force: bool = False) -> dict[str, Any]:

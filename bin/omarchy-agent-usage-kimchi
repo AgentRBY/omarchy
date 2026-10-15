@@ -477,7 +477,7 @@ def collect_billing(force):
         continue
     try:
       data = get_json(f"{base}/v1/{resource}", key)
-      parts[resource] = dict(parse(data if isinstance(data, dict) else {}), fetchedAtMs=round(time.time() * 1000))
+      parts[resource] = dict(parse(data if isinstance(data, dict) else {}), fetchedAtMs=int(time.time() * 1000))
       remember(cache, parts[resource])
       continue
     except urllib.error.HTTPError as error:

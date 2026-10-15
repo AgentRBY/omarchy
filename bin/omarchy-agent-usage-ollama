@@ -404,7 +404,7 @@ def cached_scan(max_age_seconds: float, model_prefix: str) -> dict[str, Any]:
       if complete:
         write_json(cache_file, {
           "scanDate": local_date_string(),
-          "scannedAtMs": round(time.time() * 1000),
+          "scannedAtMs": int(time.time() * 1000),
           "modelPrefix": model_prefix,
           "stats": stats,
         })
@@ -525,7 +525,7 @@ def collect_limits(access_key: str, force: bool) -> dict[str, Any]:
     # A plan lookup that failed keeps the plan last named, rather than
     # blanking a label the account still has.
     plan = cached_plan if plan is None else plan
-    result.update(limits=probe["limits"], tierLabel=plan, live=True, fetchedAtMs=round(time.time() * 1000))
+    result.update(limits=probe["limits"], tierLabel=plan, live=True, fetchedAtMs=int(time.time() * 1000))
     write_json(probe_cache, {"fetchedAtMs": result["fetchedAtMs"], "limits": probe["limits"], "plan": plan})
     return result
 

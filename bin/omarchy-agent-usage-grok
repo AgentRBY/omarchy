@@ -315,7 +315,7 @@ def collect_limits(home, key, force):
       result["authHelpText"] = "Grok's usage endpoint answered without a usable limit. Local Grok stats are still shown."
 
   if limit:
-    result.update(limits=[limit], live=True, fetchedAtMs=round(time.time() * 1000), authHelpText="")
+    result.update(limits=[limit], live=True, fetchedAtMs=int(time.time() * 1000), authHelpText="")
     write_json(cache, {"fetchedAtMs": result["fetchedAtMs"], "limits": result["limits"]})
   else:
     result["limits"] = fallback

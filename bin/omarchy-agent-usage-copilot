@@ -897,7 +897,7 @@ def fetch_remote_quota(force: bool = False) -> dict[str, Any]:
 
   quota = ask_quota(token)
   if quota.get("available"):
-    quota.update(stale=False, fetchedAtMs=round(time.time() * 1000))
+    quota.update(stale=False, fetchedAtMs=int(time.time() * 1000))
     try:
       write_json(cache, quota)
     except OSError:

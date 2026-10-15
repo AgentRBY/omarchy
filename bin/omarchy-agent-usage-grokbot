@@ -46,7 +46,7 @@ def cache_root():
 
 
 def now_ms():
-  return round(datetime.now(timezone.utc).timestamp() * 1000)
+  return int(datetime.now(timezone.utc).timestamp() * 1000)
 
 
 def finite(value):

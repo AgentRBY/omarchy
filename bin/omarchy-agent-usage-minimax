@@ -438,7 +438,7 @@ def collect_limits(api_key: str, base_url: str, force: bool) -> dict[str, Any]:
       # kept limits stand.
       failure = MiniMaxError(f"MiniMax's quota check failed ({type(error).__name__}).")
     else:
-      result.update(limits=limits, live=True, fetchedAtMs=round(time.time() * 1000))
+      result.update(limits=limits, live=True, fetchedAtMs=int(time.time() * 1000))
       try:
         write_json(cache_file, {"fetchedAtMs": result["fetchedAtMs"], "limits": limits})
       except OSError as exc:
@@ -821,7 +821,7 @@ def cached_local_stats(max_age_seconds: float) -> dict[str, Any]:
     # next rescan; only a complete one is kept.
     if complete:
       try:
-        write_json(cache_file, {"scanDate": datetime.now().strftime("%Y-%m-%d"), "scannedAtMs": round(time.time() * 1000), "stats": stats})
+        write_json(cache_file, {"scanDate": datetime.now().strftime("%Y-%m-%d"), "scannedAtMs": int(time.time() * 1000), "stats": stats})
       except OSError as exc:
         print(f"omarchy-agent-usage-minimax: could not write scan cache ({exc})", file=sys.stderr)
     return stats

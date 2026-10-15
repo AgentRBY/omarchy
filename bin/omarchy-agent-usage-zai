@@ -493,7 +493,7 @@ def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
 
     probe = fetch_limits(api_key, platform)
     if probe["ok"]:
-      result.update(limits=probe["limits"], tierLabel=probe["tierLabel"], live=True, fetchedAtMs=round(time.time() * 1000))
+      result.update(limits=probe["limits"], tierLabel=probe["tierLabel"], live=True, fetchedAtMs=int(time.time() * 1000))
       try:
         write_json(cache_file, {
           "fetchedAtMs": result["fetchedAtMs"],
