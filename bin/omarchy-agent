@@ -168,6 +168,12 @@ goose)
     command=(env GOOSE_MODE=auto goose)
   fi
   ;;
+kiro-cli)
+  # A positional input seeds the interactive chat; -- keeps a prompt starting
+  # with a dash literal.
+  command=(kiro-cli chat --trust-all-tools)
+  [[ -n ${prompt:-} ]] && command+=(-- "$prompt")
+  ;;
 *)
   echo "Unsupported default agent: $agent" >&2
   exit 1

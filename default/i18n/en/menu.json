@@ -515,6 +515,9 @@
   "setup.default.agent.kimi": {
     "label": "Kimi"
   },
+  "setup.default.agent.kiro-cli": {
+    "label": "Kiro CLI"
+  },
   "setup.default.agent.mcode": {
     "label": "MiniMax Code"
   },

@@ -136,6 +136,7 @@ qwen_package="npm:@qwen-code/qwen-code"
 dsh_package="npm:@deepseek-ai/dsh@0.2.0-rc.2"
 mcode_package="npm:@minimax-ai/code[allow_builds=better-sqlite3]"
 goose_package="aqua:aaif-goose/goose"
+kiro_cli_package="http:kiro-cli[platforms_linux_x64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-x86_64-linux.tar.gz,platforms_linux_arm64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-aarch64-linux.tar.gz,version_list_url=https://prod.download.cli.kiro.dev/stable/latest/manifest.json,version_json_path=.version]"
 cursor_agent_package="cursor-agent"
 muse_package="http:muse[url=https://api.meta.ai/muse-launcher.sh,bin=muse,version_list_url=https://api.meta.ai/muse-code/channels/muse-stable,version_json_path=.version]"
 
@@ -161,6 +162,7 @@ assert_lazy_stub "$qwen_package" qwen
 assert_lazy_stub "$dsh_package" dsh
 assert_lazy_stub "$mcode_package" mcode
 assert_lazy_stub "$goose_package" goose
+assert_lazy_stub "$kiro_cli_package" kiro-cli
 assert_lazy_stub "$cursor_agent_package" cursor-agent
 assert_lazy_stub "$muse_package" muse
 pass "custom agent lazy stubs preserve their mise packages"
@@ -178,6 +180,7 @@ grep -Fx "$qwen_package qwen" "$stub_log" >/dev/null || fail "user setup creates
 grep -Fx "$dsh_package dsh" "$stub_log" >/dev/null || fail "user setup creates the DeepSeek Harness lazy stub"
 grep -Fx "$mcode_package mcode" "$stub_log" >/dev/null || fail "user setup creates the MiniMax Code lazy stub"
 grep -Fx "$goose_package goose" "$stub_log" >/dev/null || fail "user setup creates the Goose lazy stub"
+grep -Fx "$kiro_cli_package kiro-cli" "$stub_log" >/dev/null || fail "user setup creates the Kiro CLI lazy stub"
 pass "user setup creates the custom agent lazy stubs"
 
 : >"$stub_log"
@@ -189,6 +192,7 @@ grep -Fx "$qwen_package qwen" "$stub_log" >/dev/null || fail "user setup recreat
 grep -Fx "$dsh_package dsh" "$stub_log" >/dev/null || fail "user setup recreates the DeepSeek Harness lazy stub"
 grep -Fx "$mcode_package mcode" "$stub_log" >/dev/null || fail "user setup recreates the MiniMax Code lazy stub"
 grep -Fx "$goose_package goose" "$stub_log" >/dev/null || fail "user setup recreates the Goose lazy stub"
+grep -Fx "$kiro_cli_package kiro-cli" "$stub_log" >/dev/null || fail "user setup recreates the Kiro CLI lazy stub"
 pass "user setup recreates wrappers even when the commands are present"
 
 : >"$stub_log"
@@ -224,6 +228,10 @@ grep -Fx "$mcode_package mcode" "$stub_log" >/dev/null || fail "MiniMax Code mig
 : >"$stub_log"
 OMARCHY_TEST_MISSING_COMMAND=goose source "$ROOT/migrations/1792033725.sh" >/dev/null
 grep -Fx "$goose_package goose" "$stub_log" >/dev/null || fail "Goose migration creates its lazy stub"
+
+: >"$stub_log"
+OMARCHY_TEST_MISSING_COMMAND=kiro-cli source "$ROOT/migrations/1792033795.sh" >/dev/null
+grep -Fx "$kiro_cli_package kiro-cli" "$stub_log" >/dev/null || fail "Kiro CLI migration creates its lazy stub"
 
 : >"$stub_log"
 source "$ROOT/migrations/1785617047.sh" >/dev/null
@@ -332,6 +340,7 @@ OMARCHY_TEST_MISSING_COMMAND=qwen source "$ROOT/migrations/1792032538.sh" >/dev/
 OMARCHY_TEST_MISSING_COMMAND=dsh source "$ROOT/migrations/1792033356.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=mcode source "$ROOT/migrations/1792033557.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=goose source "$ROOT/migrations/1792033725.sh" >/dev/null
+OMARCHY_TEST_MISSING_COMMAND=kiro-cli source "$ROOT/migrations/1792033795.sh" >/dev/null
 [[ ! -s $stub_log ]] || fail "agent migrations respect the preinstall opt-out"
 [[ ! -e $test_home/.local/bin/omp ]] || fail "agent migration removes the obsolete Oh My Pi wrapper after opt-out"
 
@@ -469,9 +478,10 @@ pass "agent migrations install working wrappers without overriding the preinstal
 "$ROOT/bin/omarchy-mise-install" "$dsh_package" dsh
 "$ROOT/bin/omarchy-mise-install" "$mcode_package" mcode
 "$ROOT/bin/omarchy-mise-install" "$goose_package" goose
+"$ROOT/bin/omarchy-mise-install" "$kiro_cli_package" kiro-cli
 touch "$test_home/.local/bin/agy" "$test_home/.local/bin/ori"
 omarchy-remove-preinstalls >/dev/null
-for command in agy omp ori grok crush cursor-agent muse kimi qwen dsh mcode goose; do
+for command in agy omp ori grok crush cursor-agent muse kimi qwen dsh mcode goose kiro-cli; do
   [[ ! -e $test_home/.local/bin/$command ]] || fail "Remove Preinstalls deletes the $command lazy stub"
 done
 pass "Remove Preinstalls deletes every optional agent lazy stub"
@@ -563,6 +573,8 @@ declare -A expected_agents=(
   [minimax-code]="mcode"
   [minimax]="mcode"
   [goose]="goose"
+  [kiro-cli]="kiro-cli"
+  [kiro]="kiro-cli"
   [cursor]="cursor-agent"
   [cursor-agent]="cursor-agent"
   [muse]="muse"
@@ -586,6 +598,7 @@ declare -A expected_packages=(
   [dsh]="$dsh_package"
   [mcode]="$mcode_package"
   [goose]="$goose_package"
+  [kiro-cli]="$kiro_cli_package"
   [cursor-agent]="$cursor_agent_package"
   [muse]="$muse_package"
 )
@@ -866,6 +879,7 @@ omarchy-agent-prompt '-n --help; echo literal'
 assert_launched dsh "keeps an option-like prompt literal" env DSH_PERMISSION_MODE=danger-full-access dsh headless -- -- '-n --help; echo literal'
 assert_launch mcode mcode -- "Review this project"
 assert_launch goose env GOOSE_MODE=auto goose run --interactive "--text=Review this project"
+assert_launch kiro-cli kiro-cli chat --trust-all-tools -- "Review this project"
 pass "agent launcher adapts initial prompts for every supported agent"
 
 literal_muse_prompt=$'--disable-sandbox !Crash {$(touch must-not-run)}\ntrailing\\ '
@@ -899,6 +913,7 @@ assert_bypass qwen qwen --yolo
 assert_bypass dsh env DSH_PERMISSION_MODE=danger-full-access dsh web
 assert_bypass mcode mcode
 assert_bypass goose env GOOSE_MODE=auto goose
+assert_bypass kiro-cli kiro-cli chat --trust-all-tools
 pass "agent launcher skips permission prompts for every supported agent"
 
 printf '%s\n' "opencode" >"$agent_file"
