@@ -144,7 +144,7 @@ limits_cache = collector.limits_cache(key)
 good = json.loads(limits_cache.read_text())
 limits_cache.write_text(json.dumps(dict(good, limits=[dict(good["limits"][0], resetsAt="2020-01-01T00:00:00+00:00")] + good["limits"][1:])))
 collector.CursorClient = DownForOther
-lapsed = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False)
+lapsed = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False, force=True)
 limits_cache.write_text(json.dumps(good))
 collector.CursorClient = StubClient
 
@@ -161,9 +161,9 @@ class RefusedClient(StubClient):
 
 
 collector.CursorClient = DownClient
-down = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False)
+down = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False, force=True)
 collector.CursorClient = RefusedClient
-refused = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False)
+refused = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False, force=True)
 
 print(json.dumps({
   "other": other,
@@ -229,9 +229,9 @@ pass "Cursor collector stamps fresh limits"
   fail "Cursor collector keeps the last good limits, stale, after a failed check" "$result"
 pass "Cursor collector keeps the last good limits, stale, after a failed check"
 
-[[ $(jq -c '{stale: .refused.limitsStale, status: .refused.usageStatusText, kept: (.refused.limits | length)}' <<<"$result") == '{"stale":true,"status":"Waiting for auth","kept":4}' ]] ||
-  fail "Cursor collector says a refused sign-in needs attention" "$result"
-pass "Cursor collector says a refused sign-in needs attention"
+[[ $(jq -c '{stale: .refused.limitsStale, status: .refused.usageStatusText, kept: (.refused.limits | length)}' <<<"$result") == '{"stale":true,"status":"Sign-in expired","kept":4}' ]] ||
+  fail "Cursor collector says a refused sign-in has expired" "$result"
+pass "Cursor collector says a refused sign-in has expired"
 
 [[ $(jq -c '.other | {limits, tierLabel, todayTotalTokens, recentDays, modelUsage}' <<<"$result") == '{"limits":[],"tierLabel":"","todayTotalTokens":0,"recentDays":[],"modelUsage":{}}' ]] ||
   fail "Cursor collector never carries another account's numbers" "$result"
@@ -305,3 +305,180 @@ PY
 [[ $(jq -c . <<<"$ide") == '{"ide":"ide_token","cliWins":"cursor_test","untouched":true}' ]] ||
   fail "Cursor collector falls back to the editor's sign-in, read-only" "$ide"
 pass "Cursor collector falls back to the editor's sign-in, read-only"
+
+# Cursor installed but signed in nowhere: the agent is in use, so it says it
+# is waiting for a sign-in. A machine without Cursor at all stays unused.
+mkdir -p "$TEST_HOME/unsigned/cursor"
+unsigned=$(HOME="$TEST_HOME/unsigned-home" XDG_CONFIG_HOME="$TEST_HOME/unsigned" XDG_CACHE_HOME="$TEST_HOME/unsigned-cache" \
+  CURSOR_API_KEY="" "$ROOT/bin/omarchy-agent-usage-cursor")
+[[ $(jq -c '{ready, usageStatusText, limits, help: (.authHelpText != "")}' <<<"$unsigned") == '{"ready":true,"usageStatusText":"Waiting for auth","limits":[],"help":true}' ]] ||
+  fail "Cursor collector waits for a sign-in where Cursor is installed" "$unsigned"
+[[ $(jq -c '{ready, usageStatusText, authHelpText, limits, todayPrompts, recentDays, modelUsage}' <<<"$no_token") == '{"ready":false,"usageStatusText":"","authHelpText":"","limits":[],"todayPrompts":0,"recentDays":[],"modelUsage":{}}' ]] ||
+  fail "Cursor collector prints an unused record where Cursor isn't installed" "$no_token"
+pass "Cursor collector waits for a sign-in only where Cursor is installed"
+
+contract=$(python3 - "$ROOT/bin/omarchy-agent-usage-cursor" "$TEST_HOME/contract" <<'PY'
+import base64
+import importlib.machinery
+import importlib.util
+import json
+import os
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+root = Path(sys.argv[2])
+os.environ["HOME"] = str(root / "home")
+os.environ["XDG_CONFIG_HOME"] = str(root / "config")
+os.environ["XDG_CACHE_HOME"] = str(root / "cache")
+os.environ.pop("CURSOR_API_KEY", None)
+os.environ["TZ"] = "UTC"
+time.tzset()
+
+loader = importlib.machinery.SourceFileLoader("cursor_collector", sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+collector = importlib.util.module_from_spec(spec)
+loader.exec_module(collector)
+RealClient = collector.CursorClient
+
+
+def jwt(sub, exp):
+  claims = base64.urlsafe_b64encode(json.dumps({"sub": sub, "exp": exp}).encode()).decode().rstrip("=")
+  return f"h.{claims}.s"
+
+
+auth = root / "config" / "cursor" / "auth.json"
+auth.parent.mkdir(parents=True)
+auth.write_text(json.dumps({"accessToken": jwt("u-main", time.time() + 3600)}))
+
+PERIOD = {"planUsage": {"totalPercentUsed": 40, "autoPercentUsed": 20, "apiPercentUsed": 60},
+          "spendLimitUsage": {"individualLimit": "2000", "individualUsed": "500"}}
+calls = []
+answers = {"GetPlanInfo": {"planInfo": {"planName": "Pro"}}, "GetCurrentPeriodUsage": PERIOD}
+
+
+class Stub(RealClient):
+  def call(self, method, payload):
+    calls.append(method)
+    answer = answers.get(method, {"aggregations": [{"modelIntent": "default", "inputTokens": "3"}]})
+    if isinstance(answer, Exception):
+      raise answer
+    return answer
+
+
+def run(client=Stub, **kwargs):
+  collector.CursorClient = client
+  del calls[:]
+  record = collector.scan("https://api.example", auth, kwargs.pop("limits_only", False), **kwargs)
+  return record, list(calls)
+
+
+out = {}
+# Without a billing cycle end there is no reset time, as "" rather than null.
+fresh, _ = run(force=True)
+out["fresh"] = {key: fresh[key] for key in ("tierLabel", "usageStatusText", "authHelpText", "limitsStale")}
+out["titles"] = [limit["title"] for limit in fresh["limits"]]
+out["resets"] = sorted({limit["resetsAt"] for limit in fresh["limits"]})
+
+# A second run straight after asks nothing: the limits answer and the token
+# scan are both this recent.
+reused, asked = run()
+out["reused"] = {"asked": asked, "same": reused["limits"] == fresh["limits"], "stale": reused["limitsStale"],
+                 "help": reused["authHelpText"], "tokens": reused["todayTotalTokens"]}
+_, asked = run(limits_only=True)
+out["limitsOnlyReused"] = asked
+_, asked = run(force=True)
+out["forced"] = sorted(set(asked))
+
+# GetPlanInfo failing leaves the plan the account last had.
+answers["GetPlanInfo"] = collector.CursorError("Cursor's dashboard returned status 500.")
+planless, _ = run(force=True)
+out["planKept"] = planless["tierLabel"]
+answers["GetPlanInfo"] = {"planInfo": {"planName": "Pro"}}
+
+# A failure that isn't Cursor's error keeps the limits and the tokens too.
+answers["GetCurrentPeriodUsage"] = RuntimeError("boom")
+broken, _ = run(force=True)
+out["broken"] = {"kept": len(broken["limits"]), "stale": broken["limitsStale"], "status": broken["usageStatusText"],
+                 "tokens": broken["todayTotalTokens"], "retry": broken.get("retryAdvised", False)}
+answers["GetCurrentPeriodUsage"] = PERIOD
+
+
+# retryAdvised only when nothing answered at all.
+def urlopen_raising(error):
+  def urlopen(request, timeout=None):
+    raise error
+  return urlopen
+
+
+transport = {}
+for name, error in (
+  ("dns", collector.urllib.error.URLError("no route")),
+  ("timeout", TimeoutError()),
+  ("status", collector.urllib.error.HTTPError("https://api.example", 500, "", {}, None)),
+):
+  collector.urllib.request.urlopen = urlopen_raising(error)
+  record, _ = run(RealClient, force=True)
+  transport[name] = [record.get("retryAdvised", False), record["limitsStale"], len(record["limits"]), record["usageStatusText"]]
+out["transport"] = transport
+
+# A lapsed sign-in isn't sent: the CLI or editor renews it when it runs.
+collector.urllib.request.urlopen = urlopen_raising(AssertionError("a lapsed token was sent"))
+auth.write_text(json.dumps({"accessToken": jwt("u-main", time.time() - 60)}))
+paused, _ = run(RealClient, force=True)
+out["paused"] = [paused["usageStatusText"], paused["limitsStale"], len(paused["limits"])]
+
+# ...but a live editor sign-in stands in for a lapsed CLI one.
+db = root / "config" / "Cursor" / "User" / "globalStorage" / "state.vscdb"
+db.parent.mkdir(parents=True)
+conn = sqlite3.connect(db)
+conn.execute("CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
+conn.execute("INSERT INTO ItemTable VALUES ('cursorAuth/accessToken', ?)", (jwt("u-editor", time.time() + 3600),))
+conn.commit()
+conn.close()
+out["fallthrough"] = collector.account_key(collector.read_token(auth)) == collector.account_key(jwt("u-editor", 0))
+
+# Untrusted numbers never break the record.
+out["robust"] = [collector.fraction("nan"), collector.fraction("inf"), collector.fraction(True), collector.number("1e400"), collector.iso("9" * 30)]
+print(json.dumps(out))
+PY
+)
+
+[[ $(jq -c '.fresh' <<<"$contract") == '{"tierLabel":"Pro","usageStatusText":"","authHelpText":"","limitsStale":false}' ]] ||
+  fail "Cursor collector clears the help text when healthy" "$contract"
+pass "Cursor collector clears the help text when healthy"
+
+[[ $(jq -c '.titles' <<<"$contract") == '["Monthly","Auto models Monthly","Named models Monthly","On-demand $5.00 / $20.00 Monthly"]' ]] ||
+  fail "Cursor collector titles its meters after the billing period" "$contract"
+pass "Cursor collector titles its meters after the billing period"
+
+[[ $(jq -c '.resets' <<<"$contract") == '[""]' ]] ||
+  fail "Cursor collector gives an unknown reset as an empty string" "$contract"
+pass "Cursor collector gives an unknown reset as an empty string"
+
+[[ $(jq -c '.reused' <<<"$contract") == '{"asked":[],"same":true,"stale":false,"help":"","tokens":3}' && $(jq -c '.limitsOnlyReused' <<<"$contract") == '[]' ]] ||
+  fail "Cursor collector reuses a recent limits answer and token scan" "$contract"
+[[ $(jq -c '.forced' <<<"$contract") == '["GetAggregatedUsageEvents","GetCurrentPeriodUsage","GetPlanInfo"]' ]] ||
+  fail "Cursor collector asks again on --force" "$contract"
+pass "Cursor collector reuses a recent probe, and --force asks again"
+
+[[ $(jq -r '.planKept' <<<"$contract") == "Pro" ]] ||
+  fail "Cursor collector keeps the plan when GetPlanInfo fails" "$contract"
+pass "Cursor collector keeps the plan when GetPlanInfo fails"
+
+[[ $(jq -c '.broken' <<<"$contract") == '{"kept":4,"stale":true,"status":"","tokens":3,"retry":false}' ]] ||
+  fail "Cursor collector keeps limits and tokens through an unexpected failure" "$contract"
+pass "Cursor collector keeps limits and tokens through an unexpected failure"
+
+[[ $(jq -c '.transport' <<<"$contract") == '{"dns":[true,true,4,""],"timeout":[true,true,4,""],"status":[false,true,4,""]}' ]] ||
+  fail "Cursor collector advises a retry only when the dashboard can't be reached" "$contract"
+pass "Cursor collector advises a retry only when the dashboard can't be reached"
+
+[[ $(jq -c '.paused' <<<"$contract") == '["Limits paused",true,4]' && $(jq -r '.fallthrough' <<<"$contract") == "true" ]] ||
+  fail "Cursor collector pauses on a lapsed sign-in, preferring a live one" "$contract"
+pass "Cursor collector pauses on a lapsed sign-in, preferring a live one"
+
+[[ $(jq -c '.robust' <<<"$contract") == '[0.0,0.0,0.0,0,""]' ]] ||
+  fail "Cursor collector shrugs off untrusted numbers" "$contract"
+pass "Cursor collector shrugs off untrusted numbers"
