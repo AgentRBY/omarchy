@@ -99,7 +99,7 @@ omarchy_username_taken() { return 1; }
 omarchy_prompt_keyboard() {
   local choice status
   choice=$(printf '%s\n' "$OMARCHY_KEYBOARD_LAYOUTS" | cut -d'|' -f1 |
-    gum choose --height 10 --selected "English (US)" --header "Select keyboard layout") && status=0 || status=$?
+    gum choose --height 10 --selected "${OMARCHY_FORM_KEYBOARD_DEFAULT:-English (US)}" --header "Select keyboard layout") && status=0 || status=$?
   ((status == 0)) || return $status
 
   local selection
@@ -189,7 +189,9 @@ omarchy_prompt_hostname() {
 # often; guard it or a `set -e` caller dies before the filter fallback.
 omarchy_prompt_timezone() {
   local guess status
-  guess=$(tzupdate -p 2>/dev/null) || guess=""
+  # A preset install media names its timezone; otherwise guess from the network.
+  guess=${OMARCHY_FORM_TIMEZONE_DEFAULT:-}
+  [[ -n $guess ]] || guess=$(tzupdate -p 2>/dev/null) || guess=""
 
   if [[ -n $guess ]]; then
     timezone=$(timedatectl list-timezones | gum choose --height 10 --selected "$guess" --header "Timezone") && status=0 || status=$?

@@ -135,6 +135,13 @@ assert_status 0 "keyboard prompt succeeds"
 grep -qF -- '--selected English (US)' "$GUM_ARGS" || fail "keyboard prompt preselects English (US)"
 pass "keyboard prompt maps the chosen label to its keymap"
 
+OMARCHY_FORM_KEYBOARD_DEFAULT="Chinese (Simplified, Pinyin)" run_prompt omarchy_prompt_keyboard "0:Chinese (Simplified, Pinyin)"
+assert_status 0 "a preset keyboard prompt succeeds"
+grep -qF -- '--selected Chinese (Simplified, Pinyin)' "$GUM_ARGS" || fail "install media can preset the keyboard choice" "$(cat "$GUM_ARGS")"
+[[ $(head -n 1 "$tmp_dir/stdin.1") == "English (US)" ]] || fail "a preset keeps the list in its usual order"
+[[ $(field keyboard_input_method) == "pinyin" ]] || fail "the preset choice carries its input method"
+pass "install media can preselect the keyboard, which stays a choice"
+
 for selection in 'Japanese|jp106|mozc|' 'Japanese (US keyboard)|us|mozc|' 'Korean|us|hangul|kr:kr104' 'Lao|us|none|la' 'Chinese (Simplified, Pinyin)|us|pinyin|' 'Taiwan (Zhuyin)|us|chewing|' 'Hong Kong (Cangjie)|us|cangjie5|'; do
   IFS='|' read -r label keymap method layout <<< "$selection"
   run_prompt omarchy_prompt_keyboard "0:$label"
@@ -242,6 +249,11 @@ assert_status 0 "timezone prompt survives a failed geo guess"
 [[ $(field timezone) == "America/Chicago" ]] || fail "timezone prompt keeps the filtered timezone"
 [[ $(head -n 1 "$GUM_ARGS") == filter* ]] || fail "timezone prompt filters when there is no geo guess"
 pass "timezone prompt falls back to filtering when the geo guess fails"
+
+OMARCHY_FORM_TIMEZONE_DEFAULT=Asia/Shanghai TZ_GUESS=Europe/Copenhagen run_prompt omarchy_prompt_timezone "0:Asia/Shanghai"
+assert_status 0 "a preset timezone prompt succeeds"
+grep -qF -- '--selected Asia/Shanghai' "$GUM_ARGS" || fail "install media can preset the timezone over the geo guess" "$(cat "$GUM_ARGS")"
+pass "install media can preselect the timezone, which stays a choice"
 
 run_prompt omarchy_prompt_timezone "0:"
 assert_status 0 "timezone prompt accepts an empty selection"
