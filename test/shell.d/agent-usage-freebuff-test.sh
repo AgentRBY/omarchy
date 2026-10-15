@@ -63,47 +63,66 @@ pass "prompts, sessions, and active days counted across chats"
 
 [[ $(printf '%s' "$record" | jq '.todayPrompts') == 1 ]] || fail "todayPrompts"
 [[ $(printf '%s' "$record" | jq '.todaySessions') == 1 ]] || fail "todaySessions"
-[[ $(printf '%s' "$record" | jq '.todayTotalTokens') -gt 0 ]] || fail "todayTotalTokens"
 pass "today's numbers cover only today's chat"
 
-# Tokens are estimated from message text (~4 chars/token) in one bucket.
-[[ $(printf '%s' "$record" | jq '.modelUsage.freebuff.inputTokens') -gt 0 ]] || fail "inputTokens"
-[[ $(printf '%s' "$record" | jq '.modelUsage.freebuff.outputTokens') -gt 0 ]] || fail "outputTokens"
-[[ $(printf '%s' "$record" | jq '.modelUsage.freebuff.cacheReadInputTokens') == 0 ]] || fail "cacheRead"
-pass "token estimates land in one freebuff model bucket"
+# The chat files record no token usage, and the record invents none.
+[[ $(printf '%s' "$record" | jq -c '{todayTotalTokens, todayTokensByModel, modelUsage, chart: ([.recentDays[].messageCount] | add), days: (.recentDays | length)}') == '{"todayTotalTokens":0,"todayTokensByModel":{},"modelUsage":{},"chart":0,"days":7}' ]] ||
+  fail "token fields stay at zero" "$record"
+pass "token fields stay at zero rather than estimated from text"
 
-[[ $(printf '%s' "$record" | jq '[.recentDays[] | select(.messageCount > 0)] | length') == 2 ]] || fail "recentDays"
-pass "weekly chart has two non-zero days"
+# Local chats alone make Freebuff in use, signed in or not, and a missing
+# sign-in is nothing to fix: Freebuff has no limits to read.
+[[ $(printf '%s' "$record" | jq -c '{ready, tierLabel, usageStatusText, authHelpText, limits}') == '{"ready":true,"tierLabel":"","usageStatusText":"","authHelpText":"","limits":[]}' ]] ||
+  fail "local usage makes the record ready" "$record"
+pass "local chats make the record ready without a sign-in"
 
-# Unsigned in: no credentials file, so the record says how to fix it.
-[[ $(printf '%s' "$record" | jq '.ready') == "false" ]] || fail "ready"
-[[ $(printf '%s' "$record" | jq -r '.authHelpText') == "Start Freebuff, or run \`freebuff login\`, to sign in." ]] || fail "authHelpText"
-pass "unsigned-in record points at sign-in"
+# The sign-in checks run on an empty config home, where only the sign-in
+# decides readiness.
+signin_home="$test_tmp/signin"
+credentials="$signin_home/credentials.json"
+mkdir -p "$signin_home"
 
-credentials="$HOME/.config/manicode/credentials.json"
-mkdir -p "$(dirname "$credentials")"
+record=$(FREEBUFF_CONFIG_DIR="$signin_home" "$collector" --force)
+[[ $(printf '%s' "$record" | jq -c '{ready, tierLabel, usageStatusText, authHelpText, limits, balance: has("balance"), totalPrompts, totalSessions, activeDays, activeDates}') == '{"ready":false,"tierLabel":"","usageStatusText":"","authHelpText":"","limits":[],"balance":false,"totalPrompts":0,"totalSessions":0,"activeDays":0,"activeDates":[]}' ]] ||
+  fail "unused machine prints a record the panel skips" "$record"
+pass "an unused machine prints a full empty record the panel skips"
 
 for invalid in '{}' '{"default":{}}' '{"default":{"authToken":""}}' 'not-json'; do
   printf '%s' "$invalid" >"$credentials"
-  record=$("$collector" --force)
+  record=$(FREEBUFF_CONFIG_DIR="$signin_home" "$collector" --force)
   [[ $(printf '%s' "$record" | jq '.ready') == "false" ]] || fail "invalid credentials not ready: $invalid"
 done
 pass "empty, unusable, and malformed credentials are not signed in"
 
 printf '{"default":{"authToken":"test-token"}}' >"$credentials"
-record=$("$collector" --force)
-[[ $(printf '%s' "$record" | jq '.ready') == "true" ]] || fail "ready signed-in"
-[[ $(printf '%s' "$record" | jq -r '.tierLabel') == "Free" ]] || fail "tierLabel"
-[[ $(printf '%s' "$record" | jq -r '.usageStatusText') == "" ]] || fail "usageStatusText"
-pass "usable token credentials report the Free tier"
+record=$(FREEBUFF_CONFIG_DIR="$signin_home" "$collector" --force)
+[[ $(printf '%s' "$record" | jq -c '{ready, tierLabel, usageStatusText}') == '{"ready":true,"tierLabel":"","usageStatusText":""}' ]] ||
+  fail "token credentials are a sign-in" "$record"
+pass "token credentials make the record ready without naming a plan"
 
-# A keychain pointer contains no token for this standalone collector.
-printf '{"default":{"tokenStore":"keychain"}}' >"$credentials"
-record=$("$collector" --force)
-[[ $(printf '%s' "$record" | jq '.ready') == "false" ]] || fail "keychain pointer is not verified"
-[[ $(printf '%s' "$record" | jq -r '.usageStatusText') == "Freebuff sign-in status unknown" ]] || fail "keychain status"
-[[ $(printf '%s' "$record" | jq -r '.authHelpText') == *"cannot be verified"* ]] || fail "keychain help"
-pass "keychain-backed sign-in is reported as unverifiable"
+# Freebuff moves the token to the keychain and leaves the profile behind.
+printf '{"default":{"name":"a","tokenStore":"keychain"}}' >"$credentials"
+record=$(FREEBUFF_CONFIG_DIR="$signin_home" "$collector" --force)
+[[ $(printf '%s' "$record" | jq -c '{ready, usageStatusText, authHelpText}') == '{"ready":true,"usageStatusText":"","authHelpText":""}' ]] ||
+  fail "a keychain sign-in is a sign-in" "$record"
+pass "a keychain-backed sign-in makes the record ready"
+
+# Untrusted message ids: a time far in the future or nonsense falls back to
+# the file's last write, and a prompt without text is no prompt.
+odd_home="$test_tmp/odd"
+make_chat "$odd_home/projects/p/chats/c1" <<EOF
+[
+  {"id": "user-9999999999999", "variant": "user", "content": "future"},
+  {"id": "user-abc", "variant": "user", "content": "no time"},
+  {"id": "user-$now_ms", "variant": "user", "content": "   "},
+  {"id": "user-$now_ms", "variant": "user", "content": ["not", "text"]},
+  "junk"
+]
+EOF
+record=$(FREEBUFF_CONFIG_DIR="$odd_home" "$collector" --force)
+[[ $(printf '%s' "$record" | jq -c '{todayPrompts, totalPrompts, activeDates}') == "{\"todayPrompts\":2,\"totalPrompts\":2,\"activeDates\":[\"$today\"]}" ]] ||
+  fail "untrusted ids fall back to the file's day" "$record"
+pass "untrusted message ids and empty prompts don't skew the counts"
 
 # A chat caught mid-write (invalid JSON) must not take the scan down or be
 # counted as a complete prompt until it can be read successfully.
@@ -124,6 +143,33 @@ record=$("$collector" --limits-only)
 [[ $(printf '%s' "$record" | jq '.totalPrompts') == 4 ]] || fail "repaired prompt not rescanned"
 [[ $(printf '%s' "$record" | jq '.totalSessions') == 3 ]] || fail "repaired session not rescanned"
 pass "incomplete scan does not poison cache after chat repair"
+
+# A normal run reuses a scan from the last few seconds and --limits-only one
+# from the last quarter hour; --force always rescans.
+make_chat "$projects/2026-10-01T17-00-00.000Z" <<EOF
+[{"id":"user-$now_ms","variant":"user","content":"one more"}]
+EOF
+[[ $("$collector" | jq '.totalPrompts') == 4 ]] || fail "normal run reuses a recent scan"
+[[ $("$collector" --limits-only | jq '.totalPrompts') == 4 ]] || fail "--limits-only reuses a recent scan"
+[[ $("$collector" --force | jq '.totalPrompts') == 5 ]] || fail "--force rescans"
+pass "recent scans are reused and --force rescans"
+
+cache_file=$(find "$XDG_CACHE_HOME/omarchy/agent-usage" -name 'freebuff-scan-*.json' -print -quit)
+[[ $(jq -r '.scanDate' "$cache_file") == "$today" ]] || fail "cache carries its scan date"
+jq '.scanDate = "2000-01-01"' "$cache_file" >"$cache_file.new" && mv "$cache_file.new" "$cache_file"
+make_chat "$projects/2026-10-01T18-00-00.000Z" <<EOF
+[{"id":"user-$now_ms","variant":"user","content":"after midnight"}]
+EOF
+[[ $("$collector" | jq '.totalPrompts') == 6 ]] || fail "a cache from another day is rescanned"
+pass "a scan cache from another day is not reused"
+
+# A cache written before the token estimate was dropped is not reused.
+jq '.schemaVersion = 1' "$cache_file" >"$cache_file.new" && mv "$cache_file.new" "$cache_file"
+make_chat "$projects/2026-10-01T19-00-00.000Z" <<EOF
+[{"id":"user-$now_ms","variant":"user","content":"newer schema"}]
+EOF
+[[ $("$collector" --limits-only | jq '.totalPrompts') == 7 ]] || fail "an old cache schema is rescanned"
+pass "a cache from an older schema is rescanned"
 
 # The update wrapper writes the record where the panel reads it. It scans for
 # collectors under OMARCHY_PATH, which the running shell points at the
