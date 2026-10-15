@@ -6,7 +6,10 @@
 
 Tier 1 (any API key): balance and key usage come from GET /api/v1/credits
 and GET /api/v1/key; token stats come from the local opencode SQLite DB
-(providerID == "openrouter", role == "assistant"), read-only.
+(providerID == "openrouter", role == "assistant") and from pi/omp session
+files whose assistant messages ran on the openrouter provider, read-only.
+Each key keeps its own last good meter and balance, shown stale when a
+check fails.
 
 Tier 2 (management key): when OPENROUTER_MANAGEMENT_KEY (or the management
 key in the config file) is set, the last-30-days token history comes from
@@ -22,13 +25,17 @@ omacom/omarchy#10330 (dedicated pi collector proposal).
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
+import math
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -45,33 +52,53 @@ API_BASE = "https://openrouter.ai/api/v1"
 SCAN_REUSE_SECONDS = 20
 LIMITS_ONLY_REUSE_SECONDS = 900
 
+# Opening and shutting the panel must not turn into three API calls per flick,
+# so a probe this recent is reused; --force, a person pressing refresh, skips
+# it.
+PROBE_MIN_INTERVAL_SECONDS = 15
+
+# Token counts beyond this are a corrupt row, not usage.
+MAX_TOKENS = 10**12
+
 
 class OpenRouterError(Exception):
   pass
 
 
+# Counts from disk and from the API are untrusted: a boolean, a negative, a
+# non-finite or an absurdly large value counts as nothing rather than taking
+# the record down or inflating it.
 def number(value: Any) -> int:
-  try:
-    return max(0, int(value or 0))
-  except (TypeError, ValueError):
+  if isinstance(value, bool):
     return 0
-
-
-def local_day(value) -> str:
-  now = datetime.now()
-  if value is None:
-    return now.strftime("%Y-%m-%d")
-  if isinstance(value, (int, float)):
-    ts = value / 1000 if value > 10_000_000_000 else value
-    return datetime.fromtimestamp(ts).astimezone().strftime("%Y-%m-%d")
   try:
-    text = str(value)
-    dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    if dt.tzinfo is not None:
-      dt = dt.astimezone()
-    return dt.strftime("%Y-%m-%d")
-  except Exception:
-    return now.strftime("%Y-%m-%d")
+    parsed = float(value or 0)
+  except (TypeError, ValueError, OverflowError):
+    return 0
+  if not math.isfinite(parsed) or parsed <= 0 or parsed > MAX_TOKENS:
+    return 0
+  return int(parsed)
+
+
+# The local day a timestamp names, or "" when it names none: a row with a
+# broken timestamp is skipped rather than filed under today or 1970.
+def local_day(value) -> str:
+  if isinstance(value, bool) or value is None:
+    return ""
+  try:
+    if isinstance(value, (int, float)):
+      if not math.isfinite(value) or value <= 0:
+        return ""
+      seconds = value / 1000 if value > 10_000_000_000 else value
+      if seconds > 32_503_680_000:
+        return ""
+      return datetime.fromtimestamp(seconds).astimezone().strftime("%Y-%m-%d")
+    parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    if parsed.tzinfo is not None:
+      parsed = parsed.astimezone()
+    return parsed.strftime("%Y-%m-%d")
+  except (ValueError, OverflowError, OSError):
+    return ""
 
 
 def model_name(raw: Any) -> str:
@@ -155,8 +182,19 @@ def management_key(config: dict[str, Any]) -> str:
 
 # ---------------------------------------------------------------- API
 
+# No server answered at all (DNS, connection, timeout): the one failure worth
+# a sooner retry.
 class OpenRouterTransportError(OpenRouterError):
   pass
+
+
+# The key was refused. 403 from /activity with an inference key is the
+# expected tier-1 signal ("Only management keys can perform this operation"),
+# not a broken setup -- callers decide what a refusal means.
+class OpenRouterAuthError(OpenRouterError):
+  def __init__(self, code: int):
+    super().__init__(f"OpenRouter refused the key (status {code})")
+    self.code = code
 
 
 def api_get(path: str, key: str) -> dict:
@@ -167,21 +205,28 @@ def api_get(path: str, key: str) -> dict:
     with urllib.request.urlopen(req, timeout=15) as resp:
       payload = json.load(resp)
       return payload if isinstance(payload, dict) else {}
-  except urllib.request.HTTPError as error:
+  except urllib.error.HTTPError as error:
     if error.code in (401, 403):
-      # 403 from /activity with an inference key is the expected
-      # tier-1 signal ("Only management keys can perform this
-      # operation"), not a broken setup -- callers decide.
-      raise OpenRouterError(f"HTTP_{error.code}")
-    raise OpenRouterError(f"OpenRouter API returned HTTP {error.code}")
-  except urllib.request.URLError as error:
-    raise OpenRouterTransportError("Could not reach the OpenRouter API") from error
+      raise OpenRouterAuthError(error.code)
+    raise OpenRouterError(f"OpenRouter's API returned status {error.code}.")
+  except urllib.error.URLError as error:
+    raise OpenRouterTransportError("Couldn't reach the OpenRouter API. Retrying shortly.") from error
   # A server that stalls on its headers or body times out the read itself,
   # outside URLError; that is a network failure like any other.
   except (TimeoutError, ConnectionError) as error:
-    raise OpenRouterTransportError("Could not reach the OpenRouter API") from error
+    raise OpenRouterTransportError("Couldn't reach the OpenRouter API. Retrying shortly.") from error
   except (json.JSONDecodeError, ValueError) as error:
-    raise OpenRouterError("OpenRouter returned an invalid response") from error
+    raise OpenRouterError("OpenRouter returned an invalid response.") from error
+
+
+# /activity names its day as a date, sometimes with a time after it. Anything
+# that isn't one files under no day rather than a made-up one.
+def activity_day(value: Any) -> str:
+  text = str(value or "").strip()[:10]
+  try:
+    return datetime.strptime(text, "%Y-%m-%d").strftime("%Y-%m-%d")
+  except ValueError:
+    return ""
 
 
 def summarize_activity(items: list[Any], today: datetime) -> dict[str, Any]:
@@ -202,7 +247,7 @@ def summarize_activity(items: list[Any], today: datetime) -> dict[str, Any]:
   for raw in items:
     if not isinstance(raw, dict):
       continue
-    day = str(raw.get("date") or "")
+    day = activity_day(raw.get("date"))
     model = model_name(str(raw.get("model_permaslug") or raw.get("model") or ""))
     prompt = number(raw.get("prompt_tokens"))
     reasoning = number(raw.get("reasoning_tokens"))
@@ -230,24 +275,50 @@ def summarize_activity(items: list[Any], today: datetime) -> dict[str, Any]:
   }
 
 
-def activity_stats(key: str, today: datetime) -> dict[str, Any] | None:
+def credential_digest(secret: str) -> str:
+  return hashlib.sha256(secret.encode("utf-8")).hexdigest()[:16]
+
+
+def activity_stats(key: str, today: datetime, max_age: float) -> tuple[dict[str, Any] | None, bool]:
   """Tier 2: 30-day account history via management key, or None.
 
-  Returns None when there is no management key (plain tier-1 run) or the
-  key is rejected -- the caller then falls back to the local DB scan.
+  Returns (stats, transport_failed). Stats are None when there is no
+  management key (plain tier-1 run) or the key is refused -- the caller then
+  falls back to the local DB scan. The answer is a stats source like the
+  local scan, so it is reused on the same schedule; when /activity can't be
+  reached, today's last answer stands in for it.
   """
   if not key:
-    return None
+    return None, False
+  scan_date = today.strftime("%Y-%m-%d")
+  try:
+    cache = cache_root() / f"openrouter-activity-{credential_digest(key)}.json"
+    cached = read_json(cache) or {}
+  except OSError:
+    cache, cached = None, {}
+  kept = cached.get("stats") if cached.get("scanDate") == scan_date and isinstance(cached.get("stats"), dict) else None
+  age = time.time() - epoch_ms(cached.get("fetchedAtMs")) / 1000
+  if kept is not None and 0 <= age < max_age:
+    return kept, False
+
   try:
     payload = api_get("/activity", key)
-  except OpenRouterError:
-    return None
+  except OpenRouterAuthError:
+    return None, False
+  except OpenRouterError as error:
+    print(f"omarchy-agent-usage-openrouter: activity lookup failed ({error})", file=sys.stderr)
+    return kept, isinstance(error, OpenRouterTransportError)
   items = payload.get("data")
   if not isinstance(items, list):
-    return None
+    return kept, False
   stats = empty_stats()
   stats.update(summarize_activity(items, today))
-  return stats
+  if cache is not None:
+    try:
+      write_json(cache, {"schemaVersion": 1, "scanDate": scan_date, "fetchedAtMs": int(time.time() * 1000), "stats": stats})
+    except OSError as exc:
+      print(f"omarchy-agent-usage-openrouter: could not write activity cache ({exc})", file=sys.stderr)
+  return stats, False
 
 
 # ---------------------------------------------------------------- local stats (opencode DB)
@@ -346,6 +417,8 @@ def scan_opencode(scan: LocalScan, db: Path | None = None) -> bool:
         if not (in_tok or out_tok or cache_read or cache_write):
           continue
         day = local_day((entry.get("time") or {}).get("created"))
+        if not day:
+          continue
         model = model_name(str(entry.get("modelID") or ""))
       except Exception:
         continue
@@ -363,21 +436,111 @@ def cache_root() -> Path:
   return root
 
 
+# pi and omp keep sessions under their agent dir, and `--profile=<name>`
+# moves a whole agent tree under profiles/<name>/. PI_CODING_AGENT_DIR moves
+# pi's default one, as pi itself reads it.
+def pi_session_roots() -> list[Path]:
+  pi_agent = Path(os.environ.get("PI_CODING_AGENT_DIR") or (Path.home() / ".pi" / "agent"))
+  roots = [pi_agent / "sessions", Path.home() / ".omp" / "agent" / "sessions"]
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    try:
+      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      pass
+  return roots
+
+
+def scan_pi(scan: LocalScan, roots: list[Path] | None = None) -> bool:
+  # Returns whether every session file could be read, like scan_opencode.
+  roots = [root for root in (roots if roots is not None else pi_session_roots()) if root.is_dir()]
+  if not roots:
+    return True
+  # --no-ignore: a $HOME that is a git checkout would otherwise hide the
+  # session dirs behind its .gitignore. Sorted, so which copy of a forked
+  # message counts, and so its session, doesn't change from run to run.
+  try:
+    proc = subprocess.run(
+      ["rg", "--json", "--no-ignore", "--hidden", "--sort", "path", "--glob", "*.jsonl", "-e", r'"provider"\s*:\s*"openrouter"', *map(str, roots)],
+      capture_output=True, text=True, errors="replace", timeout=60,
+    )
+  except (OSError, subprocess.SubprocessError):
+    return False
+
+  seen: set[tuple[str, str]] = set()
+  for raw in proc.stdout.splitlines():
+    try:
+      event = json.loads(raw)
+      if event.get("type") != "match":
+        continue
+      data = event.get("data") or {}
+      path = str((data.get("path") or {}).get("text") or "")
+      entry = json.loads((data.get("lines") or {}).get("text") or "")
+      if not isinstance(entry, dict) or entry.get("type") != "message":
+        continue
+      message = entry.get("message")
+      if not isinstance(message, dict) or message.get("role") != "assistant":
+        continue
+      if str(message.get("provider") or "") != "openrouter":
+        continue
+      # A forked session repeats its parent's messages with their ids and
+      # timestamps, so those count once; a line without both always counts.
+      entry_id, stamp = entry.get("id"), entry.get("timestamp")
+      if entry_id and stamp:
+        identity = (str(entry_id), str(stamp))
+        if identity in seen:
+          continue
+        seen.add(identity)
+      usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
+      in_tok = number(usage.get("input"))
+      out_tok = number(usage.get("output"))
+      cache_read = number(usage.get("cacheRead"))
+      cache_write = number(usage.get("cacheWrite"))
+      if not (in_tok or out_tok or cache_read or cache_write):
+        in_tok = number(usage.get("totalTokens"))
+      if not (in_tok or out_tok or cache_read or cache_write):
+        continue
+      day = local_day(stamp if stamp is not None else message.get("timestamp"))
+      if not day:
+        continue
+      model = model_name(str(message.get("model") or ""))
+    except Exception:
+      continue
+    scan.add_usage(day, "pi:" + path, model, in_tok, out_tok, cache_read, cache_write)
+  # rg exits 1 for no matches and 2 when something couldn't be read.
+  return proc.returncode in (0, 1)
+
+
+def scan_local(scan: LocalScan) -> bool:
+  # Both sources always run, so one failing still leaves the other's numbers.
+  opencode_complete = scan_opencode(scan)
+  pi_complete = scan_pi(scan)
+  return opencode_complete and pi_complete
+
+
 def scan_cache_paths() -> tuple[Path, Path]:
-  db = opencode_db_path()
-  digest = hashlib.sha1(str(db).encode("utf-8")).hexdigest()[:16]
+  sources = [opencode_db_path(), *pi_session_roots()]
+  digest = hashlib.sha1("\n".join(map(str, sources)).encode("utf-8")).hexdigest()[:16]
   root = cache_root()
   return root / f"openrouter-scan-{digest}.json", root / f"openrouter-scan-{digest}.lock"
+
+
+def read_json(path: Path) -> dict | None:
+  try:
+    parsed = json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    return None
+  return parsed if isinstance(parsed, dict) else None
 
 
 def read_fresh_json(path: Path, max_age_seconds: float) -> dict | None:
   if max_age_seconds <= 0 or not path.exists():
     return None
   try:
-    age = datetime.now().timestamp() - path.stat().st_mtime
-    if 0 <= age <= max_age_seconds:
-      parsed = json.loads(path.read_text(encoding="utf-8"))
-      return parsed if isinstance(parsed, dict) else None
+    # A negative age means the mtime is in the future: the clock moved
+    # backwards since the write, so the cache's freshness cannot be trusted.
+    age = time.time() - path.stat().st_mtime
+    if 0 <= age < max_age_seconds:
+      return read_json(path)
   except Exception:
     return None
   return None
@@ -403,27 +566,40 @@ def cached_local_stats(today: datetime, max_age: float) -> tuple[dict, bool]:
   stderr. The JSON record is the contract; the cache is not.
   """
   scan = LocalScan(today)
-  try:
-    cache_file, _ = scan_cache_paths()
-    cached = read_fresh_json(cache_file, max_age)
+
+  def usable(cached: dict | None) -> dict | None:
     if (
       isinstance(cached, dict)
       and cached.get("schemaVersion") == 1
       and cached.get("scanDate") == scan.today
       and isinstance(cached.get("stats"), dict)
     ):
-      return cached["stats"], True
-    complete = scan_opencode(scan)
-    stats = scan.snapshot()
-    if complete:
-      try:
-        write_json(cache_file, {"schemaVersion": 1, "scanDate": scan.today, "stats": stats})
-      except Exception as exc:
-        print(f"omarchy-agent-usage-openrouter: could not write usage cache ({exc})", file=sys.stderr)
-    return stats, complete
+      return cached["stats"]
+    return None
+
+  try:
+    cache_file, lock_file = scan_cache_paths()
+    stats = usable(read_fresh_json(cache_file, max_age))
+    if stats is not None:
+      return stats, True
+    # Concurrent runs (the update command and the panel's own refresh) wait
+    # for one scan instead of each reading the whole database.
+    with lock_file.open("w") as lock:
+      fcntl.flock(lock, fcntl.LOCK_EX)
+      stats = usable(read_fresh_json(cache_file, max_age))
+      if stats is not None:
+        return stats, True
+      complete = scan_local(scan)
+      stats = scan.snapshot()
+      if complete:
+        try:
+          write_json(cache_file, {"schemaVersion": 1, "scanDate": scan.today, "stats": stats})
+        except Exception as exc:
+          print(f"omarchy-agent-usage-openrouter: could not write usage cache ({exc})", file=sys.stderr)
+      return stats, complete
   except Exception as exc:
     print(f"omarchy-agent-usage-openrouter: cache unavailable ({exc}); scanning directly", file=sys.stderr)
-    complete = scan_opencode(scan)
+    complete = scan_local(scan)
     return scan.snapshot(), complete
 
 
@@ -437,9 +613,6 @@ def base_record(**overrides: Any) -> dict:
     "updatedAt": datetime.now(timezone.utc).isoformat(),
     "ready": False,
     "hasLocalStats": False,
-    # Tier-2 numbers are account-global (billing API), like Fireworks:
-    # every synced device reports the same truth, so aggregation must
-    # not sum them. Tier 1 (local DB scan) is machine-local instead.
     "hasPromptStats": True,
     "tierLabel": "",
     "usageStatusText": "",
@@ -463,134 +636,241 @@ def key_limit_meter(key_info: dict) -> list[dict]:
   try:
     limit = key_info.get("limit")
     remaining = key_info.get("limit_remaining")
-    if limit is None or remaining is None or float(limit) <= 0:
+    if limit is None or remaining is None or isinstance(limit, bool) or isinstance(remaining, bool):
       return []
     lim = float(limit)
     rem = max(0.0, float(remaining))
   except (TypeError, ValueError):
     return []
+  if not (math.isfinite(lim) and math.isfinite(rem)) or lim <= 0:
+    return []
   period = KEY_LIMIT_PERIODS.get(str(key_info.get("limit_reset") or "").strip().lower())
   label = f"{period} key limit" if period else "Key limit"
-  return [{"label": label, "title": label, "percent": (lim - rem) / lim, "resetsAt": ""}]
+  return [{"label": label, "title": label, "percent": min(1.0, (lim - min(rem, lim)) / lim), "resetsAt": ""}]
 
 
-def limits_cache() -> Path:
-  return cache_root() / "openrouter-limits.json"
-
-
-# The key-limit meter as (limits, stale, fetchedAtMs, status, help). A failed
-# lookup keeps the last good meter, marked stale, and leaves the token stats
-# standing.
-def key_meter(key: str) -> tuple[list[dict], bool, int, str, str]:
+def dollars(value: Any) -> float | None:
+  if isinstance(value, bool):
+    return None
   try:
-    key_info = api_get("/key", key).get("data", {})
+    parsed = float(value or 0)
+  except (TypeError, ValueError):
+    return None
+  return parsed if math.isfinite(parsed) else None
+
+
+# Balance: total purchased minus total used, or None for an account that never
+# bought credits.
+def credits_balance(credits: dict) -> dict | None:
+  total_credits = dollars(credits.get("total_credits"))
+  total_usage = dollars(credits.get("total_usage"))
+  if not total_credits or total_credits <= 0 or total_usage is None:
+    return None
+  return {
+    "remaining": round(max(0.0, total_credits - total_usage), 6),
+    "funded": round(total_credits, 6),
+    "spent": round(max(0.0, total_usage), 6),
+    "currency": "USD",
+    "estimated": False,
+  }
+
+
+def epoch_ms(value: Any) -> int:
+  if isinstance(value, bool):
+    return 0
+  try:
+    parsed = float(value or 0)
+  except (TypeError, ValueError):
+    return 0
+  return int(parsed) if math.isfinite(parsed) and parsed > 0 else 0
+
+
+# A kept window whose reset has passed is an untouched allowance, not an
+# unknown one. The key meter only ever names a period, so this is a guard for
+# a cache written by a meter that carries a reset time.
+def limit_window_open(entry: dict, now: datetime) -> bool:
+  raw = str(entry.get("resetsAt") or "")
+  if raw == "":
+    return True
+  try:
+    resets_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+  except ValueError:
+    return True
+  if resets_at.tzinfo is None:
+    resets_at = resets_at.replace(tzinfo=timezone.utc)
+  return resets_at > now
+
+
+def usable_cached_limits(cached: dict) -> list[dict]:
+  entries = cached.get("limits")
+  if not isinstance(entries, list):
+    return []
+  now = datetime.now(timezone.utc)
+  return [
+    entry if limit_window_open(entry, now) else dict(entry, percent=0.0, resetsAt="")
+    for entry in entries if isinstance(entry, dict)
+  ]
+
+
+# Each credential keeps its own last good answer, so another key never shows
+# this one's numbers. Refreshes can overlap (the panel's own and a sooner
+# retry), so an answer only replaces one fetched before it.
+def probe_cache(kind: str, secret: str) -> Path:
+  return cache_root() / f"openrouter-{kind}-{credential_digest(secret)}.json"
+
+
+def remember(path: Path, part: dict) -> None:
+  current = read_json(path) or {}
+  if epoch_ms(current.get("fetchedAtMs")) <= part["fetchedAtMs"]:
+    write_json(path, part)
+
+
+def probe(endpoint: str, key: str, cache: Path, parse, force: bool) -> tuple[dict | None, OpenRouterError | None]:
+  """One endpoint's answer as (part, error).
+
+  A probe this recent is reused, a fresh answer replaces the cached one, and
+  a failed one falls back on it. part is None when nothing was ever fetched.
+  """
+  cached = read_json(cache) or {}
+  fetched_at = epoch_ms(cached.get("fetchedAtMs"))
+  kept = dict(cached, fetchedAtMs=fetched_at) if fetched_at else None
+  age = time.time() - fetched_at / 1000
+  if kept is not None and not force and 0 <= age < PROBE_MIN_INTERVAL_SECONDS:
+    return kept, None
+  try:
+    payload = api_get(endpoint, key)
   except OpenRouterError as error:
-    cached = read_fresh_json(limits_cache(), float("inf")) or {}
-    limits = cached.get("limits") if isinstance(cached.get("limits"), list) else []
-    help_text = "OpenRouter rejected the API key. " + AUTH_HELP if str(error) == "HTTP_401" else str(error)
-    return limits, True, number(cached.get("fetchedAtMs")), "OpenRouter unavailable", help_text
-
-  limits = key_limit_meter(key_info if isinstance(key_info, dict) else {})
-  fetched_at = round(time.time() * 1000)
+    return kept, error
+  data = payload.get("data")
+  # Floored, never rounded: a stamp half a millisecond ahead reads as a clock
+  # that went back and fails the 0 <= age guard on the very next run.
+  part = dict(parse(data if isinstance(data, dict) else {}), fetchedAtMs=int(time.time() * 1000))
   try:
-    write_json(limits_cache(), {"fetchedAtMs": fetched_at, "limits": limits})
-  except Exception as exc:
-    print(f"omarchy-agent-usage-openrouter: could not write limits cache ({exc})", file=sys.stderr)
-  return limits, False, fetched_at, "", ""
+    remember(cache, part)
+  except OSError as exc:
+    print(f"omarchy-agent-usage-openrouter: could not write {cache.name} ({exc})", file=sys.stderr)
+  return part, None
+
+
+def collect_billing(key: str, manager: str, force: bool) -> dict[str, Any]:
+  """The key-limit meter and the balance, each kept past a failed check.
+
+  The meter describes an inference key's own credit limit, so with only a
+  management key there is none to show; the balance is the account's and
+  either key can read it.
+  """
+  result: dict[str, Any] = {
+    "limits": [], "limitsStale": False, "limitsFetchedAt": 0,
+    "usageStatusText": "", "authHelpText": "", "balance": None, "retryAdvised": False,
+  }
+  parts: dict[str, dict | None] = {}
+  errors: dict[str, OpenRouterError] = {}
+  if key:
+    parts["key"], error = probe("/key", key, probe_cache("limits", key), lambda data: {"limits": key_limit_meter(data)}, force)
+    if error:
+      errors["key"] = error
+  credits_key = key or manager
+  parts["credits"], error = probe("/credits", credits_key, probe_cache("credits", credits_key), lambda data: {"balance": credits_balance(data)}, force)
+  if error:
+    errors["credits"] = error
+
+  meter = parts.get("key")
+  if meter is not None:
+    result["limits"] = usable_cached_limits(meter)
+  credits = parts.get("credits")
+  if credits is not None and isinstance(credits.get("balance"), dict):
+    result["balance"] = credits["balance"]
+  kept = [part for part in parts.values() if part is not None]
+  if kept:
+    result["limitsFetchedAt"] = min(part["fetchedAtMs"] for part in kept)
+  # Anything that didn't come back fresh marks the record stale, kept or not;
+  # the panel shows the kept numbers' age on hover.
+  result["limitsStale"] = bool(errors)
+  result["retryAdvised"] = any(isinstance(error, OpenRouterTransportError) for error in errors.values())
+
+  refused = [error for error in errors.values() if isinstance(error, OpenRouterAuthError)]
+  if refused:
+    result["usageStatusText"] = "Sign-in expired"
+    result["authHelpText"] = "OpenRouter refused the API key. " + AUTH_HELP
+  elif "key" in errors and meter is None:
+    result["usageStatusText"] = "OpenRouter limits unavailable"
+    result["authHelpText"] = str(errors["key"])
+  elif "credits" in errors and credits is None:
+    result["usageStatusText"] = "Balance unavailable"
+    result["authHelpText"] = str(errors["credits"])
+  elif errors:
+    result["authHelpText"] = str(next(iter(errors.values())))
+  return result
 
 
 def scan(args: Any) -> dict[str, Any]:
   config = read_config()
   key = api_key(config)
   manager = management_key(config)
+  # No key anywhere: OpenRouter isn't used here, and the panel skips it.
   if not key and not manager:
-    return base_record(usageStatusText="OpenRouter unavailable", authHelpText=AUTH_HELP)
+    return base_record()
 
   today = datetime.now().astimezone()
+  max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
 
   # Tier 2 first: with a management key the 30-day account history covers
-  # every machine and client. Without one (or a rejected one) fall back to
-  # the local opencode DB scan below.
-  managed = activity_stats(manager, today)
+  # every machine and client. Without one (or a refused one) fall back to
+  # the local opencode and pi scan below.
+  managed, activity_unreachable = activity_stats(manager, today, max_age)
   if managed is not None:
-    stats = managed
+    stats = dict(managed)
     complete = True
     has_prompt_stats = False
-    # Account-global numbers must merge by widest value, not by sum.
+    # Tier-2 numbers are account-global (billing API), like Fireworks: every
+    # synced device reports the same truth, so aggregation must merge them by
+    # widest value, not sum them. Tier 1 is machine-local instead.
     stats["scope"] = "account"
   else:
-    max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
     stats, complete = cached_local_stats(today, max_age)
     has_prompt_stats = True
   has_data = number(stats.get("totalPrompts")) > 0 or bool(stats.get("modelUsage"))
 
-  # The meter describes an inference key's own credit limit, so with only a
-  # management key there is none to show.
-  if key:
-    limits, stale, fetched_at, status, help_text = key_meter(key)
-  else:
-    limits, stale, fetched_at, status, help_text = [], False, 0, "", ""
-
-  # Balance: total purchased minus total used. A transport failure here
-  # must not take the token stats down -- retryAdvised asks the shell for
-  # one sooner retry instead of waiting out the full refresh interval.
-  balance = None
-  retry_advised = False
-  try:
-    credits = api_get("/credits", key or manager).get("data", {})
-    total_credits = float(credits.get("total_credits") or 0)
-    total_usage = float(credits.get("total_usage") or 0)
-    if total_credits > 0:
-      balance = {
-        "remaining": round(max(0.0, total_credits - total_usage), 6),
-        "funded": round(total_credits, 6),
-        "spent": round(max(0.0, total_usage), 6),
-        "currency": "USD",
-        "estimated": False,
-      }
-  except OpenRouterError as error:
-    if str(error) == "Could not reach the OpenRouter API":
-      retry_advised = True
-    else:
-      print(f"omarchy-agent-usage-openrouter: credits lookup failed ({error})", file=sys.stderr)
+  billing = collect_billing(key, manager, args.force)
 
   record = base_record(
     ready=True,
     tierLabel="Prepaid",
     hasLocalStats=complete,
     hasPromptStats=has_prompt_stats,
-    limits=limits,
-    limitsStale=stale,
-    limitsFetchedAt=fetched_at,
-    usageStatusText=status,
-    authHelpText=help_text,
+    limits=billing["limits"],
+    limitsStale=billing["limitsStale"],
+    limitsFetchedAt=billing["limitsFetchedAt"],
+    usageStatusText=billing["usageStatusText"],
+    authHelpText=billing["authHelpText"],
   )
-  if retry_advised:
+  # Usually the seconds after login before the network is up; the panel
+  # tries once more soon instead of waiting out its refresh interval.
+  if billing["retryAdvised"] or activity_unreachable:
     record["retryAdvised"] = True
   record.update(stats)
-  if balance:
-    record["balance"] = balance
-  if not has_data and not balance and not record["limits"] and not status:
+  if billing["balance"]:
+    record["balance"] = billing["balance"]
+  # A key nothing has been spent through, with no credits bought and no limit
+  # set, has nothing to show: the machine doesn't use OpenRouter yet.
+  if not has_data and not billing["balance"] and not record["limits"] and not record["usageStatusText"] and not record["limitsStale"]:
     record["ready"] = False
-    record["usageStatusText"] = "No OpenRouter usage found"
-    record["authHelpText"] = AUTH_HELP
+    record["tierLabel"] = ""
   return record
 
 
 def main() -> int:
   ap = argparse.ArgumentParser(description="Print the OpenRouter usage record as JSON")
-  # --force rescans everything and rewrites the cache; --limits-only
-  # reuses a recent local scan and only the balance/limits probe is fresh.
-  # The flags exist so every collector accepts the same invocation.
-  ap.add_argument("--force", action="store_true", help="rescan transcripts and re-probe limits, ignoring caches")
-  ap.add_argument("--limits-only", action="store_true", help="reuse any recent transcript scan; only the limits probe must be fresh")
+  # --force rescans and re-probes everything; --limits-only reuses a recent
+  # local scan or activity history for up to 15 minutes, while the key meter
+  # and balance are probed like a normal run.
+  ap.add_argument("--force", action="store_true", help="rescan sessions and re-probe the API, ignoring caches")
+  ap.add_argument("--limits-only", action="store_true", help="reuse any recent session scan; only the limits probe must be fresh")
   args = ap.parse_args()
   try:
     record = scan(args)
-  except OpenRouterError as error:
-    record = base_record(usageStatusText="OpenRouter unavailable", authHelpText=str(error))
   except Exception as error:
-    record = base_record(usageStatusText="OpenRouter unavailable", authHelpText="OpenRouter scan failed")
+    record = base_record(usageStatusText="OpenRouter unavailable", authHelpText="OpenRouter usage scan failed")
     print(f"omarchy-agent-usage-openrouter: {type(error).__name__}", file=sys.stderr)
   print(json.dumps(record, separators=(",", ":")))
   return 0
