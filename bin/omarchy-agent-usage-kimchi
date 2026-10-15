@@ -40,6 +40,7 @@ BUDGET_LABELS = {
   "ORGANIZATION_SOFT": "Org budget",
   "ORGANIZATION_HARD": "Org budget",
 }
+CREDITS_FIELDS = ("serverless", "remaining", "has_credits", "hasCredits", "tier", "tier_name", "tierName")
 SCAN_REUSE_SECONDS = 20
 # A limits-only refresh needs fresh credits, not a fresh history scan.
 LIMITS_ONLY_REUSE_SECONDS = 900
@@ -335,6 +336,10 @@ def plan_label(raw):
 # It says how much remains but not how much was bought, so the gauge shows
 # the remaining figure alone.
 def credits_part(data):
+  # A reply that names none of the credits fields isn't an answer, so it
+  # fails the check rather than replacing the kept plan and balance.
+  if not isinstance(data, dict) or not any(k in data for k in CREDITS_FIELDS):
+    raise ValueError("not a credits answer")
   if data.get("serverless") is False:
     return {}
   tier = next((data[k] for k in ("tier", "tier_name", "tierName") if k in data), "")
@@ -370,12 +375,16 @@ def period_title(period):
 # the panel has no clock name for, it gets a line of its own. A cap is what
 # may be spent, not what was bought, so it never funds the balance gauge.
 def budget_part(data):
+  # The budgets list is the answer, and an empty or null one still is; a
+  # reply without it fails the check rather than erasing the kept budgets.
+  if not isinstance(data, dict) or "budgets" not in data or not isinstance(data["budgets"] or [], list):
+    raise ValueError("not a budget answer")
   period = data.get("period") if isinstance(data.get("period"), dict) else {}
   # The gateway's own period end, or none: a reset time is never made up.
   resets = str(period.get("endTime") or "") if parse_time(period.get("endTime")) else ""
   title = period_title(period)
   limits = []
-  for entry in data.get("budgets") or []:
+  for entry in data["budgets"] or []:
     if not isinstance(entry, dict):
       continue
     cap = usd(entry.get("budgetLimitUsd"))
@@ -477,7 +486,7 @@ def collect_billing(force):
         continue
     try:
       data = get_json(f"{base}/v1/{resource}", key)
-      parts[resource] = dict(parse(data if isinstance(data, dict) else {}), fetchedAtMs=int(time.time() * 1000))
+      parts[resource] = dict(parse(data), fetchedAtMs=int(time.time() * 1000))
       remember(cache, parts[resource])
       continue
     except urllib.error.HTTPError as error:

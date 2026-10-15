@@ -66,6 +66,8 @@ def urlopen(request, timeout=None):
     raise urllib.error.URLError("offline")
   if os.environ.get("GATEWAY_ERROR") and request.full_url.endswith("/v1/" + os.environ["GATEWAY_ERROR"]):
     raise urllib.error.HTTPError(request.full_url, 500, "Internal Server Error", {}, None)
+  if os.environ.get("GATEWAY_ODD") and request.full_url.endswith("/v1/" + os.environ["GATEWAY_ODD"]):
+    return io.BytesIO(os.environ.get("GATEWAY_ODD_BODY", '{"message": "ok"}').encode())
   if key == "key-revoked":
     raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, None)
   answers = credits if request.full_url.endswith("/v1/credits") else budgets
@@ -150,6 +152,18 @@ record=$(KIMCHI_API_KEY=key-budget GATEWAY_DOWN=credits collect)
 [[ $(jq -c '{stale: .limitsStale, tierLabel, limits: (.limits | length), credits: (.balance.remaining == 30)}' <<<"$record") == '{"stale":true,"tierLabel":"Teams","limits":2,"credits":true}' ]] ||
   fail "a failed credits endpoint keeps its last plan and balance beside fresh limits" "$record"
 pass "one endpoint failing keeps its own last answer"
+
+# A reply of an unexpected shape is a failed check, not an empty account: the
+# last answer stays up, stale, and a server that answered isn't retried sooner.
+for odd in budget credits; do
+  for body in '{"message": "ok"}' '[]' 'null'; do
+    record=$(KIMCHI_API_KEY=key-budget collect)
+    record=$(KIMCHI_API_KEY=key-budget GATEWAY_ODD=$odd GATEWAY_ODD_BODY="$body" collect)
+    [[ $(jq -c '{stale: .limitsStale, tierLabel, limits: (.limits | length), credits: (.balance.remaining == 30), retry: .retryAdvised, usageStatusText}' <<<"$record") == '{"stale":true,"tierLabel":"Teams","limits":2,"credits":true,"retry":null,"usageStatusText":""}' ]] ||
+      fail "an unexpected $odd reply ($body) keeps the last answer, stale" "$record"
+  done
+done
+pass "an unexpected reply keeps the last answer, stale"
 
 # A part that fails before anything was cached is missing, not current: the
 # record is stale, but a server that answered with an error isn't retried
