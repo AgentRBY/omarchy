@@ -2,6 +2,8 @@
 
 Every agent or provider in the agents panel is a collector: `bin/omarchy-agent-usage-<id>`, a Python script that prints one JSON record. `omarchy-agent-usage-update` finds collectors by globbing `bin/omarchy-agent-usage-*`, runs them, and the panel (`shell/plugins/agents/Main.qml`, `Panel.qml`) reads the records. This is the contract every collector follows, so that each agent behaves the same in the panel. `bin/omarchy-agent-usage-claude` is the reference implementation.
 
+New collectors build on the shared module, [`shell/plugins/agents/collectors.py`](../shell/plugins/agents/collectors.py), which holds the parts of this contract every collector shares. A collector keeps only what is its own: its credentials, its endpoint and how to read it, its provider filter, and the specifics of its record.
+
 ## The command
 
 - `#!/usr/bin/python3`, two-space indentation, and the header lines `# omarchy:summary=...`, `# omarchy:args=[--force] [--limits-only]`, and `# omarchy:hidden=true`.
@@ -11,6 +13,28 @@ Every agent or provider in the agents panel is a collector: `bin/omarchy-agent-u
   - `--force` (a person pressing refresh) reuses nothing.
 - The record is printed on stdout. Diagnostics go to stderr and never carry a credential.
 - A collector never writes to an agent's own files. Credentials are only read, and a token is refreshed only where the agent's own CLI does the same under its lock, never by rewriting another harness's store.
+
+## The shared module
+
+The module ships with the agents panel in the omarchy package. A collector loads it from `$OMARCHY_PATH`, never from a path derived from its own file or `$HOME`:
+
+```python
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
+from collectors import Stats, base_record, cached_scan, ...
+```
+
+Its main entry points, each documented where it is defined:
+
+- `base_record(id, name, **fields)` and `emit(record)`: the record with every field and the zeroed stats block, as an unused machine prints it, and printing it.
+- `Stats`: `add()` one reply (or `add_row()` one row from a reader), `snapshot()` the record's stats fields.
+- `cached_scan(id, sources, max_age, scan, match=None)` with `scan_max_age(force, limits_only)`: the per-day scan cache under `flock`, reused for 20, 900, or 0 seconds, never caching an incomplete scan.
+- `scan_pi_sessions(pattern, accept)` and `scan_opencode(providers, accept)`: the pi/omp and opencode readers, handing back deduplicated `UsageRow`s for the replies the collector's `accept(provider, model, entry)` takes.
+- `LimitsCache(id, *identity)`: one credential's last good limits, with elapsed windows zeroed, `fresh(force)` for the probe reuse, `kept()` for the stale fallback, and `save()`.
+- `open_json(request)` and `HttpError`: a request that refuses redirects and says whether a failure was a refusal (`status`), a transport failure (`transport`, the only cause for `retryAdvised`), or an invalid answer.
+- `local_day()`, `token_count()`, `usage_tokens()`, `number()`, `now_ms()`, `stamp()`, `age_below()`, `read_json()`, `write_json()`, `cache_root()`: reading untrusted values and files the same way everywhere.
+
+`test/shell.d/agent-usage-shared-test.sh` holds the module to this contract directly. Something goes in the module only once two collectors need it.
 
 ## The record
 
@@ -62,7 +86,7 @@ The detail goes in `authHelpText`: what failed and the one thing to do about it.
 
 - Tokens are counted once, under the provider that bills them. pi, omp, and opencode sessions are split by provider into the matching collector; there is no harness tab that counts them again.
 - pi and omp sessions live under `~/.pi/agent/sessions` and `~/.omp/agent/sessions`, plus `profiles/<name>/agent/sessions` under each. `PI_CODING_AGENT_DIR`'s sessions and `PI_CODING_AGENT_SESSION_DIR` are read as well as those defaults, never instead of them; roots are compared by realpath, and one nested inside another is dropped. They are found with `rg --no-ignore`, since a `$HOME` that is a git checkout would otherwise hide them. A message is deduplicated by `(id, timestamp)` when it has both, so a forked session doesn't count its parent's messages again, and a line without an id always counts. A row with no time is today's; a row whose time is untrusted, zero included, counts nowhere.
-- opencode is read from both its `message` store and V2's `session_message`, V2 first, deduplicated by message id, leaving out the copies a fork makes (`session_v2.fork_session_id`), with compactions counted like replies. The database is `OPENCODE_DB` when set (or the older `opencode-v2.db`), opened read-only. `bin/omarchy-agent-usage-opencode` is the reference reader, and `test/shell.d/agent-usage-partition-test.sh` holds every collector to it.
+- opencode is read from both its `message` store and V2's `session_message`, V2 first, deduplicated by message id, leaving out the copies a fork makes (`session_v2.fork_session_id`), with compactions counted like replies. The database is `OPENCODE_DB` when set (or the older `opencode-v2.db`), opened read-only. `scan_opencode` in the shared module is the reference reader, and `test/shell.d/agent-usage-partition-test.sh` holds every collector to it.
 - Timestamps and token fields from disk are untrusted: a zero, huge, negative, `NaN`, boolean or non-numeric value skips that field or row, never the record.
 - A scan is cached per day (`scanDate`) and rebuilt under `flock`, and a scan that couldn't read all its sources isn't cached.
 

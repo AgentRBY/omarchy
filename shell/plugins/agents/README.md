@@ -65,7 +65,7 @@ written by `omarchy-agent-usage-update`. That command runs one
 on its refresh timer and whenever you ask for a refresh, and picks up any
 record that lands in the directory regardless of who wrote it.
 
-Adding an agent needs no QML changes: ship a collector that follows the contract in [`docs/agent-usage-collectors.md`](../../../docs/agent-usage-collectors.md) (the `claude` collector is the reference), and the panel gains a section. An `assets/<id>.svg` mark is optional, with an `assets/<id>-light.svg` twin if the mark needs a dark variant for light surfaces; the bar glyph stands in when there is none.
+Adding an agent needs no QML changes: ship a collector that follows the contract in [`docs/agent-usage-collectors.md`](../../../docs/agent-usage-collectors.md) (the `claude` collector is the reference), built on the plumbing the collectors share in `collectors.py` beside this README, and the panel gains a section. An `assets/<id>.svg` mark is optional, with an `assets/<id>-light.svg` twin if the mark needs a dark variant for light surfaces; the bar glyph stands in when there is none.
 
 | Collector | Limits | Local stats |
 |---|---|---|
