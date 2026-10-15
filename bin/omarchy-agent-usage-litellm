@@ -79,6 +79,22 @@ def epoch_seconds(value):
   return seconds if EARLIEST_EPOCH <= seconds < LATEST_EPOCH else None
 
 
+# A pi or opencode row's day, read as every collector reading those sources
+# reads it: a row with no time at all is today's, and an untrusted time is
+# None, so the caller skips that row alone.
+def source_day(value):
+  return datetime.now().strftime("%Y-%m-%d") if value is None else local_day(value)
+
+
+# pi, omp, and the harnesses that copy their format spell usage camelCase or
+# snake_case; the first spelling present wins.
+def usage_tokens(usage, *keys):
+  for key in keys:
+    if key in usage:
+      return number(usage.get(key))
+  return 0
+
+
 def local_day(value):
   seconds = epoch_seconds(value)
   if seconds is not None:
@@ -237,19 +253,6 @@ class Stats:
 # --------------------------------------------------------------- pi and omp
 
 
-def pi_agent_dirs():
-  pi_agent = os.environ.get("PI_CODING_AGENT_DIR")
-  dirs = [Path(pi_agent).expanduser() if pi_agent else Path.home() / ".pi" / "agent", Path.home() / ".omp" / "agent"]
-  # `omp --profile=<name>` (and pi's equivalent) moves the agent tree under
-  # <base>/profiles/<name>/.
-  for base in (Path.home() / ".pi", Path.home() / ".omp"):
-    try:
-      dirs.extend(sorted(child / "agent" for child in (base / "profiles").iterdir() if child.is_dir()))
-    except OSError:
-      pass
-  return dirs
-
-
 def pi_pattern():
   return r'"provider"\s*:\s*"litellm"'
 
@@ -258,13 +261,30 @@ def accept_pi(message):
   return str(message.get("provider") or "") == PROVIDER
 
 
+# pi's and omp's session trees, each profile's too: `--profile=<name>` moves
+# the whole agent tree under <base>/profiles/<name>/. pi moves its agent tree
+# with PI_CODING_AGENT_DIR and its sessions alone with
+# PI_CODING_AGENT_SESSION_DIR, both expanding a leading ~; either is read as
+# well as the default trees, which keep whatever was written before the move.
 def pi_session_roots():
   roots = []
-  for agent_dir in pi_agent_dirs():
-    root = agent_dir / "sessions"
-    if root.is_dir() and root.resolve() not in [r.resolve() for r in roots]:
-      roots.append(root)
-  return roots
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    roots.append(base / "agent" / "sessions")
+    try:
+      # Sorted so the scan order does not depend on directory order.
+      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      # No profiles directory, or it is unreadable: the default root stands.
+      pass
+  if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
+  if os.environ.get("PI_CODING_AGENT_SESSION_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_SESSION_DIR"].strip()).expanduser())
+  # Canonical roots, so an override that aliases a default root through a
+  # symlink is scanned under one spelling. A root inside another is already
+  # read with it, so it is dropped rather than counted twice.
+  canonical = list(dict.fromkeys(root.resolve() for root in roots))
+  return [root for root in canonical if not any(other != root and root.is_relative_to(other) for other in canonical)]
 
 
 def pi_parent_session(path):
@@ -281,7 +301,7 @@ def pi_parent_session(path):
 def scan_pi_sessions(stats):
   """Add the pi/omp assistant messages this collector counts. Returns whether
   every root was read."""
-  roots = pi_session_roots()
+  roots = [root for root in pi_session_roots() if root.is_dir()]
   if not roots:
     return True
   rg = find_command("rg") or "rg"
@@ -319,14 +339,18 @@ def scan_pi_sessions(stats):
     if message.get("role") != "assistant" or not accept_pi(message):
       continue
     usage = obj(message.get("usage"))
-    input_tokens = number(usage.get("input"))
-    output_tokens = number(usage.get("output"))
-    cache_read = number(usage.get("cacheRead"))
-    cache_write = number(usage.get("cacheWrite"))
+    input_tokens = usage_tokens(usage, "input", "inputTokens", "input_tokens")
+    # pi folds thinking into its own field; both are generated.
+    output_tokens = usage_tokens(usage, "output", "outputTokens", "output_tokens") + usage_tokens(usage, "reasoning", "reasoningTokens", "reasoning_tokens")
+    cache_read = usage_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens")
+    cache_write = usage_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens")
     if not (input_tokens or output_tokens or cache_read or cache_write):
-      input_tokens = number(usage.get("totalTokens"))
+      # Some writers keep only the total; it was still spent.
+      input_tokens = usage_tokens(usage, "totalTokens", "total_tokens")
     timestamp = entry.get("timestamp")
-    day = local_day(timestamp) or local_day(message.get("timestamp"))
+    # The first time present decides: none at all is today's, and an
+    # untrusted one, zero included, skips only this line.
+    day = source_day(message.get("timestamp") if timestamp is None else timestamp)
     if day is None or not (input_tokens or output_tokens or cache_read or cache_write):
       continue
     # A fork repeats its parent's messages with their ids and timestamps, so
@@ -416,7 +440,10 @@ def opencode_row(stats, seen, message_id, session_id, entry, row_type, created):
   if message_id in seen:
     return
   seen.add(message_id)
-  day = local_day(obj(entry.get("time")).get("created")) or local_day(created)
+  # The message's own time, else the row's: none at all is today's, and an
+  # untrusted one, zero included, skips only this row.
+  stamp = obj(entry.get("time")).get("created")
+  day = source_day(created if stamp is None else stamp)
   if day is None:
     return
   model_id = entry.get("modelID") or (model.get("id") or model.get("modelID") if isinstance(model, dict) else model)
@@ -477,7 +504,7 @@ def scan_opencode(stats):
 
 
 def scan_cache_paths():
-  digest = hashlib.sha1("\n".join([str(Path.home()), str(opencode_db()), os.environ.get("PI_CODING_AGENT_DIR", "")]).encode("utf-8")).hexdigest()[:16]
+  digest = hashlib.sha1("\n".join([str(Path.home()), str(opencode_db()), *map(str, pi_session_roots())]).encode("utf-8")).hexdigest()[:16]
   root = cache_root()
   return root / f"litellm-scan-{digest}.json", root / f"litellm-scan-{digest}.lock"
 
