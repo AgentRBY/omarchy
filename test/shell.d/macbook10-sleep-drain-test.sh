@@ -43,6 +43,9 @@ cat >"$stub_bin/systemctl" <<'SH'
 printf 'systemctl' >>"$TEST_LOG"
 printf '\t%s' "$@" >>"$TEST_LOG"
 printf '\n' >>"$TEST_LOG"
+if [[ $1 == "is-enabled" ]]; then
+  [[ ${TEST_SERVICE_ENABLED:-} == "1" ]]
+fi
 SH
 
 chmod +x "$stub_bin"/*
@@ -134,15 +137,24 @@ grep -Fq $'systemctl\tenable\t--now\tomarchy-macbook10-sleep-drain.service' "$ca
   fail "setup leaves lid and sleep configuration it does not own alone" "$(cat "$calls")"
 pass "setup installs wakeup disable and leaves lid and sleep configuration alone"
 
-: >"$calls"
-PATH="$stub_bin:$ROOT/bin:$PATH" \
-  TEST_PRODUCT_NAME="MacBook10,1" \
-  TEST_LOG="$calls" \
-  OMARCHY_PATH="$ROOT" \
-  OMARCHY_MACBOOK10_SLEEP_UDEV="$udev" \
-  OMARCHY_MACBOOK10_SLEEP_UNIT="$unit" \
-  OMARCHY_MACBOOK10_SLEEP_HOOK="$hook" \
-  bash -euo pipefail "$migration"
+run_migration() {
+  : >"$calls"
+  PATH="$stub_bin:$ROOT/bin:$PATH" \
+    TEST_PRODUCT_NAME="MacBook10,1" \
+    TEST_LOG="$calls" \
+    TEST_SERVICE_ENABLED="$1" \
+    OMARCHY_PATH="$ROOT" \
+    OMARCHY_MACBOOK10_SLEEP_UDEV="$udev" \
+    OMARCHY_MACBOOK10_SLEEP_UNIT="$unit" \
+    OMARCHY_MACBOOK10_SLEEP_HOOK="$hook" \
+    bash -euo pipefail "$migration"
+}
+
+run_migration 0
 grep -Fq $'systemctl\tenable\t--now\tomarchy-macbook10-sleep-drain.service' "$calls" ||
   fail "the migration runs hardware setup" "$(cat "$calls")"
 pass "the migration runs hardware setup"
+
+run_migration 1
+! grep -q '^sudo' "$calls" || fail "the migration escalates nothing once the service is enabled" "$(cat "$calls")"
+pass "the migration is a no-op for a user after the fix is applied"
