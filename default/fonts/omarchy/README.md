@@ -18,6 +18,7 @@ The private-use glyphs in `omarchy.ttf` are:
 - `U+E90D` — Cursor, from <https://simpleicons.org/icons/cursor.svg>
 - `U+E90E` — Claude, from <https://simpleicons.org/icons/claude.svg>
 - `U+E90F` — Qwen, from <https://simpleicons.org/icons/qwen.svg>
+- `U+E910` — DeepSeek, from <https://simpleicons.org/icons/deepseek.svg>
 
 The agent marks are monochrome so the menu can render them using the active
 theme's foreground and selection colors.

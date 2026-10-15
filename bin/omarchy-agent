@@ -143,6 +143,16 @@ qwen)
   command=(qwen --yolo)
   [[ -n ${prompt:-} ]] && command+=("--prompt-interactive=$prompt")
   ;;
+dsh)
+  # The browser UI has no prompt option, so a prompt runs once through the
+  # headless profile. The launcher consumes one separator; the profile needs
+  # its own so a prompt starting with a dash stays literal.
+  if [[ -n ${prompt:-} ]]; then
+    command=(env DSH_PERMISSION_MODE=danger-full-access dsh headless -- -- "$prompt")
+  else
+    command=(env DSH_PERMISSION_MODE=danger-full-access dsh web)
+  fi
+  ;;
 *)
   echo "Unsupported default agent: $agent" >&2
   exit 1

@@ -42,6 +42,12 @@ if gum confirm --affirmative "$(omarchy-i18n common.yes)" --negative "$(omarchy-
     rm -f ~/.local/bin/qwen
   fi
 
+  # Preserve a user-managed DeepSeek Harness launcher at the same path.
+  if [[ -f ~/.local/bin/dsh && ! -L ~/.local/bin/dsh ]] &&
+    grep -Eq '^mise use -g .*"npm:@deepseek-ai/dsh(@[^"]*)?"' ~/.local/bin/dsh; then
+    rm -f ~/.local/bin/dsh
+  fi
+
   omarchy-pkg-drop \
     aether \
     cliamp \

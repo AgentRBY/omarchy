@@ -15,6 +15,8 @@ omarchy-mise-install github:can1357/oh-my-pi omp
 omarchy-mise-install grok
 omarchy-mise-install npm:@moonshot-ai/kimi-code kimi
 omarchy-mise-install npm:@qwen-code/qwen-code qwen
+# Pinned: every DSH release so far is a prerelease, which mise's npm backend skips.
+omarchy-mise-install npm:@deepseek-ai/dsh@0.2.0-rc.2 dsh
 omarchy-mise-install cursor-agent
 omarchy-mise-install npm:@kitlangton/ghui ghui
 omarchy-mise-install aqua:modem-dev/hunk hunk
