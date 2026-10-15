@@ -14,42 +14,56 @@ an account without a Grok Bot allowance gives an unused record, which the
 panel skips. The agents panel only ever reads the JSON this prints.
 """
 
+from __future__ import annotations
+
 import argparse
 import base64
-import hashlib
 import http.client
 import json
 import math
 import os
 import sqlite3
-import tempfile
-import urllib.error
+import sys
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+# The shared collector plumbing ships with the agents panel.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
+from collectors import (  # noqa: E402
+  PROBE_MIN_INTERVAL_SECONDS,
+  HttpError,
+  LimitsCache,
+  base_record,
+  config_home,
+  emit,
+  open_json,
+  read_json,
+)
 
 AGENT_ID = "grokbot"
 AGENT_NAME = "Grok Bot"
 AUTH_HELP = "Sign in to the Cursor editor, or run `cursor-agent login`, with your Grok Bot account."
 USAGE_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus"
-# Repeated panel opens reuse an answer this recent instead of asking again;
-# --force (a person pressing refresh) always asks.
-PROBE_MIN_INTERVAL_SECONDS = 15
 
 
-def config_home():
-  return Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+def parse_time(value: Any) -> datetime | None:
+  try:
+    parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+  except ValueError:
+    return None
+  return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def cache_root():
-  return Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
+# ------------------------------------------------------------ cursor sign-in
+#
+# The Cursor collector reads the same account the same way, from this same
+# block; keep the two identical.
 
 
-def now_ms():
-  return int(datetime.now(timezone.utc).timestamp() * 1000)
-
-
-def finite(value):
+def finite(value: Any) -> float:
   if isinstance(value, bool):
     return 0.0
   try:
@@ -59,39 +73,20 @@ def finite(value):
   return parsed if math.isfinite(parsed) else 0.0
 
 
-def read_json(path):
-  try:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-  except (OSError, ValueError):
-    return {}
-  return data if isinstance(data, dict) else {}
+def default_auth_path() -> Path:
+  return config_home() / "cursor" / "auth.json"
 
 
-# A temporary file of its own per write, so overlapping runs can't rename
-# each other's away.
-def write_json(path, payload):
-  path.parent.mkdir(parents=True, exist_ok=True)
-  fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
-  try:
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-      json.dump(payload, handle)
-    os.replace(tmp, path)
-  except Exception:
-    Path(tmp).unlink(missing_ok=True)
-    raise
+def default_state_db() -> Path:
+  return config_home() / "Cursor" / "User" / "globalStorage" / "state.vscdb"
 
 
-def parse_time(value):
-  try:
-    parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
-  except ValueError:
-    return None
-  return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+def read_ide_token(state_db: Path) -> str:
+  """The sign-in the Cursor editor keeps, for people who never ran the CLI.
 
-
-# The editor's sign-in, read-only: the editor may be writing its database
-# right now. No immutable=1, so a live database with an active WAL still reads.
-def read_ide_token(state_db):
+  Read-only: the editor may be writing its database right now. No
+  immutable=1, so a live database with an active WAL still reads.
+  """
   if not state_db.is_file():
     return ""
   try:
@@ -105,18 +100,17 @@ def read_ide_token(state_db):
     return ""
   finally:
     conn.close()
-  value = row[0] if row else ""
+  value = row[0] if row else None
   if isinstance(value, bytes):
     value = value.decode("utf-8", errors="replace")
   return str(value or "").strip()
 
 
-def read_cli_token(path):
-  data = read_json(path)
-  return str(data.get("accessToken") or "").strip()
+def read_cli_token(path: Path) -> str:
+  return str(read_json(path).get("accessToken") or "").strip()
 
 
-def jwt_claims(token):
+def jwt_claims(token: str) -> dict[str, Any]:
   parts = token.split(".")
   if len(parts) != 3:
     return {}
@@ -129,37 +123,42 @@ def jwt_claims(token):
 
 # A sign-in token whose expiry has passed. The CLI and the editor each renew
 # their own the next time they run; an opaque API key never lapses here.
-def token_lapsed(token):
+def token_lapsed(token: str) -> bool:
   expires = finite(jwt_claims(token).get("exp"))
   return 0 < expires <= datetime.now(timezone.utc).timestamp()
 
 
-# The same account the Cursor collector reads, found the same way: the key
-# the user exported, the credential the Cursor CLI stores, or the editor's
-# sign-in. A lapsed sign-in gives way to the next one that hasn't lapsed;
-# with all of them lapsed, the first one decides.
-def read_token():
+def read_token(path: Path | None = None, state_db: Path | None = None) -> str:
+  """The key the user exported, the credential the Cursor CLI stores, or the
+  editor's sign-in, in that order.
+
+  A sign-in that has lapsed gives way to the next one that hasn't: someone who
+  ran the CLI once and now lives in the editor would otherwise wait on a
+  token nothing renews. With all of them lapsed, the first one decides.
+  """
   key = str(os.environ.get("CURSOR_API_KEY") or "").strip()
   if key:
     return key
-  cli = read_cli_token(config_home() / "cursor" / "auth.json")
+  cli = read_cli_token(path or default_auth_path())
   if cli and not token_lapsed(cli):
     return cli
-  ide = read_ide_token(config_home() / "Cursor" / "User" / "globalStorage" / "state.vscdb")
+  ide = read_ide_token(state_db or default_state_db())
   if ide and not token_lapsed(ide):
     return ide
   return cli or ide
 
 
 # Who the token signs in as (the JWT's subject), so a machine signed in to
-# someone else never shows the last one's limit, and a refreshed token keeps
-# the same cache. An opaque API key keys by its own hash.
-def account_key(token):
-  subject = str(jwt_claims(token).get("sub") or "")
-  return hashlib.sha256((subject or token).encode("utf-8")).hexdigest()[:16]
+# someone else never shows the last one's numbers, and a refreshed token keeps
+# the same caches. An opaque API key stands for itself. The caches hash it.
+def account_key(token: str) -> str:
+  return str(jwt_claims(token).get("sub") or "") or token
 
 
-def fetch_status(token):
+# ------------------------------------------------------------------ limit
+
+
+def fetch_status(token: str) -> dict[str, Any]:
   request = urllib.request.Request(
     USAGE_URL,
     data=b"{}",
@@ -171,8 +170,7 @@ def fetch_status(token):
     },
     method="POST",
   )
-  with urllib.request.urlopen(request, timeout=15) as response:
-    status = json.loads(response.read() or b"{}")
+  status = open_json(request, timeout=15)
   if not isinstance(status, dict):
     raise ValueError("not an object")
   return status
@@ -181,7 +179,7 @@ def fetch_status(token):
 # The answer is protobuf JSON, which leaves out a field holding zero or
 # false: no included limit means no Grok Bot allowance on this account, and
 # a week with nothing used yet has no percentage at all.
-def weekly_limits(status):
+def weekly_limits(status: dict[str, Any]) -> list[dict[str, Any]]:
   if status.get("hasNonZeroIncludedLimit") is not True:
     return []
   resets = parse_time(status.get("nextResetTimestampUtc"))
@@ -192,56 +190,8 @@ def weekly_limits(status):
   }]
 
 
-# A kept week that has ended is a fresh allowance, so it comes back at zero
-# with no reset time until a check says when the next one ends. One with no
-# known end is kept as it is.
-def open_limits(limits):
-  now = datetime.now(timezone.utc)
-  kept = []
-  for limit in limits if isinstance(limits, list) else []:
-    if not isinstance(limit, dict):
-      continue
-    resets = parse_time(limit.get("resetsAt")) if limit.get("resetsAt") else None
-    kept.append(limit if resets is None or resets > now else dict(limit, percent=0.0, resetsAt=""))
-  return kept
-
-
-def empty_recent_days():
-  """The last seven local days ending today, each with no messages."""
-  today = datetime.now().astimezone().date()
-  return [{"date": (today - timedelta(days=offset)).isoformat(), "messageCount": 0} for offset in range(6, -1, -1)]
-
-
-def empty_record():
-  return {
-    "schemaVersion": 1,
-    "id": AGENT_ID,
-    "name": AGENT_NAME,
-    "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": False,
-    "hasLocalStats": False,
-    "hasPromptStats": False,
-    "tierLabel": "",
-    "usageStatusText": "",
-    "authHelpText": "",
-    "limits": [],
-    "limitsStale": False,
-    "limitsFetchedAt": 0,
-    "todayPrompts": 0,
-    "todaySessions": 0,
-    "todayTotalTokens": 0,
-    "todayTokensByModel": {},
-    "recentDays": empty_recent_days(),
-    "totalPrompts": 0,
-    "totalSessions": 0,
-    "activeDays": 0,
-    "activeDates": [],
-    "modelUsage": {},
-  }
-
-
-def collect(force=False):
-  record = empty_record()
+def collect(force: bool = False) -> dict[str, Any]:
+  record = base_record(AGENT_ID, AGENT_NAME, hasPromptStats=False)
   # Without a sign-in there is no telling whether this account has Grok Bot
   # at all, so the machine reads as not using it; the Cursor collector is the
   # one that asks for a sign-in.
@@ -249,16 +199,18 @@ def collect(force=False):
   if not token:
     return record
 
-  cache = cache_root() / f"grokbot-limits-{account_key(token)}.json"
-  cached = read_json(cache)
-  kept = open_limits(cached.get("limits"))
-  fetched_at = max(0, round(finite(cached.get("fetchedAtMs"))))
-  kept_tier = str(cached.get("tierLabel") or "")
+  cache = LimitsCache(AGENT_ID, account_key(token))
+  # A kept week that has ended is a fresh allowance, so it comes back at zero
+  # with no reset time until a check says when the next one ends. One with no
+  # known end is kept as it is.
+  kept = cache.limits
+  fetched_at = cache.fetched_at
+  kept_tier = str(cache.data.get("tierLabel") or "")
 
   # A panel opened and shut repeatedly must not turn into a request per
-  # flick, so an answer this recent is the answer.
-  age = now_ms() - fetched_at
-  if not force and fetched_at > 0 and isinstance(cached.get("limits"), list) and 0 <= age < PROBE_MIN_INTERVAL_SECONDS * 1000:
+  # flick, so an answer this recent is the answer, even one saying the
+  # account has no Grok Bot.
+  if not force and isinstance(cache.data.get("limits"), list) and cache.younger_than(PROBE_MIN_INTERVAL_SECONDS):
     record.update(ready=bool(kept), tierLabel=kept_tier, limits=kept, limitsFetchedAt=fetched_at)
     return record
 
@@ -270,29 +222,26 @@ def collect(force=False):
     try:
       answer = fetch_status(token)
       limits = weekly_limits(answer)
-    except urllib.error.HTTPError as error:
-      if error.code in (401, 403):
+    except HttpError as error:
+      if error.status in (401, 403):
         status, detail = "Sign-in expired", "Cursor refused the saved sign-in. " + AUTH_HELP
+      elif error.status:
+        status, detail = "", f"Cursor's dashboard returned status {error.status}."
+      # No route, no DNS, refused, reset or timed out: nothing answered, so
+      # the panel tries again soon.
+      elif error.transport and not isinstance(error.__cause__, http.client.HTTPException):
+        status, detail, retry = "", "Couldn't reach Cursor's dashboard. Retrying shortly.", True
+      # A reply cut short or one that isn't the expected JSON came from a
+      # server that answered.
       else:
-        status, detail = "", f"Cursor's dashboard returned status {error.code}."
-    # A reply cut short or one that isn't the expected JSON came from a
-    # server that answered.
-    except (http.client.HTTPException, ValueError, TypeError, AttributeError):
+        status, detail = "", "Cursor's dashboard sent a reply that couldn't be read."
+    except (ValueError, TypeError, AttributeError):
       status, detail = "", "Cursor's dashboard sent a reply that couldn't be read."
-    # No route, no DNS, refused, reset or timed out: nothing answered, so the
-    # panel tries again soon.
-    except OSError:
-      status, detail, retry = "", "Couldn't reach Cursor's dashboard. Retrying shortly.", True
     else:
       tier = str(answer.get("grokPlanLabel") or "")
-      fetched_at = now_ms()
-      record.update(ready=bool(limits), tierLabel=tier, limits=limits, limitsFetchedAt=fetched_at)
       # The cache only backs later runs; failing to keep it never costs this
       # run's live answer.
-      try:
-        write_json(cache, {"fetchedAtMs": fetched_at, "tierLabel": tier, "limits": limits})
-      except OSError:
-        pass
+      record.update(ready=bool(limits), tierLabel=tier, limits=limits, limitsFetchedAt=cache.save(limits, tierLabel=tier))
       return record
 
   # A failed check keeps the last good limit, marked stale so the panel
@@ -312,15 +261,16 @@ def collect(force=False):
   return record
 
 
-def main():
+def main() -> int:
   parser = argparse.ArgumentParser(description="Print the Grok Bot usage record as JSON")
   parser.add_argument("--force", action="store_true")
   # Grok Bot has no local scan to reuse, so a near-limit refresh is a normal
   # run; the flag keeps the invocation every collector takes.
   parser.add_argument("--limits-only", action="store_true")
   args = parser.parse_args()
-  print(json.dumps(collect(force=args.force), separators=(",", ":")))
+  emit(collect(force=args.force))
+  return 0
 
 
 if __name__ == "__main__":
-  main()
+  raise SystemExit(main())
