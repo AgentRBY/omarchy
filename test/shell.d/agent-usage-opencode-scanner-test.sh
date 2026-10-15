@@ -5,7 +5,7 @@ source "$(dirname "$0")/base-test.sh"
 require_command jq
 require_command python3
 
-unset OPENCODE_API_KEY OPENCODE_DB
+unset OPENCODE_API_KEY OPENCODE_GO_API_KEY OPENCODE_DB PI_CODING_AGENT_DIR
 
 timestamp="$(date +%Y-%m-%d)T12:00:00Z"
 
@@ -263,10 +263,69 @@ result=$(HOME="$ODD_HOME" XDG_CACHE_HOME="$ODD_HOME/.cache" XDG_DATA_HOME="$ODD_
   fail "OpenCode collector survives malformed nested fields" "$result"
 pass "OpenCode collector survives malformed nested fields"
 
+# Profiles keep their own session trees, PI_CODING_AGENT_DIR moves pi's, and
+# a home that is a git checkout ignoring everything still gets scanned. A
+# fork's copy of its parent's message counts once, a usage block with only a
+# total still counts, and either spelling of the token fields reads.
+ROOTS_HOME=$(mktemp -d)
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME" "$ROOTS_HOME"' EXIT
+mkdir -p "$ROOTS_HOME/.git" "$ROOTS_HOME/.pi/agent/sessions/p" "$ROOTS_HOME/.omp/profiles/work/agent/sessions/p" \
+  "$ROOTS_HOME/.pi/profiles/home/agent/sessions/p" "$ROOTS_HOME/moved/sessions/p"
+printf '*\n' >"$ROOTS_HOME/.gitignore"
+cat >"$ROOTS_HOME/.pi/agent/sessions/p/parent.jsonl" <<EOF
+{"type":"message","id":"m-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":1}}}
+EOF
+cat >"$ROOTS_HOME/.pi/agent/sessions/p/fork.jsonl" <<EOF
+{"type":"message","id":"m-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":1}}}
+{"type":"message","id":"m-1","timestamp":"$(date +%Y-%m-%d)T12:00:01Z","message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":2}}}
+EOF
+cat >"$ROOTS_HOME/.omp/profiles/work/agent/sessions/p/omp.jsonl" <<EOF
+{"type":"message","id":"w-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"opencode-go","model":"kimi-k3","usage":{"totalTokens":40}}}
+EOF
+cat >"$ROOTS_HOME/.pi/profiles/home/agent/sessions/p/pi.jsonl" <<EOF
+{"type":"message","id":"h-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"inputTokens":100,"output_tokens":200,"cache_read_input_tokens":300,"cacheWriteTokens":400}}}
+EOF
+cat >"$ROOTS_HOME/moved/sessions/p/pi.jsonl" <<EOF
+{"type":"message","id":"d-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":5000}}}
+EOF
+result=$(HOME="$ROOTS_HOME" XDG_CACHE_HOME="$ROOTS_HOME/.cache" XDG_DATA_HOME="$ROOTS_HOME/.local/share" \
+  PI_CODING_AGENT_DIR="$ROOTS_HOME/moved" "$ROOT/bin/omarchy-agent-usage-opencode")
+[[ $(jq -c '{todayTotalTokens, totalPrompts, usage: .modelUsage["kimi-k3"]}' <<<"$result") == '{"todayTotalTokens":6043,"totalPrompts":5,"usage":{"inputTokens":5143,"outputTokens":200,"cacheReadInputTokens":300,"cacheCreationInputTokens":400}}' ]] ||
+  fail "OpenCode collector reads every pi and omp session root once per message" "$result"
+pass "OpenCode collector reads every pi and omp session root once per message"
+
+# Without rg the sessions can't be read, and a scan missing them is never
+# cached as the whole story.
+rm -rf "$ROOTS_HOME/.cache"
+HOME="$ROOTS_HOME" XDG_CACHE_HOME="$ROOTS_HOME/.cache" XDG_DATA_HOME="$ROOTS_HOME/.local/share" \
+  PATH="$ROOTS_HOME/no-bin" "$ROOT/bin/omarchy-agent-usage-opencode" >/dev/null 2>&1
+[[ -z $(find "$ROOTS_HOME/.cache" -name 'opencode-scan-*.json' 2>/dev/null) ]] ||
+  fail "OpenCode collector doesn't cache a scan that couldn't read the sessions"
+pass "OpenCode collector doesn't cache a scan that couldn't read the sessions"
+
+# A timestamp or token count that can't be trusted costs its row or field,
+# never the scan.
+BAD_HOME=$(mktemp -d)
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME" "$ROOTS_HOME" "$BAD_HOME"' EXIT
+mkdir -p "$BAD_HOME/.pi/agent/sessions/p"
+cat >"$BAD_HOME/.pi/agent/sessions/p/pi.jsonl" <<EOF
+{"type":"message","id":"b-1","timestamp":true,"message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":1000}}}
+{"type":"message","id":"b-2","timestamp":-5,"message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":1000}}}
+{"type":"message","id":"b-3","timestamp":1e300,"message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":1000}}}
+{"type":"message","id":"b-4","timestamp":"yesterday-ish","message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":1000}}}
+{"type":"message","id":"b-5","timestamp":NaN,"message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":1000}}}
+{"type":"message","id":"b-6","timestamp":"$timestamp","message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":7,"output":true,"cacheRead":-50,"cacheWrite":1e300,"reasoning":"lots"}}}
+{"type":"message","id":"b-7","timestamp":$(date +%s)000,"message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":3}}}
+EOF
+result=$(HOME="$BAD_HOME" XDG_CACHE_HOME="$BAD_HOME/.cache" XDG_DATA_HOME="$BAD_HOME/.local/share" "$ROOT/bin/omarchy-agent-usage-opencode")
+[[ $(jq -c '{todayTotalTokens, totalPrompts}' <<<"$result") == '{"todayTotalTokens":10,"totalPrompts":2}' ]] ||
+  fail "OpenCode collector skips untrusted timestamps and token counts" "$result"
+pass "OpenCode collector skips untrusted timestamps and token counts"
+
 # A machine nobody uses OpenCode's subscription on gives a record the panel
 # skips: no plan, no limits, no usage.
 EMPTY_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME" "$EMPTY_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME" "$ROOTS_HOME" "$BAD_HOME" "$EMPTY_HOME"' EXIT
 result=$(HOME="$EMPTY_HOME" XDG_CACHE_HOME="$EMPTY_HOME/.cache" XDG_DATA_HOME="$EMPTY_HOME/.local/share" \
   OPENCODE_API_KEY= PATH="$EMPTY_HOME/bin:$PATH" "$ROOT/bin/omarchy-agent-usage-opencode")
 [[ $(jq -c '{ready, tierLabel, limits, totalPrompts, limitsStale, limitsFetchedAt, usageStatusText, authHelpText, recentDays: (.recentDays | length), activeDates, modelUsage}' <<<"$result") == '{"ready":false,"tierLabel":"","limits":[],"totalPrompts":0,"limitsStale":false,"limitsFetchedAt":0,"usageStatusText":"","authHelpText":"","recentDays":7,"activeDates":[],"modelUsage":{}}' ]] ||

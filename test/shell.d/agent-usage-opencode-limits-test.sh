@@ -4,7 +4,7 @@ source "$(dirname "$0")/base-test.sh"
 
 require_command python3
 
-unset OPENCODE_API_KEY OPENCODE_DB
+unset OPENCODE_API_KEY OPENCODE_GO_API_KEY OPENCODE_DB PI_CODING_AGENT_DIR
 
 # collect_limits reaches the Zen gateway, so the reader that interprets its
 # answer is exercised on its own: the collector loads as a module, and a fake
@@ -289,6 +289,15 @@ check("OpenCode collector reads opencode's own credential", [c.token for c in co
 with open(os.path.join(opencode_home, "opencode", "auth.json"), "w") as handle:
   json.dump({"opencode-local": {"type": "api_key", "key": "gateway_secret"}}, handle)
 check("OpenCode collector never sends a look-alike provider's key", "gateway_secret" not in [c.token for c in collector.credential_candidates()])
+
+# An auth.json entry may be the key itself, and the Go key has an
+# environment variable of its own beside OPENCODE_API_KEY.
+with open(os.path.join(opencode_home, "opencode", "auth.json"), "w") as handle:
+  json.dump({"opencode-go": " plain_key "}, handle)
+check("OpenCode collector reads a plain-string auth.json key", [c.token for c in collector.credential_candidates()] == ["plain_key"])
+os.environ["OPENCODE_GO_API_KEY"] = "go_env"
+check("OpenCode collector reads OPENCODE_GO_API_KEY first", [c.token for c in collector.credential_candidates()] == ["go_env", "plain_key"])
+os.environ.pop("OPENCODE_GO_API_KEY")
 
 clear_key()
 pi_home = os.path.join(home, "pi")

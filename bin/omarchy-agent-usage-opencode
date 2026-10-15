@@ -16,6 +16,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import shutil
 import sqlite3
@@ -70,20 +71,44 @@ def obj(value):
   return value if isinstance(value, dict) else {}
 
 
+# Counts and times read from disk or the network are untrusted: a boolean,
+# NaN, negative, or absurdly large value reads as nothing, never as a number
+# that would swamp the totals. The ceiling sits well above any epoch
+# millisecond time.
+NUMBER_CEILING = 10 ** 15
+
+
 def number(value):
-  try:
-    return int(value or 0)
-  except Exception:
+  if isinstance(value, bool):
     return 0
+  try:
+    n = float(value or 0)
+  except (TypeError, ValueError, OverflowError):
+    return 0
+  if not math.isfinite(n) or n < 0 or n >= NUMBER_CEILING:
+    return 0
+  return round(n)
+
+
+# pi, omp, and the harnesses that copy their format spell usage camelCase or
+# snake_case; the first spelling present wins.
+def usage_tokens(usage, *keys):
+  for key in keys:
+    if key in usage:
+      return number(usage.get(key))
+  return 0
 
 
 # Usage percentages arrive as 0-100; the record contract wants 0-1. An
 # unreadable value returns -1 so the caller can drop the window.
 def fraction(value):
+  if isinstance(value, bool):
+    return -1.0
   try:
-    return float(value) / 100.0
+    percent = float(value) / 100.0
   except (TypeError, ValueError):
     return -1.0
+  return percent if math.isfinite(percent) else -1.0
 
 
 def model_name(raw):
@@ -119,25 +144,35 @@ def find_command(name):
   return shutil.which(name, path=ENV.get("PATH"))
 
 
+# The local day a message was spent on, or None when its timestamp can't be
+# trusted, so the caller skips that row rather than the whole scan. A message
+# with no timestamp at all is today's, as it always was.
 def local_day(value):
   if value is None:
     return datetime.now().strftime("%Y-%m-%d")
+  if isinstance(value, str) and value.strip().isdigit():
+    value = int(value.strip())
+  if isinstance(value, bool):
+    return None
   if isinstance(value, (int, float)):
+    seconds = number(value)
+    if seconds <= 0:
+      return None
     # pi message timestamps are milliseconds; opencode writes milliseconds too.
-    if value > 10_000_000_000:
-      value = value / 1000
-    return datetime.fromtimestamp(value).strftime("%Y-%m-%d")
-  text = str(value)
+    if seconds > 10_000_000_000:
+      seconds = seconds / 1000
+    try:
+      return datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError):
+      return None
+  text = str(value).strip()
   try:
-    if text.endswith("Z"):
-      dt = datetime.fromisoformat(text[:-1] + "+00:00")
-    else:
-      dt = datetime.fromisoformat(text)
-    if dt.tzinfo is not None:
-      dt = dt.astimezone()
-    return dt.strftime("%Y-%m-%d")
-  except Exception:
-    return datetime.now().strftime("%Y-%m-%d")
+    dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+  except ValueError:
+    return None
+  if dt.tzinfo is not None:
+    dt = dt.astimezone()
+  return dt.strftime("%Y-%m-%d")
 
 
 now = datetime.now()
@@ -184,29 +219,52 @@ def add_usage(day, session_key, model, input_tokens, output_tokens, cache_read, 
     today_tokens_by_model[model] = today_tokens_by_model.get(model, 0) + total
 
 
+# pi's and omp's session trees, each profile's too: `--profile=<name>` moves
+# the whole agent tree under <base>/profiles/<name>/, and PI_CODING_AGENT_DIR
+# moves pi's.
+def pi_session_roots():
+  roots = []
+  if os.environ.get("PI_CODING_AGENT_DIR"):
+    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"]).expanduser() / "sessions")
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    roots.append(base / "agent" / "sessions")
+    try:
+      # Sorted so the scan order does not depend on directory order.
+      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      # No profiles directory, or it is unreadable: the default root stands.
+      pass
+  return list(dict.fromkeys(roots))
+
+
 def scan_pi_sessions():
   # pi and omp can spend the subscription without opencode's CLI ever
   # running, so its own database cannot be the only source. Their JSONL
   # transcripts carry the provider, model, and token usage per message.
-  roots = [
-    Path.home() / ".pi" / "agent" / "sessions",
-    Path.home() / ".omp" / "agent" / "sessions",
-  ]
-  rg = find_command("rg") or "rg"
+  # Returns whether every root was read in full, so a partial scan is never
+  # cached as the whole story.
+  roots = [root for root in pi_session_roots() if root.is_dir()]
+  if not roots:
+    return True
+  rg = find_command("rg")
+  if not rg:
+    print("omarchy-agent-usage-opencode: rg is missing; pi and omp sessions were not scanned", file=sys.stderr)
+    return False
+  complete = True
   for root in roots:
-    if not root.exists():
-      continue
     try:
       proc = subprocess.Popen(
-        [rg, "--json", "-e", r'"provider"\s*:\s*"opencode(-go)?"', str(root)],
+        # --no-ignore: a home that is itself a git checkout would otherwise
+        # hide every session file behind its ignore rules.
+        [rg, "--json", "--no-ignore", "-e", r'"provider"\s*:\s*"opencode(-go)?"', str(root)],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
         errors="replace",
         env=ENV,
       )
-    except FileNotFoundError:
-      return
+    except OSError:
+      return False
 
     assert proc.stdout is not None
     for raw in proc.stdout:
@@ -219,43 +277,60 @@ def scan_pi_sessions():
         entry = json.loads(line)
       except Exception:
         continue
-
-      if not isinstance(entry, dict) or entry.get("type") != "message":
+      try:
+        scan_pi_entry(entry, path)
+      except Exception:
+        # One odd line costs that line, never the scan.
         continue
-      # Only an id can say two lines are the same message; without one, each
-      # line is its own.
-      message_id = str(entry.get("id") or "")
-      if message_id:
-        message_key = path + ":" + message_id
-        if message_key in seen_pi_messages:
-          continue
-        seen_pi_messages.add(message_key)
-      message = obj(entry.get("message"))
-      if message.get("role") != "assistant":
-        continue
-      if str(message.get("provider") or "") not in PROVIDERS:
-        continue
-
-      usage = obj(message.get("usage"))
-      if not usage:
-        continue
-      input_tokens = number(usage.get("input"))
-      # pi folds thinking into its own field; opencode counts it as generated.
-      output_tokens = number(usage.get("output")) + number(usage.get("reasoning"))
-      cache_read = number(usage.get("cacheRead"))
-      cache_write = number(usage.get("cacheWrite"))
-      if not (input_tokens or output_tokens or cache_read or cache_write):
-        continue
-
-      day = local_day(entry.get("timestamp") or message.get("timestamp"))
-      # A model id may carry a thinking variant suffix ("deepseek-v4.1-flash:high").
-      model = model_name(message.get("model"))
-      add_usage(day, path, model, input_tokens, output_tokens, cache_read, cache_write)
 
     try:
-      proc.wait(timeout=1)
+      # rg exits 1 for no match and 2 when it couldn't read something.
+      if proc.wait(timeout=1) not in (0, 1):
+        complete = False
     except Exception:
       proc.kill()
+      complete = False
+  return complete
+
+
+def scan_pi_entry(entry, path):
+  if not isinstance(entry, dict) or entry.get("type") != "message":
+    return
+  message = obj(entry.get("message"))
+  if message.get("role") != "assistant":
+    return
+  if str(message.get("provider") or "") not in PROVIDERS:
+    return
+  # A fork copies its parent's entries with their id and timestamp, so the
+  # pair names a message across files; an id alone only within its file.
+  # Without an id, each line is its own.
+  message_id = entry.get("id")
+  if message_id:
+    timestamp = entry.get("timestamp")
+    message_key = (str(message_id), str(timestamp)) if timestamp else (path, str(message_id))
+    if message_key in seen_pi_messages:
+      return
+    seen_pi_messages.add(message_key)
+
+  usage = obj(message.get("usage"))
+  if not usage:
+    return
+  input_tokens = usage_tokens(usage, "input", "inputTokens", "input_tokens")
+  # pi folds thinking into its own field; opencode counts it as generated.
+  output_tokens = usage_tokens(usage, "output", "outputTokens", "output_tokens") + usage_tokens(usage, "reasoning", "reasoningTokens", "reasoning_tokens")
+  cache_read = usage_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens")
+  cache_write = usage_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens")
+  if not (input_tokens or output_tokens or cache_read or cache_write):
+    # Some writers keep only the total; it still spent the subscription.
+    input_tokens = usage_tokens(usage, "totalTokens", "total_tokens")
+    if not input_tokens:
+      return
+
+  day = local_day(entry.get("timestamp") or message.get("timestamp"))
+  if day is None:
+    return
+  # A model id may carry a thinking variant suffix ("deepseek-v4.1-flash:high").
+  add_usage(day, path, model_name(message.get("model")), input_tokens, output_tokens, cache_read, cache_write)
 
 
 def data_home():
@@ -314,6 +389,8 @@ def store_row(message_id, session_id, entry, row_type, created, seen):
     return
   seen.add(message_id)
   day = local_day(obj(entry.get("time")).get("created") or created)
+  if day is None:
+    return
   add_usage(day, "opencode:" + str(session_id), model_name(entry.get("modelID") or model), input_tokens, output_tokens, cache_read, cache_write)
 
 
@@ -406,9 +483,10 @@ def cache_root():
 
 def scan_cache_paths():
   db = opencode_db()
-  # The digest covers every data path the scan reads: the opencode DB and,
-  # via Path.home(), the pi/omp session roots.
-  digest = hashlib.sha1((str(Path.home()) + "\n" + str(db)).encode("utf-8")).hexdigest()[:16]
+  # The digest covers every data path the scan reads: the opencode DB and
+  # the pi/omp session roots.
+  sources = [str(db)] + [str(root) for root in pi_session_roots()]
+  digest = hashlib.sha1("\n".join(sources).encode("utf-8")).hexdigest()[:16]
   root = cache_root()
   return root / f"opencode-scan-{digest}.json", root / f"opencode-scan-{digest}.lock"
 
@@ -493,8 +571,8 @@ def local_stats():
 
 
 def run_local_scans():
-  scan_pi_sessions()
-  complete = scan_opencode_db()
+  complete = scan_pi_sessions()
+  complete = scan_opencode_db() and complete
   return local_stats(), complete
 
 
@@ -551,10 +629,13 @@ def read_auth_key(path):
     return ""
   # Only the subscription's own provider ids: a custom gateway named like
   # "opencode-local" holds a key for somewhere else, never to be sent here.
+  # An entry is an {type, key} object, or the key as a plain string.
   entries = [parsed[provider] for provider in PROVIDERS if provider in parsed]
   for entry in entries:
-    if isinstance(entry, dict) and entry.get("key"):
-      return str(entry["key"]).strip()
+    if isinstance(entry, str) and entry.strip():
+      return entry.strip()
+    if isinstance(entry, dict) and isinstance(entry.get("key"), str) and entry["key"].strip():
+      return entry["key"].strip()
   return ""
 
 
@@ -605,7 +686,7 @@ def credential_candidates():
   # one the endpoint accepts isn't knowable from here, so a refused one only
   # hands over to the next.
   store_keys, console = read_store_credentials(opencode_db())
-  tokens = [str(os.environ.get("OPENCODE_API_KEY", "")).strip()]
+  tokens = [str(os.environ.get(name, "")).strip() for name in ("OPENCODE_API_KEY", "OPENCODE_GO_API_KEY")]
   tokens += store_keys
   tokens.append(read_auth_key(data_home() / "opencode" / "auth.json"))
   tokens.append(read_auth_key(Path.home() / ".pi" / "agent" / "auth.json"))
