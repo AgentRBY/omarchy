@@ -197,6 +197,12 @@ kilo)
   command=(kilo --auto)
   [[ -n ${prompt:-} ]] && command+=("--prompt=$prompt")
   ;;
+devin)
+  # A bare positional is a path that opens Devin Desktop, so the prompt
+  # always follows --, which starts an interactive session with it.
+  command=(devin --permission-mode dangerous --respect-workspace-trust false)
+  [[ -n ${prompt:-} ]] && command+=(-- "$prompt")
+  ;;
 *)
   echo "Unsupported default agent: $agent" >&2
   exit 1
