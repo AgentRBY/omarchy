@@ -55,11 +55,9 @@ function startMenu() {
     pendingInitialMenu: initial('pendingInitialMenu'),
     defaultMenuItems: initial('defaultMenuItems'),
     userMenuItems: initial('userMenuItems'),
-    userMenuFailed: initial('userMenuFailed'),
-    // A FileView reports loaded by the time its onLoaded runs, and not while
-    // its read is in flight or after it failed (checked live).
-    defaultMenuFile: { loaded: false },
-    userMenuFile: { loaded: false },
+    defaultMenuSettled: initial('defaultMenuSettled'),
+    userMenuSettled: initial('userMenuSettled'),
+    menuCatalog: initial('menuCatalog'),
     items: ({}),
     itemOrder: [],
     opened: false,
@@ -95,8 +93,6 @@ function startMenu() {
 
 function load(menu, signal, raw) {
   menu.text = () => raw
-  if (signal === defaultLoaded) menu.defaultMenuFile.loaded = true
-  if (signal === userLoaded) menu.userMenuFile.loaded = true
   vm.runInContext(signal, menu)
 }
 
