@@ -35,10 +35,9 @@ except ImportError:
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
 from collectors import (  # noqa: E402
-  PROBE_MIN_INTERVAL_SECONDS,
   HttpError,
+  LimitsCache,
   Stats,
-  age_below,
   base_record as shared_base_record,
   cached_scan,
   config_home,
@@ -56,9 +55,7 @@ from collectors import (  # noqa: E402
   scan_max_age,
   scan_opencode,
   scan_pi_sessions,
-  stamp,
   warn,
-  write_json,
 )
 
 AGENT_ID = "deepseek"
@@ -442,20 +439,17 @@ def balance_cache_path(key: str, api_base_url: str) -> Path:
 def collect_balance(key: str, api_base_url: str, force: bool) -> dict[str, Any]:
   result: dict[str, Any] = {"balance": None, "stale": False, "fetchedAtMs": 0, "usageStatusText": "", "authHelpText": "", "retryAdvised": False}
   cache = None
-  cached: dict[str, Any] = {}
   try:
-    cache = balance_cache_path(key, api_base_url)
-    cached = read_json(cache)
+    cache = LimitsCache.at(balance_cache_path(key, api_base_url))
   except OSError as exc:
     warn(f"could not read the balance cache ({exc})")
-  kept = obj(cached.get("balance"))
-  fetched_at = stamp(cached.get("fetchedAtMs"))
+  kept = obj(cache.data.get("balance")) if cache else {}
+  fetched_at = cache.fetched_at if cache else 0
 
   # A panel opened and closed repeatedly must not become one request per
-  # flick, so a recent answer is reused; --force skips the wait. A balance
-  # has no limit windows, which LimitsCache's reuse is built on, so it is
-  # kept here.
-  if kept and not force and age_below(fetched_at / 1000, PROBE_MIN_INTERVAL_SECONDS):
+  # flick, so a recent answer is reused, though a balance has no limit
+  # windows; --force skips the wait.
+  if kept and cache.fresh(force, allow_empty=True):
     result.update(balance=balance_record(money(kept.get("remaining")), str(kept.get("currency") or "")), fetchedAtMs=fetched_at)
     return result
 
@@ -474,12 +468,8 @@ def collect_balance(key: str, api_base_url: str, force: bool) -> dict[str, Any]:
       result["usageStatusText"] = "Balance unavailable"
     return result
 
-  fetched_at = now_ms()
-  if cache is not None:
-    try:
-      write_json(cache, {"fetchedAtMs": fetched_at, "limits": [], "balance": {"remaining": str(live["remaining"]), "currency": live["currency"]}})
-    except OSError as exc:
-      warn(f"could not write the balance cache ({exc})")
+  balance = {"remaining": str(live["remaining"]), "currency": live["currency"]}
+  fetched_at = cache.save([], balance=balance) if cache is not None else now_ms()
   result.update(balance=balance_record(live["remaining"], live["currency"]), fetchedAtMs=fetched_at)
   return result
 
