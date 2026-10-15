@@ -134,6 +134,7 @@ ori_package="github:OpenRouterLabs/ori-releases"
 kimi_package="npm:@moonshot-ai/kimi-code"
 qwen_package="npm:@qwen-code/qwen-code"
 dsh_package="npm:@deepseek-ai/dsh@0.2.0-rc.2"
+mcode_package="npm:@minimax-ai/code[allow_builds=better-sqlite3]"
 cursor_agent_package="cursor-agent"
 muse_package="http:muse[url=https://api.meta.ai/muse-launcher.sh,bin=muse,version_list_url=https://api.meta.ai/muse-code/channels/muse-stable,version_json_path=.version]"
 
@@ -157,6 +158,7 @@ assert_lazy_stub "$ori_package" ori
 assert_lazy_stub "$kimi_package" kimi
 assert_lazy_stub "$qwen_package" qwen
 assert_lazy_stub "$dsh_package" dsh
+assert_lazy_stub "$mcode_package" mcode
 assert_lazy_stub "$cursor_agent_package" cursor-agent
 assert_lazy_stub "$muse_package" muse
 pass "custom agent lazy stubs preserve their mise packages"
@@ -172,6 +174,7 @@ grep -Fx "$muse_package muse" "$stub_log" >/dev/null || fail "user setup creates
 grep -Fx "$kimi_package kimi" "$stub_log" >/dev/null || fail "user setup creates the Kimi lazy stub"
 grep -Fx "$qwen_package qwen" "$stub_log" >/dev/null || fail "user setup creates the Qwen Code lazy stub"
 grep -Fx "$dsh_package dsh" "$stub_log" >/dev/null || fail "user setup creates the DeepSeek Harness lazy stub"
+grep -Fx "$mcode_package mcode" "$stub_log" >/dev/null || fail "user setup creates the MiniMax Code lazy stub"
 pass "user setup creates the custom agent lazy stubs"
 
 : >"$stub_log"
@@ -181,6 +184,7 @@ grep -Fx "$muse_package muse" "$stub_log" >/dev/null || fail "user setup recreat
 grep -Fx "$kimi_package kimi" "$stub_log" >/dev/null || fail "user setup recreates the Kimi lazy stub"
 grep -Fx "$qwen_package qwen" "$stub_log" >/dev/null || fail "user setup recreates the Qwen Code lazy stub"
 grep -Fx "$dsh_package dsh" "$stub_log" >/dev/null || fail "user setup recreates the DeepSeek Harness lazy stub"
+grep -Fx "$mcode_package mcode" "$stub_log" >/dev/null || fail "user setup recreates the MiniMax Code lazy stub"
 pass "user setup recreates wrappers even when the commands are present"
 
 : >"$stub_log"
@@ -208,6 +212,10 @@ grep -Fx "$qwen_package qwen" "$stub_log" >/dev/null || fail "Qwen Code migratio
 : >"$stub_log"
 OMARCHY_TEST_MISSING_COMMAND=dsh source "$ROOT/migrations/1792033356.sh" >/dev/null
 grep -Fx "$dsh_package dsh" "$stub_log" >/dev/null || fail "DeepSeek Harness migration creates its lazy stub"
+
+: >"$stub_log"
+OMARCHY_TEST_MISSING_COMMAND=mcode source "$ROOT/migrations/1792033557.sh" >/dev/null
+grep -Fx "$mcode_package mcode" "$stub_log" >/dev/null || fail "MiniMax Code migration creates its lazy stub"
 
 : >"$stub_log"
 source "$ROOT/migrations/1785617047.sh" >/dev/null
@@ -314,6 +322,7 @@ OMARCHY_TEST_MISSING_COMMAND=cursor-agent source "$ROOT/migrations/1788577553.sh
 OMARCHY_TEST_MISSING_COMMAND=kimi source "$ROOT/migrations/1786967403.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=qwen source "$ROOT/migrations/1792032538.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=dsh source "$ROOT/migrations/1792033356.sh" >/dev/null
+OMARCHY_TEST_MISSING_COMMAND=mcode source "$ROOT/migrations/1792033557.sh" >/dev/null
 [[ ! -s $stub_log ]] || fail "agent migrations respect the preinstall opt-out"
 [[ ! -e $test_home/.local/bin/omp ]] || fail "agent migration removes the obsolete Oh My Pi wrapper after opt-out"
 
@@ -449,9 +458,10 @@ pass "agent migrations install working wrappers without overriding the preinstal
 "$ROOT/bin/omarchy-mise-install" "$kimi_package" kimi
 "$ROOT/bin/omarchy-mise-install" "$qwen_package" qwen
 "$ROOT/bin/omarchy-mise-install" "$dsh_package" dsh
+"$ROOT/bin/omarchy-mise-install" "$mcode_package" mcode
 touch "$test_home/.local/bin/agy" "$test_home/.local/bin/ori"
 omarchy-remove-preinstalls >/dev/null
-for command in agy omp ori grok crush cursor-agent muse kimi qwen dsh; do
+for command in agy omp ori grok crush cursor-agent muse kimi qwen dsh mcode; do
   [[ ! -e $test_home/.local/bin/$command ]] || fail "Remove Preinstalls deletes the $command lazy stub"
 done
 pass "Remove Preinstalls deletes every optional agent lazy stub"
@@ -539,6 +549,9 @@ declare -A expected_agents=(
   [dsh]="dsh"
   [deepseek]="dsh"
   [deepseek-harness]="dsh"
+  [mcode]="mcode"
+  [minimax-code]="mcode"
+  [minimax]="mcode"
   [cursor]="cursor-agent"
   [cursor-agent]="cursor-agent"
   [muse]="muse"
@@ -560,6 +573,7 @@ declare -A expected_packages=(
   [kimi]="$kimi_package"
   [qwen]="$qwen_package"
   [dsh]="$dsh_package"
+  [mcode]="$mcode_package"
   [cursor-agent]="$cursor_agent_package"
   [muse]="$muse_package"
 )
@@ -838,6 +852,7 @@ assert_launch dsh env DSH_PERMISSION_MODE=danger-full-access dsh headless -- -- 
 printf '%s\n' dsh >"$agent_file"
 omarchy-agent-prompt '-n --help; echo literal'
 assert_launched dsh "keeps an option-like prompt literal" env DSH_PERMISSION_MODE=danger-full-access dsh headless -- -- '-n --help; echo literal'
+assert_launch mcode mcode -- "Review this project"
 pass "agent launcher adapts initial prompts for every supported agent"
 
 literal_muse_prompt=$'--disable-sandbox !Crash {$(touch must-not-run)}\ntrailing\\ '
@@ -869,6 +884,7 @@ assert_bypass copilot copilot --allow-all
 assert_bypass kimi kimi --yolo
 assert_bypass qwen qwen --yolo
 assert_bypass dsh env DSH_PERMISSION_MODE=danger-full-access dsh web
+assert_bypass mcode mcode
 pass "agent launcher skips permission prompts for every supported agent"
 
 printf '%s\n' "opencode" >"$agent_file"

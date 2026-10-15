@@ -512,6 +512,9 @@
   "setup.default.agent.kimi": {
     "label": "Kimi"
   },
+  "setup.default.agent.mcode": {
+    "label": "MiniMax Code"
+  },
   "setup.default.agent.muse": {
     "label": "Muse Code"
   },
