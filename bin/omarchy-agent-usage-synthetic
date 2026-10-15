@@ -592,8 +592,13 @@ def api_key():
   explicit = str(os.environ.get("SYNTHETIC_API_KEY", "")).strip()
   if explicit:
     return explicit
-  paths = [agent_dir / "auth.json" for agent_dir in pi_agent_dirs()[:2]]
+  # The default pi and omp sign-ins, then opencode's, then each named profile's:
+  # a profile's sessions are counted, so a sign-in made only there must read
+  # its quotas too, without outranking the defaults.
+  agent_dirs = pi_agent_dirs()
+  paths = [agent_dir / "auth.json" for agent_dir in agent_dirs[:2]]
   paths.append(data_home() / "opencode" / "auth.json")
+  paths.extend(agent_dir / "auth.json" for agent_dir in agent_dirs[2:])
   for path in paths:
     key = stored_key(path)
     if key:

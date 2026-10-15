@@ -93,7 +93,9 @@ key_used() {
   cat "$STATE/auth"
 }
 
-mkdir -p "$TEST_HOME/.pi/agent" "$TEST_HOME/.omp/agent" "$XDG_DATA_HOME/opencode" "$TEST_HOME/moved"
+mkdir -p "$TEST_HOME/.pi/agent" "$TEST_HOME/.omp/agent" "$XDG_DATA_HOME/opencode" "$TEST_HOME/moved" "$TEST_HOME/.omp/profiles/work/agent"
+echo '{"synthetic":{"type":"api_key","key":"profile-key"}}' >"$TEST_HOME/.omp/profiles/work/agent/auth.json"
+[[ $(key_used env) == "Bearer profile-key" ]] || fail "Synthetic collector reads a named profile's key" "$(cat "$STATE/auth")"
 echo '{"synthetic":{"type":"api_key","key":"opencode-key"}}' >"$XDG_DATA_HOME/opencode/auth.json"
 [[ $(key_used env) == "Bearer opencode-key" ]] || fail "Synthetic collector reads opencode's key" "$(cat "$STATE/auth")"
 echo '{"synthetic":{"type":"api_key","key":"omp-key"}}' >"$TEST_HOME/.omp/agent/auth.json"
@@ -103,8 +105,8 @@ echo '{"synthetic":{"type":"api_key","key":"$PI_SYNTHETIC"}}' >"$TEST_HOME/.pi/a
 echo '{"synthetic":{"key":"moved-key"}}' >"$TEST_HOME/moved/auth.json"
 [[ $(key_used env PI_CODING_AGENT_DIR="$TEST_HOME/moved") == "Bearer moved-key" ]] || fail "Synthetic collector follows PI_CODING_AGENT_DIR" "$(cat "$STATE/auth")"
 [[ $(key_used env SYNTHETIC_API_KEY=env-key) == "Bearer env-key" ]] || fail "Synthetic collector prefers SYNTHETIC_API_KEY" "$(cat "$STATE/auth")"
-rm -f "$TEST_HOME/.pi/agent/auth.json" "$TEST_HOME/.omp/agent/auth.json" "$XDG_DATA_HOME/opencode/auth.json"
-pass "Synthetic collector reads its key from the environment, pi, omp, then opencode"
+rm -f "$TEST_HOME/.pi/agent/auth.json" "$TEST_HOME/.omp/agent/auth.json" "$XDG_DATA_HOME/opencode/auth.json" "$TEST_HOME/.omp/profiles/work/agent/auth.json"
+pass "Synthetic collector reads its key from the environment, pi, omp, opencode, then a profile"
 
 export SYNTHETIC_API_KEY=secret
 
