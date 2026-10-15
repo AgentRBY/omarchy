@@ -230,7 +230,7 @@ def pi_parent_session(path):
   parent = header.get("parentSession")
   if not isinstance(parent, str) or not parent:
     return None
-  return os.path.abspath(os.path.expanduser(parent))
+  return os.path.realpath(os.path.expanduser(parent))
 
 
 # `omp --profile=<name>` (and pi's equivalent) relocates the whole agent tree
@@ -249,7 +249,17 @@ def pi_session_roots():
     except OSError:
       # No profiles directory, or it is unreadable: the default root stands.
       pass
-  return roots
+  # pi moves its whole agent tree with PI_CODING_AGENT_DIR and its sessions
+  # alone with PI_CODING_AGENT_SESSION_DIR, both expanding a leading ~.
+  if os.environ.get("PI_CODING_AGENT_DIR"):
+    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"]).expanduser() / "sessions")
+  if os.environ.get("PI_CODING_AGENT_SESSION_DIR"):
+    roots.append(Path(os.environ["PI_CODING_AGENT_SESSION_DIR"]).expanduser())
+  # Canonical roots, so an override that aliases a default root through a
+  # symlink is scanned under one spelling. A root inside another is already
+  # read with it, so it is dropped rather than counted twice.
+  canonical = list(dict.fromkeys(root.resolve() for root in roots))
+  return [root for root in canonical if not any(other != root and root.is_relative_to(other) for other in canonical)]
 
 
 def scan_pi_sessions():
@@ -284,7 +294,7 @@ def scan_pi_sessions():
           continue
         line = event.get("data", {}).get("lines", {}).get("text", "")
         raw_path = event.get("data", {}).get("path", {}).get("text", "pi-session")
-        path = os.path.abspath(os.path.expanduser(raw_path))
+        path = os.path.realpath(os.path.expanduser(raw_path))
         entry = json.loads(line)
       except Exception:
         continue
@@ -546,8 +556,10 @@ def scan_cache_digest():
   codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
   db = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode" / "opencode.db"
   # The digest covers every data path the scan reads: the codex session
-  # roots, the opencode DB, and (via Path.home()) the pi/omp session roots.
-  return hashlib.sha1((str(Path.home()) + "\n" + str(codex_home) + "\n" + str(db)).encode("utf-8")).hexdigest()[:16]
+  # roots, the opencode DB, and the pi/omp session roots (under Path.home(),
+  # or wherever pi's own overrides moved them).
+  pi_roots = "\n".join(os.environ.get(name, "") for name in ("PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR"))
+  return hashlib.sha1((str(Path.home()) + "\n" + str(codex_home) + "\n" + str(db) + "\n" + pi_roots).encode("utf-8", "surrogatepass")).hexdigest()[:16]
 
 
 def scan_cache_paths():
