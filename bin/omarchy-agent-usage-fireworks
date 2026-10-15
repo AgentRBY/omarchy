@@ -9,16 +9,23 @@ the last 30 days. Fireworks does not expose its prepaid ledger, so the record
 carries an estimated balance instead of rate limits: the credits configured in
 ~/.config/omarchy/agents/fireworks.json minus rated account costs since the
 funding date. The agents panel only ever reads the JSON this prints.
+
+Each API key keeps its account's last good usage rows and balance under the
+agent-usage cache, so a failed check shows them stale rather than blank.
 """
 
 from __future__ import annotations
 
 import argparse
 import configparser
+import hashlib
 import json
+import math
 import os
 import re
 import sys
+import tempfile
+import time as time_module
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -32,16 +39,44 @@ AGENT_NAME = "Fireworks"
 AUTH_HELP = "Set FIREWORKS_API_KEY, run `firectl set-api-key`, or sign in to Fireworks in pi or opencode."
 API_BASE_URL = "https://api.fireworks.ai"
 
+# The usage rows are reused like a local scan: briefly to dedup concurrent
+# runs, and for 15 minutes on the panel's near-limit refresh. The balance is
+# re-checked at most this often unless --force.
+SCAN_REUSE_SECONDS = 20
+LIMITS_ONLY_REUSE_SECONDS = 900
+PROBE_MIN_INTERVAL_SECONDS = 15
+
+# Token counts beyond this are a corrupt row, not usage.
+MAX_TOKENS = 10**12
+
 
 class FireworksError(Exception):
   pass
 
 
+# No server answered at all (DNS, connection, timeout): the one failure worth
+# a sooner retry.
+class FireworksTransportError(FireworksError):
+  pass
+
+
+# The key itself was refused, so only a new one helps.
+class FireworksAuthError(FireworksError):
+  pass
+
+
+# Counts from the API are untrusted: a boolean, a negative, a non-finite or
+# an absurdly large value counts as nothing.
 def number(value: Any) -> int:
-  try:
-    return max(0, round(float(value or 0)))
-  except (TypeError, ValueError):
+  if isinstance(value, bool):
     return 0
+  try:
+    parsed = float(value or 0)
+  except (TypeError, ValueError, OverflowError):
+    return 0
+  if not math.isfinite(parsed) or parsed <= 0 or parsed > MAX_TOKENS:
+    return 0
+  return round(parsed)
 
 
 def money_value(value: Any) -> Decimal:
@@ -50,9 +85,11 @@ def money_value(value: Any) -> Decimal:
   try:
     units = Decimal(str(value.get("units", 0) or 0))
     nanos = Decimal(str(value.get("nanos", 0) or 0)) / Decimal("1000000000")
-    return units + nanos
+    total = units + nanos
   except (InvalidOperation, TypeError, ValueError):
     return Decimal("0")
+  # A non-finite amount would print as invalid JSON.
+  return total if total.is_finite() else Decimal("0")
 
 
 def model_id(row: dict[str, Any]) -> str:
@@ -73,7 +110,10 @@ def row_date(row: dict[str, Any]) -> str:
   try:
     parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
   except ValueError:
-    return raw[:10] if len(raw) >= 10 else ""
+    try:
+      return date.fromisoformat(raw[:10]).isoformat()
+    except ValueError:
+      return ""
   if parsed.tzinfo is None:
     parsed = parsed.replace(tzinfo=timezone.utc)
   return parsed.astimezone().date().isoformat()
@@ -121,6 +161,8 @@ def base_record(**overrides: Any) -> dict[str, Any]:
     "usageStatusText": "",
     "authHelpText": "",
     "limits": [],
+    "limitsStale": False,
+    "limitsFetchedAt": 0,
   }
   record.update(empty_stats())
   record.update(overrides)
@@ -362,15 +404,19 @@ class FireworksClient:
         return decoded if isinstance(decoded, dict) else {}
     except urllib.error.HTTPError as error:
       if error.code == 401:
-        raise FireworksError("Fireworks rejected the API key")
+        raise FireworksAuthError("Fireworks rejected the API key")
       if error.code == 403:
         raise FireworksError("The Fireworks API key cannot read billing data")
       if error.code == 404:
         raise FireworksError("Fireworks account not found")
       raise FireworksError(f"Fireworks API returned HTTP {error.code}")
     except urllib.error.URLError as error:
-      raise FireworksError("Could not reach the Fireworks API") from error
-    except (json.JSONDecodeError, TimeoutError) as error:
+      raise FireworksTransportError("Could not reach the Fireworks API") from error
+    # A server that stalls on its headers or body times out the read itself,
+    # outside URLError; that is a network failure like any other.
+    except (TimeoutError, ConnectionError) as error:
+      raise FireworksTransportError("Could not reach the Fireworks API") from error
+    except (json.JSONDecodeError, ValueError) as error:
       raise FireworksError("Fireworks returned an invalid billing response") from error
 
   def discover_account(self) -> tuple[str, dict[str, Any]]:
@@ -443,6 +489,10 @@ def live_balance(client: FireworksClient, account_id: str) -> Decimal | None:
   quoted = urllib.parse.quote(normalize_account_id(account_id), safe="")
   try:
     payload = client.request(f"/v1/accounts/{quoted}:getBalance")
+  except (FireworksTransportError, FireworksAuthError):
+    # Not the permission gate: the balance can't be checked at all, which a
+    # missing estimate must not paper over as "no balance".
+    raise
   except FireworksError:
     return None
   candidates = [payload] + [payload.get(field) for field in ("balance", "creditBalance", "prepaidBalance", "amount")]
@@ -486,67 +536,215 @@ def estimated_balance(
   }
 
 
-def scan(api_base_url: str, auth_path: Path) -> dict[str, Any]:
+def current_balance(
+  client: FireworksClient,
+  account_id: str,
+  account: dict[str, Any],
+  config: dict[str, Any],
+) -> dict[str, Any] | None:
+  live = live_balance(client, account_id)
+  if live is None:
+    return estimated_balance(client, account_id, account, config)
+  try:
+    funded = Decimal(str(config.get("fundedAmount") or "0"))
+    if not funded.is_finite() or funded < 0:
+      funded = Decimal("0")
+  except InvalidOperation:
+    funded = Decimal("0")
+  return {
+    "remaining": float(live),
+    "funded": float(funded),
+    "spent": float(max(Decimal("0"), funded - live)),
+    "currency": "USD",
+    "estimated": False,
+  }
+
+
+# ---------------------------------------------------------------- caches
+
+
+def cache_root() -> Path:
+  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
+  root.mkdir(parents=True, exist_ok=True)
+  return root
+
+
+def credential_digest(secret: str) -> str:
+  return hashlib.sha256(secret.encode("utf-8")).hexdigest()[:16]
+
+
+def read_json(path: Path) -> dict[str, Any] | None:
+  try:
+    parsed = json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    return None
+  return parsed if isinstance(parsed, dict) else None
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+  # A temp name unique to this writer: several collector runs can overlap.
+  handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+  tmp = Path(tmp_name)
+  try:
+    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    tmp.chmod(0o644)
+    tmp.replace(path)
+  except BaseException:
+    tmp.unlink(missing_ok=True)
+    raise
+
+
+def epoch_ms(value: Any) -> int:
+  if isinstance(value, bool):
+    return 0
+  try:
+    parsed = float(value or 0)
+  except (TypeError, ValueError):
+    return 0
+  return int(parsed) if math.isfinite(parsed) and parsed > 0 else 0
+
+
+# The last good answer of one kind (the account's usage rows, or its balance)
+# for this API key and account, whatever its file time: a clock that went
+# back doesn't lose it. An answer for another account never stands in.
+def cached_part(path: Path, account_id: str) -> dict[str, Any] | None:
+  cached = read_json(path)
+  if not cached or not epoch_ms(cached.get("fetchedAtMs")):
+    return None
+  if account_id and normalize_account_id(str(cached.get("accountId") or "")) != account_id:
+    return None
+  return dict(cached, fetchedAtMs=epoch_ms(cached.get("fetchedAtMs")))
+
+
+def recent(part: dict[str, Any] | None, max_age: float) -> bool:
+  if part is None:
+    return False
+  age = time_module.time() - part["fetchedAtMs"] / 1000
+  return 0 <= age < max_age
+
+
+# Refreshes can overlap (the panel's own and a sooner retry), so an answer
+# only replaces one fetched before it.
+def remember(path: Path, part: dict[str, Any]) -> None:
+  try:
+    current = read_json(path) or {}
+    if epoch_ms(current.get("fetchedAtMs")) <= part["fetchedAtMs"]:
+      write_json(path, part)
+  except OSError as exc:
+    print(f"omarchy-agent-usage-fireworks: could not write {path.name} ({exc})", file=sys.stderr)
+
+
+def now_ms() -> int:
+  # Floored, never rounded: a stamp half a millisecond ahead reads as a clock
+  # that went back and fails the 0 <= age guard on the very next run.
+  return int(time_module.time() * 1000)
+
+
+# ---------------------------------------------------------------- record
+
+
+def scan(api_base_url: str, auth_path: Path, force: bool = False, limits_only: bool = False) -> dict[str, Any]:
   config = read_config()
   api_key, account_id = credentials(auth_path, config)
+  # No key anywhere: Fireworks isn't used here, and the panel skips it.
   if not api_key:
-    return base_record(usageStatusText="Fireworks unavailable", authHelpText=AUTH_HELP)
+    return base_record(tierLabel="")
 
-  client = FireworksClient(api_key, api_base_url)
-  account: dict[str, Any] = {}
-  if account_id:
-    account_id = normalize_account_id(account_id)
-  else:
-    account_id, account = client.discover_account()
+  account_id = normalize_account_id(account_id) if account_id else ""
+  digest = credential_digest(api_key)
+  usage_cache = cache_root() / f"fireworks-usage-{digest}.json"
+  balance_cache = cache_root() / f"fireworks-limits-{digest}.json"
+  usage_part = cached_part(usage_cache, account_id)
+  balance_part = cached_part(balance_cache, account_id)
 
+  # The usage rows are this record's stats, so they are reused like a local
+  # scan: briefly on a normal run, for 15 minutes on the panel's near-limit
+  # refresh. That refresh is about the balance, which comes from separate
+  # calls, so it is probed like a normal run. --force reuses nothing.
+  usage_age = 0 if force else (LIMITS_ONLY_REUSE_SECONDS if limits_only else SCAN_REUSE_SECONDS)
+  balance_age = 0 if force else PROBE_MIN_INTERVAL_SECONDS
+  usage_fresh = recent(usage_part, usage_age)
+  balance_fresh = recent(balance_part, balance_age)
+
+  errors: list[FireworksError] = []
+  failed: set[str] = set()
   today = datetime.now().astimezone().date()
-  usage = client.usage(account_id, today - timedelta(days=29), today + timedelta(days=1))
-  record = base_record(ready=True, hasLocalStats=True)
-  record.update(summarize_usage(usage, today))
-
-  live = live_balance(client, account_id)
-  if live is not None:
+  if not (usage_fresh and balance_fresh):
+    client = FireworksClient(api_key, api_base_url)
+    account: dict[str, Any] = {}
     try:
-      funded = Decimal(str(config.get("fundedAmount") or "0"))
-      if not funded.is_finite() or funded < 0:
-        funded = Decimal("0")
-    except InvalidOperation:
-      funded = Decimal("0")
-    record["balance"] = {
-      "remaining": float(live),
-      "funded": float(funded),
-      "spent": float(max(Decimal("0"), funded - live)),
-      "currency": "USD",
-      "estimated": False,
-    }
-    return record
+      if not account_id:
+        account_id, account = client.discover_account()
+        # A key that now reaches another account starts over.
+        if usage_part and normalize_account_id(str(usage_part.get("accountId") or "")) != account_id:
+          usage_part, usage_fresh = None, False
+        if balance_part and normalize_account_id(str(balance_part.get("accountId") or "")) != account_id:
+          balance_part, balance_fresh = None, False
+    except FireworksError as error:
+      errors.append(error)
+      failed.update(name for name, fresh in (("usage", usage_fresh), ("balance", balance_fresh)) if not fresh)
+    else:
+      if not usage_fresh:
+        try:
+          usage = client.usage(account_id, today - timedelta(days=29), today + timedelta(days=1))
+          usage_part = {"accountId": account_id, "fetchedAtMs": now_ms(), "serverlessCosts": usage.get("serverlessCosts") or []}
+          remember(usage_cache, usage_part)
+        except FireworksError as error:
+          errors.append(error)
+          failed.add("usage")
+      if not balance_fresh:
+        try:
+          balance_part = {"accountId": account_id, "fetchedAtMs": now_ms(), "balance": current_balance(client, account_id, account, config)}
+          remember(balance_cache, balance_part)
+        except FireworksError as error:
+          errors.append(error)
+          failed.add("balance")
 
-  try:
-    balance = estimated_balance(client, account_id, account, config)
-    if balance:
-      record["balance"] = balance
-  except FireworksError as error:
+  record = base_record(ready=True)
+  # Kept rows are summarized against today, so a day-old answer still files
+  # its tokens under the right days.
+  if usage_part is not None:
+    rows = usage_part.get("serverlessCosts")
+    record.update(summarize_usage({"serverlessCosts": rows if isinstance(rows, list) else []}, today))
+    record["hasLocalStats"] = True
+  if balance_part is not None and isinstance(balance_part.get("balance"), dict):
+    record["balance"] = balance_part["balance"]
+  kept = [part for part in (usage_part, balance_part) if part is not None]
+  if kept:
+    record["limitsFetchedAt"] = min(part["fetchedAtMs"] for part in kept)
+  # Anything that didn't come back fresh marks the record stale, kept or not;
+  # the panel shows the kept numbers' age on hover.
+  record["limitsStale"] = bool(failed)
+  if any(isinstance(error, FireworksTransportError) for error in errors):
+    # Usually the seconds after login before the network is up; the panel
+    # tries once more soon instead of waiting out its refresh interval.
+    record["retryAdvised"] = True
+
+  if any(isinstance(error, FireworksAuthError) for error in errors):
+    record["usageStatusText"] = "Sign-in expired"
+    record["authHelpText"] = "Fireworks rejected the API key. " + AUTH_HELP
+  elif "usage" in failed and usage_part is None:
+    record["usageStatusText"] = "Fireworks unavailable"
+    record["authHelpText"] = str(errors[0])
+  elif "balance" in failed and balance_part is None:
     record["usageStatusText"] = "Balance unavailable"
-    record["authHelpText"] = str(error)
-
+    record["authHelpText"] = str(errors[0])
+  elif errors:
+    record["authHelpText"] = str(errors[0])
   return record
 
 
 def main() -> int:
   parser = argparse.ArgumentParser(description="Print the Fireworks usage record as JSON")
-  # Stats and balance come from the same few API calls, so there is no cache
-  # to force past and no faster limits-only path. The flags exist so every
-  # collector accepts the same invocation.
-  parser.add_argument("--force", action="store_true")
-  parser.add_argument("--limits-only", action="store_true")
+  parser.add_argument("--force", action="store_true", help="re-fetch usage and balance, ignoring caches")
+  parser.add_argument("--limits-only", action="store_true", help="reuse any recent usage answer; only the balance must be fresh")
   parser.add_argument("--auth-path", default=os.environ.get("FIREWORKS_AUTH_PATH", "~/.fireworks/auth.ini"))
   parser.add_argument("--api-base-url", default=os.environ.get("FIREWORKS_API_BASE_URL", API_BASE_URL))
   args = parser.parse_args()
 
   try:
-    record = scan(args.api_base_url, Path(args.auth_path).expanduser())
-  except FireworksError as error:
-    record = base_record(usageStatusText="Fireworks unavailable", authHelpText=str(error))
+    record = scan(args.api_base_url, Path(args.auth_path).expanduser(), args.force, args.limits_only)
   except Exception as error:
     record = base_record(usageStatusText="Fireworks unavailable", authHelpText="Fireworks usage scan failed")
     print(f"omarchy-agent-usage-fireworks: {type(error).__name__}", file=sys.stderr)
