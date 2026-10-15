@@ -213,6 +213,25 @@ result=$(HOME="$CUSTOM_PI_HOME" CODEX_HOME="$CUSTOM_PI_HOME/.codex" XDG_CACHE_HO
   fail "Codex collector counts a default root reached through a symlinked override once" "$result"
 pass "Codex collector follows pi's agent and session directory overrides"
 
+# A line without an id always counts, even beside an identical one, and a
+# session override nested inside a default root reads it only once.
+IDLESS_PI_HOME=$(signed_in_home)
+cp "$TEST_HOME/bin/codex" "$IDLESS_PI_HOME/bin/codex"
+mkdir -p "$IDLESS_PI_HOME/.pi/agent/sessions/project"
+cat >"$IDLESS_PI_HOME/.pi/agent/sessions/project/idless.jsonl" <<EOF
+{"type":"message","timestamp":"$timestamp","message":{"role":"assistant","provider":"openai-codex","model":"gpt-idless","usage":{"input":4,"output":1}}}
+{"type":"message","timestamp":"$timestamp","message":{"role":"assistant","provider":"openai-codex","model":"gpt-idless","usage":{"input":4,"output":1}}}
+EOF
+
+result=$(HOME="$IDLESS_PI_HOME" CODEX_HOME="$IDLESS_PI_HOME/.codex" XDG_CACHE_HOME="$IDLESS_PI_HOME/.cache" \
+  XDG_DATA_HOME="$IDLESS_PI_HOME/.local/share" XDG_STATE_HOME="$IDLESS_PI_HOME/.local/state" \
+  PI_CODING_AGENT_SESSION_DIR="$IDLESS_PI_HOME/.pi/agent/sessions/project" \
+  PATH="$IDLESS_PI_HOME/bin:$PATH" "$ROOT/bin/omarchy-agent-usage-codex" --force)
+
+[[ $(jq -c '[.todayTotalTokens,.todayPrompts,.totalSessions]' <<<"$result") == "[10,2,1]" ]] ||
+  fail "Codex collector counts every pi line without an id, once per line" "$result"
+pass "Codex collector counts every pi line without an id, once per line"
+
 # A subscription burned entirely through opencode has no native session files;
 # usage must come from opencode's message database, filtered to OpenAI.
 OPENCODE_HOME=$(signed_in_home)

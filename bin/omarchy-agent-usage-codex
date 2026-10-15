@@ -295,19 +295,24 @@ def scan_pi_sessions():
         line = event.get("data", {}).get("lines", {}).get("text", "")
         raw_path = event.get("data", {}).get("path", {}).get("text", "pi-session")
         path = os.path.realpath(os.path.expanduser(raw_path))
+        line_number = event.get("data", {}).get("line_number")
         entry = json.loads(line)
       except Exception:
         continue
 
-      if entry.get("type") != "message":
+      if not isinstance(entry, dict) or entry.get("type") != "message":
         continue
       message_id = str(entry.get("id") or "")
       message_timestamp = str(entry.get("timestamp") or "")
-      # Forks retain both fields; IDs alone can collide across sessions.
+      # Forks retain both fields; IDs alone can collide across sessions. A
+      # line without an id has nothing to tie it to a copy elsewhere, so it
+      # always counts, keyed by where it sits.
       if message_id and message_timestamp:
         message_key = ("entry", message_id, message_timestamp)
-      else:
+      elif message_id:
         message_key = ("path", path, message_id)
+      else:
+        message_key = ("line", path, line_number)
       duplicate = message_key in seen_pi_messages
       seen_pi_messages.add(message_key)
       message = entry.get("message") or {}
