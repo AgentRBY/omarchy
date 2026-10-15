@@ -2075,7 +2075,7 @@ if command -v xdg-user-dirs-update >/dev/null 2>&1; then
   xdg-user-dirs-update --set DESKTOP "$HOME" || true
   for dir in DOWNLOAD:Downloads PICTURES:Pictures VIDEOS:Videos DOCUMENTS:Documents MUSIC:Music; do
     grep -q "^XDG_${dir%%:*}_DIR=" "${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs" 2>/dev/null ||
-      xdg-user-dirs-update --set "${dir%%:*}" "$HOME/${dir#*:}" || true
+      { mkdir -p "$HOME/${dir#*:}" && xdg-user-dirs-update --set "${dir%%:*}" "$HOME/${dir#*:}"; } || true
   done
 fi
 rmdir "$HOME/Templates" "$HOME/Public" "$HOME/Desktop" 2>/dev/null || true
