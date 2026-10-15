@@ -1293,6 +1293,19 @@ def main() -> int:
     access_token, expires_at_ms, refresh_expires_at_ms, plan = oauth_login(claude_dir)
     limits = collect_limits(access_token, expires_at_ms, refresh_expires_at_ms, args.force)
     stale, fetched_at = not limits["live"], limits["fetchedAtMs"]
+    # Asking for a sign-in only makes sense where Claude Code is in use: its
+    # config home or profile exists, or there is local usage. A machine that
+    # never ran it prints the unused record, which the panel skips.
+    in_use = (
+      claude_dir.exists()
+      or profile_path(claude_dir).exists()
+      or number(stats.get("totalPrompts")) > 0
+      or number(stats.get("todayPrompts")) > 0
+      or len(limits["limits"]) > 0
+    )
+    if not in_use:
+      limits = {"limits": [], "usageStatusText": "", "authHelpText": ""}
+      stale, fetched_at = False, 0
 
   record = {
     "schemaVersion": 1,

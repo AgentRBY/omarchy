@@ -521,3 +521,20 @@ PY
 grep -q '^Ignoring 5 unreadable Claude project files' <<<"$warning" ||
   fail "Claude collector reports the unreadable transcript count" "$warning"
 pass "Claude collector bounds unreadable transcript warnings"
+
+# A machine that never ran Claude Code prints the unused record: no status,
+# no sign-in to ask for.
+EMPTY_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
+result=$(HOME="$EMPTY_HOME" XDG_CACHE_HOME="$EMPTY_HOME/.cache" XDG_DATA_HOME="$EMPTY_HOME/.local/share" CLAUDE_CONFIG_DIR= \
+  "$ROOT/bin/omarchy-agent-usage-claude" --force)
+[[ $(jq -c '{ready, limits, limitsStale, status: .usageStatusText, help: .authHelpText, totalPrompts, days: (.recentDays | length)}' <<<"$result") == '{"ready":false,"limits":[],"limitsStale":false,"status":"","help":"","totalPrompts":0,"days":7}' ]] ||
+  fail "Claude collector prints the unused record on a machine without Claude Code" "$result"
+pass "Claude collector prints the unused record on a machine without Claude Code"
+
+# A Claude Code home without a sign-in is in use, and the sign-in is missing.
+mkdir -p "$EMPTY_HOME/.claude"
+result=$(HOME="$EMPTY_HOME" XDG_CACHE_HOME="$EMPTY_HOME/.cache" XDG_DATA_HOME="$EMPTY_HOME/.local/share" CLAUDE_CONFIG_DIR= \
+  "$ROOT/bin/omarchy-agent-usage-claude" --force)
+[[ $(jq -r '.usageStatusText' <<<"$result") == "Waiting for auth" ]] ||
+  fail "Claude collector asks a signed-out Claude Code home to sign in" "$result"
+pass "Claude collector asks a signed-out Claude Code home to sign in"
