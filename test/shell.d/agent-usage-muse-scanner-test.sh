@@ -477,3 +477,15 @@ result_pi=$(HOME="$pi_home" PI_CODING_AGENT_DIR="$pi_home/moved" XDG_DATA_HOME="
 [[ $(jq -c '[.todayTotalTokens, .totalPrompts, .modelUsage["muse-spark"].outputTokens, .ready]' <<<"$result_pi") == '[11116,5,5,true]' ]] ||
   fail "Muse collector scans every pi/omp root past ignore rules, dedups forks, keeps Zen usage out, skips garbage rows" "$result_pi"
 pass "Muse collector counts meta pi/omp sessions in every root, once each"
+
+# PI_CODING_AGENT_DIR spelling pi's default tree another way, through a
+# symlink, is the same root: a line without an id in it counts once.
+alias_home="$TEST_HOME/alias-home"
+mkdir -p "$alias_home/.pi/agent/sessions/p"
+ln -s "$alias_home/.pi/agent" "$alias_home/linked"
+pi_line '' "\"$pi_stamp\"" 7 0 >"$alias_home/.pi/agent/sessions/p/a.jsonl"
+result_alias=$(HOME="$alias_home" PI_CODING_AGENT_DIR="$alias_home/linked" XDG_DATA_HOME="$alias_home/data" XDG_CACHE_HOME="$alias_home/cache" \
+  XDG_CONFIG_HOME="$alias_home/config" MUSE_DATA_DIR="$alias_home/muse-data" "$ROOT/bin/omarchy-agent-usage-muse" --force)
+[[ $(jq -c '[.totalPrompts, .todayTotalTokens]' <<<"$result_alias") == '[1,7]' ]] ||
+  fail "Muse collector reads a PI_CODING_AGENT_DIR that aliases the default tree once" "$result_alias"
+pass "Muse collector reads a PI_CODING_AGENT_DIR that aliases the default tree once"
