@@ -20,6 +20,12 @@ TEST_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
 # pi's directory overrides would point every scan at the developer's own sessions.
 unset PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR
 
+# A scan cache's age is the scannedAtMs stamp inside it, not its file time:
+# restamp it the given number of seconds from now (negative is the past).
+age_scan_cache() {
+  jq -c --argjson at "$(( ($(date +%s) + $2) * 1000 ))" '.scannedAtMs = $at' "$1" >"$1.tmp" && mv "$1.tmp" "$1"
+}
+
 # A fixture home signed in to Codex, with an empty bin/ for its CLI.
 signed_in_home() {
   local home
@@ -499,7 +505,7 @@ conn.execute("INSERT INTO message VALUES (?, ?, ?, ?, ?)", (
 conn.commit()
 conn.close()
 PY
-touch -d "2 hours ago" "$cache_file"
+age_scan_cache "$cache_file" -7200
 result=$(HOME="$CACHE_HOME" CODEX_HOME="$CACHE_HOME/.codex" XDG_CACHE_HOME="$CACHE_HOME/.cache" XDG_DATA_HOME="$CACHE_HOME/.local/share" \
   PATH="$CACHE_HOME/bin:$PATH" "$collector" --limits-only)
 
@@ -542,7 +548,7 @@ result=$(HOME="$CACHE_HOME" CODEX_HOME="$CACHE_HOME/.codex" XDG_CACHE_HOME="$CAC
 
 # 30 seconds is the lowest refreshIntervalSec the widget supports, so a
 # cache that old must already be past the no-flag reuse window.
-touch -d "30 seconds ago" "$cache_file"
+age_scan_cache "$cache_file" -30
 result=$(HOME="$CACHE_HOME" CODEX_HOME="$CACHE_HOME/.codex" XDG_CACHE_HOME="$CACHE_HOME/.cache" XDG_DATA_HOME="$CACHE_HOME/.local/share" \
   PATH="$CACHE_HOME/bin:$PATH" "$collector")
 
@@ -574,7 +580,7 @@ conn.execute("INSERT INTO message VALUES (?, ?, ?, ?, ?)", (
 conn.commit()
 conn.close()
 PY
-touch -d "10 minutes ago" "$cache_file"
+age_scan_cache "$cache_file" -600
 result=$(HOME="$CACHE_HOME" CODEX_HOME="$CACHE_HOME/.codex" XDG_CACHE_HOME="$CACHE_HOME/.cache" XDG_DATA_HOME="$CACHE_HOME/.local/share" \
   PATH="$CACHE_HOME/bin:$PATH" "$collector" --limits-only)
 
@@ -620,7 +626,7 @@ conn.execute("INSERT INTO message VALUES (?, ?, ?, ?, ?)", (
 conn.commit()
 conn.close()
 PY
-touch -d "@$(( $(date +%s) + 3600 ))" "$cache_file"
+age_scan_cache "$cache_file" 3600
 result=$(HOME="$CACHE_HOME" CODEX_HOME="$CACHE_HOME/.codex" XDG_CACHE_HOME="$CACHE_HOME/.cache" XDG_DATA_HOME="$CACHE_HOME/.local/share" \
   PATH="$CACHE_HOME/bin:$PATH" "$collector" --limits-only)
 
@@ -1296,7 +1302,7 @@ run_incremental() {
 expire_scan_cache() {
   local cache
   for cache in "$INCREMENTAL_HOME/.cache/omarchy/agent-usage/"codex-scan-*.json; do
-    [[ -e $cache ]] && touch -d "2 hours ago" "$cache"
+    [[ -e $cache ]] && age_scan_cache "$cache" -7200
   done
 }
 
