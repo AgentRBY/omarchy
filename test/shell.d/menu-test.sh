@@ -258,6 +258,7 @@ const expectedAgents = {
   mcode: { icon: '\ue911', iconFont: 'omarchy', label: 'MiniMax Code' },
   goose: { icon: '\ue912', iconFont: 'omarchy', label: 'Goose' },
   'kiro-cli': { icon: '\ue913', iconFont: 'omarchy', label: 'Kiro CLI' },
+  vibe: { icon: '\ue914', iconFont: 'omarchy', label: 'Mistral Vibe' },
   hermes: { icon: '\ue90a', iconFont: 'omarchy', label: 'Hermes' },
   openclaw: { icon: '\ue90c', iconFont: 'omarchy', label: 'OpenClaw' },
   copilot: { icon: '', label: 'Copilot' },
@@ -283,7 +284,7 @@ assertDeepEqual(
   defaultItems
     .filter(item => item.parent === 'setup.default.agent')
     .map(item => item.label),
-  ['Antigravity', 'Claude', 'Codex', 'Copilot', 'Crush', 'Cursor CLI', 'DeepSeek Harness', 'Goose', 'Grok', 'Hermes', 'Kimi', 'Kiro CLI', 'MiniMax Code', 'Muse Code', 'omp', 'OpenClaw', 'OpenCode', 'Ori', 'Pi', 'Qwen Code'],
+  ['Antigravity', 'Claude', 'Codex', 'Copilot', 'Crush', 'Cursor CLI', 'DeepSeek Harness', 'Goose', 'Grok', 'Hermes', 'Kimi', 'Kiro CLI', 'MiniMax Code', 'Mistral Vibe', 'Muse Code', 'omp', 'OpenClaw', 'OpenCode', 'Ori', 'Pi', 'Qwen Code'],
   'menu sorts coding agents alphabetically'
 )
 const expectedDefaults = {
@@ -880,5 +881,5 @@ assert(
 JS
 
 font_charset=$(fc-query --format='%{charset}' "$ROOT/default/fonts/omarchy/omarchy.ttf")
-[[ $font_charset == *"e900-e913"* ]] || fail "Omarchy icon font includes every custom menu glyph"
+[[ $font_charset == *"e900-e914"* ]] || fail "Omarchy icon font includes every custom menu glyph"
 pass "Omarchy icon font includes the official agent marks"

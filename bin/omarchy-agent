@@ -174,6 +174,11 @@ kiro-cli)
   command=(kiro-cli chat --trust-all-tools)
   [[ -n ${prompt:-} ]] && command+=(-- "$prompt")
   ;;
+vibe)
+  # A positional prompt seeds the interactive session; -p would run it headless.
+  command=(vibe --auto-approve)
+  [[ -n ${prompt:-} ]] && command+=(-- "$prompt")
+  ;;
 *)
   echo "Unsupported default agent: $agent" >&2
   exit 1

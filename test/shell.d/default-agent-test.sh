@@ -137,6 +137,7 @@ dsh_package="npm:@deepseek-ai/dsh@0.2.0-rc.2"
 mcode_package="npm:@minimax-ai/code[allow_builds=better-sqlite3]"
 goose_package="aqua:aaif-goose/goose"
 kiro_cli_package="http:kiro-cli[platforms_linux_x64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-x86_64-linux.tar.gz,platforms_linux_arm64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-aarch64-linux.tar.gz,version_list_url=https://prod.download.cli.kiro.dev/stable/latest/manifest.json,version_json_path=.version]"
+vibe_package="github:mistralai/mistral-vibe[matching=vibe-linux]"
 cursor_agent_package="cursor-agent"
 muse_package="http:muse[url=https://api.meta.ai/muse-launcher.sh,bin=muse,version_list_url=https://api.meta.ai/muse-code/channels/muse-stable,version_json_path=.version]"
 
@@ -163,6 +164,7 @@ assert_lazy_stub "$dsh_package" dsh
 assert_lazy_stub "$mcode_package" mcode
 assert_lazy_stub "$goose_package" goose
 assert_lazy_stub "$kiro_cli_package" kiro-cli
+assert_lazy_stub "$vibe_package" vibe
 assert_lazy_stub "$cursor_agent_package" cursor-agent
 assert_lazy_stub "$muse_package" muse
 pass "custom agent lazy stubs preserve their mise packages"
@@ -181,6 +183,7 @@ grep -Fx "$dsh_package dsh" "$stub_log" >/dev/null || fail "user setup creates t
 grep -Fx "$mcode_package mcode" "$stub_log" >/dev/null || fail "user setup creates the MiniMax Code lazy stub"
 grep -Fx "$goose_package goose" "$stub_log" >/dev/null || fail "user setup creates the Goose lazy stub"
 grep -Fx "$kiro_cli_package kiro-cli" "$stub_log" >/dev/null || fail "user setup creates the Kiro CLI lazy stub"
+grep -Fx "$vibe_package vibe" "$stub_log" >/dev/null || fail "user setup creates the Mistral Vibe lazy stub"
 pass "user setup creates the custom agent lazy stubs"
 
 : >"$stub_log"
@@ -193,6 +196,7 @@ grep -Fx "$dsh_package dsh" "$stub_log" >/dev/null || fail "user setup recreates
 grep -Fx "$mcode_package mcode" "$stub_log" >/dev/null || fail "user setup recreates the MiniMax Code lazy stub"
 grep -Fx "$goose_package goose" "$stub_log" >/dev/null || fail "user setup recreates the Goose lazy stub"
 grep -Fx "$kiro_cli_package kiro-cli" "$stub_log" >/dev/null || fail "user setup recreates the Kiro CLI lazy stub"
+grep -Fx "$vibe_package vibe" "$stub_log" >/dev/null || fail "user setup recreates the Mistral Vibe lazy stub"
 pass "user setup recreates wrappers even when the commands are present"
 
 : >"$stub_log"
@@ -232,6 +236,10 @@ grep -Fx "$goose_package goose" "$stub_log" >/dev/null || fail "Goose migration 
 : >"$stub_log"
 OMARCHY_TEST_MISSING_COMMAND=kiro-cli source "$ROOT/migrations/1792033795.sh" >/dev/null
 grep -Fx "$kiro_cli_package kiro-cli" "$stub_log" >/dev/null || fail "Kiro CLI migration creates its lazy stub"
+
+: >"$stub_log"
+OMARCHY_TEST_MISSING_COMMAND=vibe source "$ROOT/migrations/1792033880.sh" >/dev/null
+grep -Fx "$vibe_package vibe" "$stub_log" >/dev/null || fail "Mistral Vibe migration creates its lazy stub"
 
 : >"$stub_log"
 source "$ROOT/migrations/1785617047.sh" >/dev/null
@@ -341,6 +349,7 @@ OMARCHY_TEST_MISSING_COMMAND=dsh source "$ROOT/migrations/1792033356.sh" >/dev/n
 OMARCHY_TEST_MISSING_COMMAND=mcode source "$ROOT/migrations/1792033557.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=goose source "$ROOT/migrations/1792033725.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=kiro-cli source "$ROOT/migrations/1792033795.sh" >/dev/null
+OMARCHY_TEST_MISSING_COMMAND=vibe source "$ROOT/migrations/1792033880.sh" >/dev/null
 [[ ! -s $stub_log ]] || fail "agent migrations respect the preinstall opt-out"
 [[ ! -e $test_home/.local/bin/omp ]] || fail "agent migration removes the obsolete Oh My Pi wrapper after opt-out"
 
@@ -479,9 +488,10 @@ pass "agent migrations install working wrappers without overriding the preinstal
 "$ROOT/bin/omarchy-mise-install" "$mcode_package" mcode
 "$ROOT/bin/omarchy-mise-install" "$goose_package" goose
 "$ROOT/bin/omarchy-mise-install" "$kiro_cli_package" kiro-cli
+"$ROOT/bin/omarchy-mise-install" "$vibe_package" vibe
 touch "$test_home/.local/bin/agy" "$test_home/.local/bin/ori"
 omarchy-remove-preinstalls >/dev/null
-for command in agy omp ori grok crush cursor-agent muse kimi qwen dsh mcode goose kiro-cli; do
+for command in agy omp ori grok crush cursor-agent muse kimi qwen dsh mcode goose kiro-cli vibe; do
   [[ ! -e $test_home/.local/bin/$command ]] || fail "Remove Preinstalls deletes the $command lazy stub"
 done
 pass "Remove Preinstalls deletes every optional agent lazy stub"
@@ -575,6 +585,9 @@ declare -A expected_agents=(
   [goose]="goose"
   [kiro-cli]="kiro-cli"
   [kiro]="kiro-cli"
+  [vibe]="vibe"
+  [mistral]="vibe"
+  [mistral-vibe]="vibe"
   [cursor]="cursor-agent"
   [cursor-agent]="cursor-agent"
   [muse]="muse"
@@ -599,6 +612,7 @@ declare -A expected_packages=(
   [mcode]="$mcode_package"
   [goose]="$goose_package"
   [kiro-cli]="$kiro_cli_package"
+  [vibe]="$vibe_package"
   [cursor-agent]="$cursor_agent_package"
   [muse]="$muse_package"
 )
@@ -880,6 +894,7 @@ assert_launched dsh "keeps an option-like prompt literal" env DSH_PERMISSION_MOD
 assert_launch mcode mcode -- "Review this project"
 assert_launch goose env GOOSE_MODE=auto goose run --interactive "--text=Review this project"
 assert_launch kiro-cli kiro-cli chat --trust-all-tools -- "Review this project"
+assert_launch vibe vibe --auto-approve -- "Review this project"
 pass "agent launcher adapts initial prompts for every supported agent"
 
 literal_muse_prompt=$'--disable-sandbox !Crash {$(touch must-not-run)}\ntrailing\\ '
@@ -914,6 +929,7 @@ assert_bypass dsh env DSH_PERMISSION_MODE=danger-full-access dsh web
 assert_bypass mcode mcode
 assert_bypass goose env GOOSE_MODE=auto goose
 assert_bypass kiro-cli kiro-cli chat --trust-all-tools
+assert_bypass vibe vibe --auto-approve
 pass "agent launcher skips permission prompts for every supported agent"
 
 printf '%s\n' "opencode" >"$agent_file"

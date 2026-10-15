@@ -20,6 +20,7 @@ omarchy-mise-install npm:@deepseek-ai/dsh@0.2.0-rc.2 dsh
 omarchy-mise-install "npm:@minimax-ai/code[allow_builds=better-sqlite3]" mcode
 omarchy-mise-install aqua:aaif-goose/goose goose
 omarchy-mise-install "http:kiro-cli[platforms_linux_x64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-x86_64-linux.tar.gz,platforms_linux_arm64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-aarch64-linux.tar.gz,version_list_url=https://prod.download.cli.kiro.dev/stable/latest/manifest.json,version_json_path=.version]" kiro-cli
+omarchy-mise-install "github:mistralai/mistral-vibe[matching=vibe-linux]" vibe
 omarchy-mise-install cursor-agent
 omarchy-mise-install npm:@kitlangton/ghui ghui
 omarchy-mise-install aqua:modem-dev/hunk hunk
