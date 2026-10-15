@@ -312,3 +312,20 @@ forced=$(HOME="$ROOTS_HOME" PI_CODING_AGENT_DIR="$ROOTS_HOME/moved" XDG_CONFIG_H
 [[ $(jq -r '.todayTotalTokens' <<<"$again") == "1112" && $(jq -r '.todayTotalTokens' <<<"$forced") == "1119" ]] ||
   fail "Ollama collector reuses a seconds-old scan on a normal run and rescans on --force" "$again $forced"
 pass "Ollama collector reuses a seconds-old scan and rescans on --force"
+
+# A cloud-tagged model reached through the local daemon's `ollama` provider is
+# billed by Ollama Cloud and counts here; a model the daemon runs itself is
+# the local collector's.
+TAGGED_HOME=$(mktemp -d)
+trap 'rm -rf "$TEST_HOME" "$PI_HOME" "$CACHE_HOME" "$ROOTS_HOME" "$TAGGED_HOME"' EXIT
+mkdir -p "$TAGGED_HOME/.pi/agent/sessions/project"
+cat >"$TAGGED_HOME/.pi/agent/sessions/project/pi.jsonl" <<EOF
+{"type":"message","id":"tag-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"ollama","model":"glm-4.6:cloud","usage":{"input":7,"output":3}}}
+{"type":"message","id":"tag-2","timestamp":"$timestamp","message":{"role":"assistant","provider":"ollama","model":"gpt-oss:120b-cloud","usage":{"input":4,"output":1}}}
+{"type":"message","id":"tag-3","timestamp":"$timestamp","message":{"role":"assistant","provider":"ollama","model":"qwen3:8b","usage":{"input":500,"output":500}}}
+EOF
+tagged=$(HOME="$TAGGED_HOME" XDG_CONFIG_HOME="$TAGGED_HOME/.config" XDG_CACHE_HOME="$TAGGED_HOME/.cache" \
+  OLLAMA_API_KEY="" "$ROOT/bin/omarchy-agent-usage-ollama" --force)
+[[ $(jq -r '.todayTotalTokens' <<<"$tagged") == "15" ]] ||
+  fail "Ollama collector counts cloud models reached through the local daemon" "$tagged"
+pass "Ollama collector counts cloud models reached through the local daemon"
