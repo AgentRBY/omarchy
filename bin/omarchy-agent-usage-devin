@@ -108,27 +108,6 @@ def model_name(raw):
   return str(raw or "").strip() or AGENT_ID
 
 
-class DevinStats(Stats):
-  """The shared totals, with prompts counted apart from tokens: the Devin
-  CLI records what a reply spent and what a person asked in separate rows."""
-
-  def add_tokens(self, session, day, model, input_tokens, output_tokens, cache_read, cache_write):
-    if input_tokens + output_tokens + cache_read + cache_write <= 0:
-      return
-    self.add(day, session, model, input_tokens, output_tokens, cache_read, cache_write)
-    # The reply is not a prompt; prompts arrive through add_prompt.
-    self.total_prompts -= 1
-    if day == self.today:
-      self.today_prompts -= 1
-
-  def add_prompt(self, session, day):
-    self.total_prompts += 1
-    self.sessions.add(session)
-    if day == self.today:
-      self.today_prompts += 1
-      self.today_sessions.add(session)
-
-
 # ------------------------------------------------------------- Devin CLI
 
 
@@ -169,11 +148,14 @@ def scan_message_nodes(conn, stats, prefix):
     day = stored_day(created_at)
     if not metrics or day is None:
       continue
-    # Prompts are counted from prompt_history, where each one is a row.
-    stats.add_tokens(
-      prefix + str(session_id), day, model_name(metadata.get("generation_model")),
+    # The Devin CLI records what a reply spent and what a person asked in
+    # separate rows: prompts are counted from prompt_history, where each one
+    # is a row.
+    stats.add(
+      day, prefix + str(session_id), model_name(metadata.get("generation_model")),
       token_count(metrics.get("input_tokens")), token_count(metrics.get("output_tokens")),
       token_count(metrics.get("cache_read_tokens")), token_count(metrics.get("cache_creation_tokens")),
+      prompts=0,
     )
 
 
@@ -181,7 +163,7 @@ def scan_prompt_history(conn, stats, prefix):
   for session_id, timestamp in conn.execute("SELECT session_id, timestamp FROM prompt_history"):
     day = stored_day(timestamp)
     if day is not None:
-      stats.add_prompt(prefix + str(session_id), day)
+      stats.add_prompts(day, prefix + str(session_id))
 
 
 def scan_session_totals(conn, stats, prefix, tables):
@@ -193,12 +175,12 @@ def scan_session_totals(conn, stats, prefix, tables):
   ):
     day = stored_day(last_activity_at) or stored_day(created_at)
     if day is not None:
-      stats.add_tokens(prefix + str(session_id), day, model_name(model), token_count(total_tokens), 0, 0, 0)
+      stats.add(day, prefix + str(session_id), model_name(model), token_count(total_tokens), 0, 0, 0, prompts=0)
   if "messages" in tables and {"role", "timestamp", "session_id"} <= table_columns(conn, "messages"):
     for session_id, role, timestamp in conn.execute("SELECT session_id, role, timestamp FROM messages WHERE role = 'assistant'"):
       day = stored_day(timestamp)
       if day is not None:
-        stats.add_prompt(prefix + str(session_id), day)
+        stats.add_prompts(day, prefix + str(session_id))
 
 
 def scan_devin_database(path, stats):
@@ -251,7 +233,7 @@ def scan_sources():
 
 
 def run_local_scans():
-  stats = DevinStats()
+  stats = Stats()
   pi_rows, complete = scan_pi_sessions(r'"provider"\s*:\s*"devin"', billed_here)
   for path in session_databases():
     complete = scan_devin_database(path, stats) and complete
