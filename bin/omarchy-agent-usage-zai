@@ -7,8 +7,8 @@
 Rate limits and the plan tier come from Z.ai's coding-plan monitor endpoint
 (…/api/monitor/usage/quota/limit), which reports the rolling 5-hour and weekly
 token windows. That endpoint only answers for keys that carry a Coding Plan; a
-generic pay-as-you-go key gets "no coding plan" and the record falls back to
-local stats alone, exactly like the claude collector without a signed-in CLI.
+generic pay-as-you-go key gets "no coding plan" and the record shows local
+stats alone, which is no trouble.
 
 Local stats come from pi/omp sessions that ran through the Z.ai provider (the
 `glm-*` models). Both the local scan and the network probe are cached: the
@@ -20,12 +20,15 @@ agents panel only ever reads the JSON this prints.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import fcntl
 import hashlib
 import json
+import math
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -40,7 +43,9 @@ AGENT_NAME = "Z.ai"
 AUTH_HELP_NO_KEY = (
   "Set ZAI_API_KEY (or add ~/.config/omarchy/agents/zai.json) to show Coding Plan limits."
 )
-AUTH_HELP_BAD_KEY = "Z.ai rejected the saved API key; check ~/.config/omarchy/agents/zai.json."
+AUTH_HELP_BAD_KEY = (
+  "Z.ai rejected the saved API key. Update it in ~/.config/omarchy/agents/zai.json or ZAI_API_KEY."
+)
 
 # Global (Z.ai) vs China (Zhipu / BigModel) split the same API under two hosts.
 PLATFORMS = {
@@ -48,6 +53,10 @@ PLATFORMS = {
   "zhipu": "https://open.bigmodel.cn",
 }
 QUOTA_PATH = "/api/monitor/usage/quota/limit"
+
+# The pi/omp provider names whose turns this subscription bills. Exact names:
+# a custom `zai-proxy` gateway is not this subscription.
+PROVIDERS = ("zai", "zhipu")
 
 # Coding-plan limit windows are tagged by (unit, number); the monitor endpoint
 # reports one CREDIT_LIMIT row per window (older responses used TOKENS_LIMIT).
@@ -67,37 +76,51 @@ LIMITS_ONLY_REUSE_SECONDS = 900
 # for this window rather than turning every flick into a request.
 PROBE_MIN_INTERVAL_SECONDS = 15
 
-now = datetime.now()
-today = now.strftime("%Y-%m-%d")
-recent_dates = [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
+# Bounds for numbers read from session files. A timestamp outside them, or a
+# token count above the cap, is corruption rather than usage.
+EARLIEST_SECONDS = 946_684_800  # 2000-01-01
+LATEST_SECONDS = 4_102_444_800  # 2100-01-01
+MAX_TOKENS = 10_000_000_000
 
 
-def number(value: Any) -> int:
-  try:
-    return max(0, int(value or 0))
-  except (TypeError, ValueError):
+def token_count(value: Any) -> int:
+  # Booleans are ints to Python, and a NaN or negative count would poison
+  # every sum it reaches, so anything but a plain finite count reads as none.
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
     return 0
+  if not math.isfinite(value) or value < 0 or value > MAX_TOKENS:
+    return 0
+  return int(value)
 
 
-def local_day(value: Any) -> str:
-  if value is None:
-    return datetime.now().strftime("%Y-%m-%d")
+def local_day(value: Any) -> str | None:
+  """The local date of an untrusted timestamp, or None when it isn't one."""
+  if isinstance(value, bool):
+    return None
   if isinstance(value, (int, float)):
+    if not math.isfinite(value):
+      return None
     # pi/omp message timestamps are milliseconds.
-    if value > 10_000_000_000:
-      value = value / 1000
-    return datetime.fromtimestamp(value).strftime("%Y-%m-%d")
-  text = str(value)
+    seconds = value / 1000 if value > 10_000_000_000 else value
+    if not EARLIEST_SECONDS <= seconds < LATEST_SECONDS:
+      return None
+    return datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
+  if not isinstance(value, str) or not value.strip():
+    return None
   try:
-    if text.endswith("Z"):
-      dt = datetime.fromisoformat(text[:-1] + "+00:00")
-    else:
-      dt = datetime.fromisoformat(text)
-    if dt.tzinfo is not None:
-      dt = dt.astimezone()
-    return dt.strftime("%Y-%m-%d")
+    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
   except ValueError:
-    return datetime.now().strftime("%Y-%m-%d")
+    return None
+  if parsed.tzinfo is not None:
+    parsed = parsed.astimezone()
+  if not 2000 <= parsed.year < 2100:
+    return None
+  return parsed.strftime("%Y-%m-%d")
+
+
+def recent_dates() -> list[str]:
+  now = datetime.now()
+  return [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
 
 
 def empty_bucket() -> dict[str, int]:
@@ -115,7 +138,7 @@ def empty_stats() -> dict[str, Any]:
     "todaySessions": 0,
     "todayTotalTokens": 0,
     "todayTokensByModel": {},
-    "recentDays": [],
+    "recentDays": [{"date": day, "messageCount": 0} for day in recent_dates()],
     "totalPrompts": 0,
     "totalSessions": 0,
     "activeDays": 0,
@@ -137,6 +160,8 @@ def base_record(**overrides: Any) -> dict[str, Any]:
     "usageStatusText": "",
     "authHelpText": "",
     "limits": [],
+    "limitsStale": False,
+    "limitsFetchedAt": 0,
   }
   record.update(empty_stats())
   record.update(overrides)
@@ -153,18 +178,14 @@ def cache_root() -> Path:
   return root
 
 
-def read_fresh_json(path: Path, max_age_seconds: float) -> Any:
-  if max_age_seconds <= 0 or not path.exists():
-    return None
+def read_json(path: Path) -> dict[str, Any]:
+  # Read whatever the file's time: a clock that went back must not lose the
+  # last good answer. Freshness is judged by the times stored inside.
   try:
-    # A negative age means the mtime is in the future: the clock moved
-    # backwards since the write, so the cache's freshness cannot be trusted.
-    age = time.time() - path.stat().st_mtime
-    if 0 <= age <= max_age_seconds:
-      return json.loads(path.read_text(encoding="utf-8"))
+    parsed = json.loads(path.read_text(encoding="utf-8"))
   except Exception:
-    return None
-  return None
+    return {}
+  return parsed if isinstance(parsed, dict) else {}
 
 
 def write_json(path: Path, payload: Any) -> None:
@@ -181,6 +202,13 @@ def write_json(path: Path, payload: Any) -> None:
   except BaseException:
     tmp.unlink(missing_ok=True)
     raise
+
+
+def age_below(stamp_seconds: float, limit_seconds: float) -> bool:
+  # A negative age is a stamp from the future: the clock moved back since it
+  # was written, so it proves nothing about freshness.
+  age = time.time() - stamp_seconds
+  return 0 <= age < limit_seconds
 
 
 @contextlib.contextmanager
@@ -241,11 +269,22 @@ def read_env_file(path: Path) -> dict[str, str]:
 
 def read_config() -> dict[str, Any]:
   config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
-  try:
-    parsed = json.loads((config_home / "omarchy" / "agents" / "zai.json").read_text())
-    return parsed if isinstance(parsed, dict) else {}
-  except (OSError, json.JSONDecodeError):
-    return {}
+  return read_json(config_home / "omarchy" / "agents" / "zai.json")
+
+
+def pi_agent_dir() -> Path:
+  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
+  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
+
+
+def auth_json_key(path: Path, provider: str) -> str:
+  # pi/omp keep a key they were given with /login in auth.json. Only a literal
+  # key is taken: a `$VAR` or `!command` entry is resolved by pi alone.
+  entry = read_json(path).get(provider)
+  if not isinstance(entry, dict):
+    return ""
+  key = str(entry.get("key") or "").strip()
+  return "" if key.startswith(("!", "$")) else key
 
 
 def credentials() -> tuple[str, str]:
@@ -264,10 +303,7 @@ def credentials() -> tuple[str, str]:
       platform = platform or "zhipu"
 
   if not key:
-    for env_path in (
-      Path.home() / ".omp" / "agent" / ".env",
-      Path.home() / ".pi" / "agent" / ".env",
-    ):
+    for env_path in (Path.home() / ".omp" / "agent" / ".env", pi_agent_dir() / ".env"):
       values = read_env_file(env_path)
       if values.get("ZAI_API_KEY"):
         key, platform = values["ZAI_API_KEY"], platform or "zai"
@@ -275,6 +311,15 @@ def credentials() -> tuple[str, str]:
       if values.get("ZHIPU_API_KEY") or values.get("ZHIPUAI_API_KEY"):
         key = values.get("ZHIPU_API_KEY") or values["ZHIPUAI_API_KEY"]
         platform = platform or "zhipu"
+        break
+
+  if not key:
+    for auth_path in (pi_agent_dir() / "auth.json", Path.home() / ".omp" / "agent" / "auth.json"):
+      if found := auth_json_key(auth_path, "zai"):
+        key, platform = found, platform or "zai"
+        break
+      if found := auth_json_key(auth_path, "zhipu"):
+        key, platform = found, platform or "zhipu"
         break
 
   if platform not in PLATFORMS:
@@ -287,11 +332,13 @@ def credentials() -> tuple[str, str]:
 # --------------------------------------------------------------------------
 
 def iso_from_ms(value: Any) -> str:
+  if isinstance(value, bool):
+    return ""
   try:
     ts = float(value)
   except (TypeError, ValueError):
     return ""
-  if ts <= 0:
+  if not math.isfinite(ts) or ts <= 0:
     return ""
   # The field is milliseconds, but a plain-seconds epoch (< year 33658) is
   # accepted too rather than rendered as a date 1000x in the future.
@@ -306,10 +353,11 @@ def iso_from_ms(value: Any) -> str:
 def fetch_limits(api_key: str, platform: str) -> dict[str, Any]:
   """Probe the monitor endpoint.
 
-  On success returns {"limits": [...], "tierLabel": str}. On a miss returns
-  {"status": str} plus, when applicable, "transport" (reached no server, so
-  worth an early retry) or "keyRejected" (the key itself is bad). The endpoint
-  answers HTTP 200 even when the key has no plan, carrying
+  On success returns {"ok": True, "limits": [...], "tierLabel": str}. On a
+  miss returns {"ok": False, "detail": str} plus one of "transport" (reached
+  no server, so worth an early retry), "keyRejected" (the key itself is bad)
+  or "noPlan" (a working key without a Coding Plan). The endpoint answers
+  HTTP 200 even when the key has no plan, carrying
   {"success": false, "msg": "…coding plan…"} instead of a data payload.
   """
   url = PLATFORMS[platform] + QUOTA_PATH
@@ -328,20 +376,20 @@ def fetch_limits(api_key: str, platform: str) -> dict[str, Any]:
       body = json.loads(response.read(1_048_576))
   except urllib.error.HTTPError as error:
     if error.code in (401, 403):
-      return {"status": "Z.ai rejected the API key", "keyRejected": True}
-    return {"status": f"Z.ai monitor returned HTTP {error.code}"}
-  except (urllib.error.URLError, TimeoutError):
-    return {"status": "Could not reach the Z.ai monitor endpoint", "transport": True}
-  except json.JSONDecodeError:
-    return {"status": "Z.ai returned an invalid monitor response"}
+      return {"ok": False, "keyRejected": True, "detail": AUTH_HELP_BAD_KEY}
+    return {"ok": False, "detail": f"Z.ai's monitor endpoint returned HTTP {error.code}. Local stats are still shown."}
+  except OSError:
+    # URLError, timeouts and resets alike: no answer from any server.
+    return {"ok": False, "transport": True, "detail": "Couldn't reach Z.ai's monitor endpoint. Retrying shortly. Local stats are still shown."}
+  except ValueError:
+    return {"ok": False, "detail": "Z.ai returned an invalid monitor response. Local stats are still shown."}
 
   data = body.get("data") if isinstance(body, dict) else None
   if not isinstance(data, dict) or not isinstance(data.get("limits"), list):
     msg = str(body.get("msg") or "").strip()[:200] if isinstance(body, dict) else ""
-    status = "No GLM Coding Plan on this key" if "coding plan" in msg.lower() else (
-      msg or "Coding Plan limits unavailable"
-    )
-    return {"status": status}
+    if "coding plan" in msg.lower():
+      return {"ok": False, "noPlan": True, "detail": ""}
+    return {"ok": False, "detail": (msg or "Z.ai's monitor endpoint returned no limits") + ". Local stats are still shown."}
 
   limits = []
   for item in data["limits"]:
@@ -356,26 +404,26 @@ def fetch_limits(api_key: str, platform: str) -> dict[str, Any]:
         file=sys.stderr,
       )
       continue
-    try:
-      percent = max(0.0, min(1.0, float(item.get("percentage")) / 100.0))
-    except (TypeError, ValueError):
-      # A missing/unparseable percentage is skipped: a false 0% meter reads
-      # as a fresh allowance, which is worse than showing one fewer window.
+    raw = item.get("percentage")
+    # A missing or unparseable percentage is skipped: a false 0% meter reads
+    # as a fresh allowance, which is worse than showing one fewer window.
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(raw):
       continue
     limits.append({
       "label": label,
-      "percent": percent,
+      "percent": max(0.0, min(1.0, float(raw) / 100.0)),
       "resetsAt": iso_from_ms(item.get("nextResetTime")),
     })
 
+  if not limits:
+    return {"ok": False, "detail": "Z.ai's monitor endpoint returned no limits. Local stats are still shown."}
   tier = str(data.get("level") or "").strip()[:64]
-  return {"limits": limits, "tierLabel": tier[:1].upper() + tier[1:].lower() if tier else ""}
+  return {"ok": True, "limits": limits, "tierLabel": tier[:1].upper() + tier[1:].lower() if tier else ""}
 
 
-# A cached percentage outlives the probe that measured it, but only until its
-# window rolls over: once a window has reset, the figure describes a period
-# that is over. A window with no reset time, or one that will not parse, is
-# kept — an unreadable timestamp is no reason to throw away a real number.
+# A kept window whose reset has passed comes back at zero: the allowance it
+# measured has been renewed, so it is untouched rather than unknown. A window
+# with no reset time, or one that will not parse, is kept as it is.
 def limit_window_open(entry: dict[str, Any], now_utc: datetime) -> bool:
   raw = str(entry.get("resetsAt") or "")
   if raw == "":
@@ -394,7 +442,26 @@ def usable_cached_limits(cached: dict[str, Any]) -> list[dict[str, Any]]:
   if not isinstance(entries, list):
     return []
   now_utc = datetime.now(timezone.utc)
-  return [entry for entry in entries if isinstance(entry, dict) and limit_window_open(entry, now_utc)]
+  return [
+    entry if limit_window_open(entry, now_utc) else dict(entry, percent=0.0, resetsAt="")
+    for entry in entries if isinstance(entry, dict)
+  ]
+
+
+def limits_cache_paths(api_key: str, platform: str) -> tuple[Path, Path]:
+  # Keyed by who the numbers belong to: another key, or the same key on the
+  # other host, never shows this one's allowance.
+  digest = hashlib.sha256(f"{platform}\0{api_key}".encode("utf-8")).hexdigest()[:16]
+  root = cache_root()
+  return root / f"zai-limits-{digest}.json", root / f"zai-limits-{digest}.lock"
+
+
+def cached_answer(cache_file: Path) -> tuple[list[dict[str, Any]], str, int]:
+  cached = read_json(cache_file)
+  fetched_ms = cached.get("fetchedAtMs")
+  if isinstance(fetched_ms, bool) or not isinstance(fetched_ms, (int, float)) or not math.isfinite(fetched_ms):
+    fetched_ms = 0
+  return usable_cached_limits(cached), str(cached.get("tierLabel") or ""), max(0, int(fetched_ms))
 
 
 def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
@@ -402,41 +469,33 @@ def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
 
   Reuses a recent probe for PROBE_MIN_INTERVAL_SECONDS so repeated panel opens
   do not spam the endpoint, and keeps the last known limits as the answer of
-  record when a later probe fails but its window has not yet reset. `live`
-  says whether the limits are this check's (or a probe recent enough to stand
-  in for one), and `fetchedAtMs` when they were measured, so the panel can dim
-  limits kept from an earlier check.
+  record when a later probe fails. `live` says whether the limits are this
+  check's (or a probe recent enough to stand in for one), and `fetchedAtMs`
+  when they were measured, so the panel can tell kept limits from fresh ones.
   """
   result = {"limits": [], "tierLabel": "", "usageStatusText": "", "authHelpText": "", "retryAdvised": False, "live": False, "fetchedAtMs": 0}
+  cache_file, lock_file = limits_cache_paths(api_key, platform)
 
-  probe_cache = cache_root() / "zai-limits.json"
-  cached = read_fresh_json(probe_cache, float("inf")) or {}
-  fallback = usable_cached_limits(cached) if isinstance(cached, dict) else []
-  cached_tier = str(cached.get("tierLabel") or "") if isinstance(cached, dict) else ""
-
-  fetched_at = number(cached.get("fetchedAtMs")) / 1000 if isinstance(cached, dict) else 0
-  if fallback and not force and time.time() - fetched_at < PROBE_MIN_INTERVAL_SECONDS:
-    result["limits"], result["tierLabel"] = fallback, cached_tier
-    result.update(live=True, fetchedAtMs=round(fetched_at * 1000))
+  # --force is a person asking for fresh numbers, so it skips the reuse
+  # window; the interval absorbs repeated panel opens, not a refresh press.
+  fallback, cached_tier, fetched_ms = cached_answer(cache_file)
+  if fallback and not force and age_below(fetched_ms / 1000, PROBE_MIN_INTERVAL_SECONDS):
+    result.update(limits=fallback, tierLabel=cached_tier, live=True, fetchedAtMs=fetched_ms)
     return result
 
-  with exclusive_lock(scan_cache_paths()[2]):
+  with exclusive_lock(lock_file):
     if not force:
-      cached = read_fresh_json(probe_cache, float("inf")) or {}
-      fetched_at = number(cached.get("fetchedAtMs")) / 1000 if isinstance(cached, dict) else 0
-      fresh = usable_cached_limits(cached) if isinstance(cached, dict) else []
-      if fresh and time.time() - fetched_at < PROBE_MIN_INTERVAL_SECONDS:
-        result["limits"], result["tierLabel"] = fresh, str(cached.get("tierLabel") or "")
-        result.update(live=True, fetchedAtMs=round(fetched_at * 1000))
+      # Another run may have probed while this one waited for the lock.
+      fallback, cached_tier, fetched_ms = cached_answer(cache_file)
+      if fallback and age_below(fetched_ms / 1000, PROBE_MIN_INTERVAL_SECONDS):
+        result.update(limits=fallback, tierLabel=cached_tier, live=True, fetchedAtMs=fetched_ms)
         return result
 
     probe = fetch_limits(api_key, platform)
-    if probe.get("limits"):
-      result["limits"] = probe["limits"]
-      result["tierLabel"] = probe.get("tierLabel", "")
-      result.update(live=True, fetchedAtMs=round(time.time() * 1000))
+    if probe["ok"]:
+      result.update(limits=probe["limits"], tierLabel=probe["tierLabel"], live=True, fetchedAtMs=round(time.time() * 1000))
       try:
-        write_json(probe_cache, {
+        write_json(cache_file, {
           "fetchedAtMs": result["fetchedAtMs"],
           "limits": probe["limits"],
           "tierLabel": result["tierLabel"],
@@ -445,19 +504,24 @@ def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
         print(f"omarchy-agent-usage-zai: could not write limits cache ({exc})", file=sys.stderr)
       return result
 
-  # No fresh limits. A transport failure reached no server — typically the
-  # seconds after login before the network is up — so ask the shell to retry
-  # sooner than its regular interval.
+  # A working key without a Coding Plan is a pay-as-you-go account: Z.ai has
+  # no limits to show for it, which is no trouble, and limits kept from a plan
+  # that has since lapsed no longer describe it.
+  if probe.get("noPlan"):
+    result["live"] = True
+    return result
+
+  # A transport failure reached no server — typically the seconds after login
+  # before the network is up — so ask the shell to retry sooner than its
+  # regular interval.
   if probe.get("transport"):
     result["retryAdvised"] = True
-  if fallback:
-    result["limits"], result["tierLabel"] = fallback, cached_tier
-    result["fetchedAtMs"] = round(fetched_at * 1000)
-  result["usageStatusText"] = probe.get("status", "")
-  # Only blame the key when the key is the problem; a working key with no plan,
-  # or an endpoint hiccup, must not tell the user to go set a key they have.
+  result.update(limits=fallback, tierLabel=cached_tier, fetchedAtMs=fetched_ms if fallback else 0)
+  result["authHelpText"] = probe["detail"]
   if probe.get("keyRejected"):
-    result["authHelpText"] = AUTH_HELP_BAD_KEY
+    result["usageStatusText"] = "Sign-in expired"
+  elif not fallback:
+    result["usageStatusText"] = "Z.ai limits unavailable"
   return result
 
 
@@ -465,119 +529,186 @@ def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
 # Local session stats
 # --------------------------------------------------------------------------
 
-def scan_sessions() -> dict[str, Any]:
-  recent = {day: {"date": day, "messageCount": 0} for day in recent_dates}
+class Stats:
+  """Token and activity totals for every counted turn."""
 
-  model_usage: dict[str, dict[str, int]] = {}
-  today_by_model: dict[str, int] = {}
-  active_dates: set[str] = set()
-  total_sessions: set[str] = set()
-  today_sessions: set[str] = set()
-  seen: set[str] = set()
-  totals = {"today_prompts": 0, "today_tokens": 0, "total_prompts": 0}
+  def __init__(self) -> None:
+    self.today = datetime.now().strftime("%Y-%m-%d")
+    self.recent_dates = recent_dates()
+    self.recent = {day: 0 for day in self.recent_dates}
+    self.today_prompts = 0
+    self.today_tokens = 0
+    self.today_sessions: set[str] = set()
+    self.today_by_model: dict[str, int] = {}
+    self.total_prompts = 0
+    self.sessions: set[str] = set()
+    self.active_dates: set[str] = set()
+    self.model_usage: dict[str, dict[str, int]] = {}
 
-  def add_usage(day, session_key, model, inp, out, cread, cwrite):
+  def add(self, session: str, day: str, model: str, inp: int, out: int, cread: int, cwrite: int) -> None:
     total = inp + out + cread + cwrite
-    totals["total_prompts"] += 1
-    total_sessions.add(session_key)
-    active_dates.add(day)
-    bucket = model_usage.setdefault(model, empty_bucket())
+    self.total_prompts += 1
+    self.sessions.add(session)
+    self.active_dates.add(day)
+    bucket = self.model_usage.setdefault(model, empty_bucket())
     bucket["inputTokens"] += inp
     bucket["outputTokens"] += out
     bucket["cacheReadInputTokens"] += cread
     bucket["cacheCreationInputTokens"] += cwrite
-    if day in recent:
-      recent[day]["messageCount"] += total
-    if day == today:
-      totals["today_prompts"] += 1
-      today_sessions.add(session_key)
-      totals["today_tokens"] += total
-      today_by_model[model] = today_by_model.get(model, 0) + total
+    if day in self.recent:
+      self.recent[day] += total
+    if day == self.today:
+      self.today_prompts += 1
+      self.today_sessions.add(session)
+      self.today_tokens += total
+      self.today_by_model[model] = self.today_by_model.get(model, 0) + total
 
-  roots = [
-    Path.home() / ".pi" / "agent" / "sessions",
-    Path.home() / ".omp" / "agent" / "sessions",
-  ]
+  def record(self) -> dict[str, Any]:
+    return {
+      "hasLocalStats": bool(self.model_usage),
+      "todayPrompts": self.today_prompts,
+      "todaySessions": len(self.today_sessions),
+      "todayTotalTokens": self.today_tokens,
+      "todayTokensByModel": self.today_by_model,
+      "recentDays": [{"date": day, "messageCount": self.recent[day]} for day in self.recent_dates],
+      "totalPrompts": self.total_prompts,
+      "totalSessions": len(self.sessions),
+      "activeDays": len(self.active_dates),
+      "activeDates": sorted(self.active_dates),
+      "modelUsage": self.model_usage,
+    }
+
+
+# `omp --profile=<name>` (and pi's equivalent) relocates the whole agent tree
+# under <base>/profiles/<name>/, and PI_CODING_AGENT_DIR moves pi's, so a
+# subscription driven through either would otherwise go uncounted.
+def pi_session_roots() -> list[Path]:
+  roots = [pi_agent_dir() / "sessions", Path.home() / ".omp" / "agent" / "sessions"]
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    try:
+      # Sorted so the scan order does not depend on directory order.
+      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      # No profiles directory, or it is unreadable: the default roots stand.
+      pass
+  unique: list[Path] = []
   for root in roots:
-    if not root.exists():
-      continue
-    for path in root.rglob("*.jsonl"):
-      try:
-        handle = path.open(errors="replace")
-      except OSError:
+    if root not in unique:
+      unique.append(root)
+  return unique
+
+
+def matching_lines(root: Path, pattern: str) -> tuple[list[tuple[str, str]], bool]:
+  """(path, line) for each session line matching `pattern`, and whether every file was read."""
+  try:
+    proc = subprocess.run(
+      # --no-ignore: these are data files, not a source tree. When $HOME is
+      # itself a git checkout (a common dotfiles setup), its ignore rules
+      # would otherwise hide every session file and count zero usage.
+      ["rg", "--json", "--no-ignore", "--hidden", "--glob", "*.jsonl", "-e", pattern, str(root)],
+      stdout=subprocess.PIPE,
+      stderr=subprocess.DEVNULL,
+      text=True,
+      errors="replace",
+      check=False,
+    )
+  except OSError:
+    return [], False
+  lines = []
+  for raw in proc.stdout.splitlines():
+    try:
+      event = json.loads(raw)
+      if event.get("type") != "match":
         continue
-      with handle:
-        for line in handle:
-          # Cheap substring gate before the JSON parse: an assistant turn on a
-          # Z.ai provider always carries both markers.
-          if '"usage"' not in line or ('"zai"' not in line and '"zhipu"' not in line):
-            continue
-          try:
-            entry = json.loads(line)
-          except json.JSONDecodeError:
-            continue
-          if not isinstance(entry, dict) or entry.get("type") != "message":
-            continue
-          # One malformed line (a non-dict where a dict belongs) must not take
-          # every real stat down with it, so each shape is checked explicitly.
-          message = entry.get("message")
-          if not isinstance(message, dict) or message.get("role") != "assistant":
-            continue
-          # Exact provider match: a custom `zai-proxy` gateway is not this
-          # subscription, the same discipline the stock collectors keep.
-          provider = str(message.get("provider") or "").lower()
-          if provider not in ("zai", "zhipu"):
-            continue
-          usage = message.get("usage")
-          if not isinstance(usage, dict):
-            continue
-          inp = number(usage.get("input"))
-          # pi reports reasoning tokens apart from output; both are generated.
-          out = number(usage.get("output")) + number(usage.get("reasoning"))
-          cread = number(usage.get("cacheRead"))
-          cwrite = number(usage.get("cacheWrite"))
-          if not (inp or out or cread or cwrite):
-            inp = number(usage.get("totalTokens"))
-          if not (inp or out or cread or cwrite):
-            continue
-          message_key = str(path) + ":" + str(entry.get("id") or "")
-          if message_key in seen:
-            continue
-          seen.add(message_key)
-          day = local_day(entry.get("timestamp") or message.get("timestamp"))
-          model = str(message.get("model") or "glm")
-          add_usage(day, str(path), model, inp, out, cread, cwrite)
-
-  return {
-    "hasLocalStats": bool(model_usage),
-    "todayPrompts": totals["today_prompts"],
-    "todaySessions": len(today_sessions),
-    "todayTotalTokens": totals["today_tokens"],
-    "todayTokensByModel": today_by_model,
-    "recentDays": [recent[day] for day in recent_dates],
-    "totalPrompts": totals["total_prompts"],
-    "totalSessions": len(total_sessions),
-    "activeDays": len(active_dates),
-    "activeDates": sorted(active_dates),
-    "modelUsage": model_usage,
-  }
+      data = event["data"]
+      text = data["lines"].get("text")
+      if text is None:
+        # rg hands back lines that are not valid UTF-8 as base64.
+        text = base64.b64decode(data["lines"]["bytes"]).decode("utf-8", errors="replace")
+      path = data["path"].get("text") or ""
+      lines.append((path, text))
+    except Exception:
+      continue
+  # 1 is "no match"; 2 means some file could not be read.
+  return lines, proc.returncode in (0, 1)
 
 
-def scan_cache_paths() -> tuple[Path, Path, Path]:
-  # The digest covers every data path the scan reads (both session roots live
-  # under the home directory).
-  digest = hashlib.sha1(str(Path.home()).encode("utf-8")).hexdigest()[:16]
+def scan_sessions() -> tuple[dict[str, Any], bool]:
+  stats = Stats()
+  complete = True
+  # A forked session copies its parent's messages, ids and timestamps alike,
+  # so (id, timestamp) counts each once across files. A line with an id but
+  # no timestamp dedups within its file only; a line with no id always counts.
+  seen: set[tuple[str, ...]] = set()
+  pattern = r'"provider"\s*:\s*"(' + "|".join(PROVIDERS) + r')"'
+
+  for root in pi_session_roots():
+    if not root.is_dir():
+      continue
+    lines, read_all = matching_lines(root, pattern)
+    complete = complete and read_all
+    for path, line in lines:
+      try:
+        entry = json.loads(line)
+      except ValueError:
+        continue
+      if not isinstance(entry, dict) or entry.get("type") != "message":
+        continue
+      # One malformed line (a non-dict where a dict belongs) must not take
+      # every real stat down with it, so each shape is checked explicitly.
+      message = entry.get("message")
+      if not isinstance(message, dict) or message.get("role") != "assistant":
+        continue
+      if str(message.get("provider") or "").lower() not in PROVIDERS:
+        continue
+      usage = message.get("usage")
+      if not isinstance(usage, dict):
+        continue
+      inp = token_count(usage.get("input"))
+      # pi reports reasoning tokens apart from output; both are generated.
+      out = token_count(usage.get("output")) + token_count(usage.get("reasoning"))
+      cread = token_count(usage.get("cacheRead"))
+      cwrite = token_count(usage.get("cacheWrite"))
+      if not (inp or out or cread or cwrite):
+        inp = token_count(usage.get("totalTokens"))
+      if not (inp or out or cread or cwrite):
+        continue
+      day = local_day(entry.get("timestamp")) or local_day(message.get("timestamp"))
+      if day is None:
+        continue
+
+      message_id = entry.get("id")
+      timestamp = entry.get("timestamp")
+      if isinstance(message_id, str) and message_id:
+        key = ("entry", message_id, str(timestamp)) if timestamp else ("path", path, message_id)
+        if key in seen:
+          continue
+        seen.add(key)
+      stats.add(path, day, str(message.get("model") or "glm"), inp, out, cread, cwrite)
+
+  return stats.record(), complete
+
+
+def scan_cache_paths() -> tuple[Path, Path]:
+  # The digest covers every data path the scan reads.
+  identity = "\0".join(str(root) for root in pi_session_roots())
+  digest = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:16]
   root = cache_root()
-  return root / f"zai-scan-{digest}.json", root / f"zai-scan-{digest}.lock", root / "zai-limits.lock"
+  return root / f"zai-scan-{digest}.json", root / f"zai-scan-{digest}.lock"
 
 
 def read_cached_stats(cache_file: Path, max_age_seconds: float) -> dict[str, Any] | None:
-  cached = read_fresh_json(cache_file, max_age_seconds)
-  if not isinstance(cached, dict) or cached.get("schemaVersion") != 1:
+  cached = read_json(cache_file)
+  if cached.get("schemaVersion") != 2:
     return None
   # today* fields only mean "today" on the day they were scanned. A cache from
   # another local date (midnight passed, or the clock moved) is a miss.
-  if cached.get("scanDate") != today:
+  if cached.get("scanDate") != datetime.now().strftime("%Y-%m-%d"):
+    return None
+  scanned_at = cached.get("scannedAt")
+  if isinstance(scanned_at, bool) or not isinstance(scanned_at, (int, float)):
+    return None
+  if not age_below(scanned_at, max_age_seconds):
     return None
   stats = cached.get("stats")
   if not isinstance(stats, dict):
@@ -587,13 +718,6 @@ def read_cached_stats(cache_file: Path, max_age_seconds: float) -> dict[str, Any
   return stats
 
 
-def write_cached_stats(cache_file: Path, stats: dict[str, Any]) -> None:
-  try:
-    write_json(cache_file, {"schemaVersion": 1, "scanDate": today, "stats": stats})
-  except Exception as exc:
-    print(f"omarchy-agent-usage-zai: could not write usage cache ({exc})", file=sys.stderr)
-
-
 def cached_local_stats(max_age: float) -> dict[str, Any]:
   """Local stats, with the cache as a pure optimization.
 
@@ -601,26 +725,23 @@ def cached_local_stats(max_age: float) -> dict[str, Any]:
   record is the contract, the cache is not.
   """
   try:
-    return _cached_local_stats(max_age)
-  except Exception as exc:
-    print(f"omarchy-agent-usage-zai: cache unavailable ({exc}); scanning directly", file=sys.stderr)
-    return scan_sessions()
-
-
-def _cached_local_stats(max_age: float) -> dict[str, Any]:
-  cache_file, lock_file, _ = scan_cache_paths()
-
-  cached = read_cached_stats(cache_file, max_age)
-  if cached is not None:
-    return cached
-
-  with exclusive_lock(lock_file):
+    cache_file, lock_file = scan_cache_paths()
     cached = read_cached_stats(cache_file, max_age)
     if cached is not None:
       return cached
-    stats = scan_sessions()
-    write_cached_stats(cache_file, stats)
-    return stats
+    with exclusive_lock(lock_file):
+      cached = read_cached_stats(cache_file, max_age)
+      if cached is not None:
+        return cached
+      stats, complete = scan_sessions()
+      # A scan that missed a file would stand in for a real one until the
+      # next rescan; only a complete one is kept.
+      if complete:
+        write_json(cache_file, {"schemaVersion": 2, "scanDate": datetime.now().strftime("%Y-%m-%d"), "scannedAt": time.time(), "stats": stats})
+      return stats
+  except Exception as exc:
+    print(f"omarchy-agent-usage-zai: cache unavailable ({exc}); scanning directly", file=sys.stderr)
+    return scan_sessions()[0]
 
 
 # --------------------------------------------------------------------------
@@ -634,23 +755,24 @@ def scan(force: bool, limits_only: bool) -> dict[str, Any]:
 
   api_key, platform = credentials()
   if not api_key:
-    record["authHelpText"] = AUTH_HELP_NO_KEY
-    record["ready"] = record["hasLocalStats"]
+    # Z.ai in use here without a key to ask for its limits; a machine that has
+    # never used it is simply skipped.
+    if record["hasLocalStats"]:
+      record.update(ready=True, usageStatusText="Waiting for auth", authHelpText=AUTH_HELP_NO_KEY)
     return record
 
   limits = collect_limits(api_key, platform, force)
-  record["limits"] = limits["limits"]
-  record["limitsStale"] = not limits["live"]
-  record["limitsFetchedAt"] = limits["fetchedAtMs"]
-  if limits["tierLabel"]:
-    record["tierLabel"] = limits["tierLabel"]
-  record["usageStatusText"] = limits["usageStatusText"]
-  if limits["authHelpText"]:
-    record["authHelpText"] = limits["authHelpText"]
+  record.update(
+    ready=True,
+    limits=limits["limits"],
+    limitsStale=bool(limits["limits"]) and not limits["live"],
+    limitsFetchedAt=limits["fetchedAtMs"],
+    tierLabel=limits["tierLabel"],
+    usageStatusText=limits["usageStatusText"],
+    authHelpText=limits["authHelpText"],
+  )
   if limits["retryAdvised"]:
     record["retryAdvised"] = True
-
-  record["ready"] = bool(record["limits"] or record["hasLocalStats"])
   return record
 
 
@@ -666,7 +788,7 @@ def main() -> int:
   try:
     record = scan(args.force, args.limits_only)
   except Exception as error:  # noqa: BLE001 - a collector must always emit a record
-    record = base_record(usageStatusText="Z.ai unavailable", authHelpText="Z.ai usage scan failed")
+    record = base_record(usageStatusText="Z.ai limits unavailable", authHelpText="Z.ai usage scan failed.")
     print(f"omarchy-agent-usage-zai: {type(error).__name__}", file=sys.stderr)
   print(json.dumps(record, separators=(",", ":")))
   return 0

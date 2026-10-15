@@ -44,6 +44,11 @@ result=$(run)
   fail "Z.ai collector identifies itself and is ready on local stats alone (no key)" "$result"
 pass "Z.ai collector reports itself, empty limits, ready on local stats"
 
+# In use here, but no key to ask for its limits.
+[[ $(jq -r '.usageStatusText' <<<"$result") == "Waiting for auth" && $(jq -r '.authHelpText' <<<"$result") == *"ZAI_API_KEY"* ]] ||
+  fail "Z.ai collector waits for auth when used without a key" "$result"
+pass "Z.ai collector waits for auth when used without a key"
+
 # Reasoning tokens fold into output; cache tokens split out; the repeated id is
 # counted once, so the glm-5.3 bucket is exactly message a.
 [[ $(jq -Sc '.modelUsage["glm-5.3"]' <<<"$result") == '{"cacheCreationInputTokens":2,"cacheReadInputTokens":3,"inputTokens":10,"outputTokens":10}' ]] ||
@@ -65,7 +70,7 @@ pass "Z.ai collector filters providers/roles and survives malformed lines"
 # The scan is cached so the panel's per-open --limits-only does not re-walk
 # every session file; --force bypasses it.
 cache_file=$(ls "$TEST_HOME/.cache/omarchy/agent-usage/"zai-scan-*.json 2>/dev/null | head -n 1)
-[[ -n $cache_file && $(jq -r '.schemaVersion' "$cache_file") == "1" && $(jq -r '.stats.todayTotalTokens' "$cache_file") == "50" ]] ||
+[[ -n $cache_file && $(jq -r '.schemaVersion' "$cache_file") == "2" && $(jq -r '.stats.todayTotalTokens' "$cache_file") == "50" ]] ||
   fail "Z.ai collector writes a versioned local-stats cache on first scan" "$result"
 pass "Z.ai collector writes a local-stats cache on first scan"
 
@@ -88,3 +93,38 @@ result=$(run --limits-only)
 [[ $(jq -r '.todayTotalTokens' <<<"$result") == "150" ]] ||
   fail "Z.ai collector --limits-only sees the cache refreshed by --force" "$result"
 pass "Z.ai collector --limits-only sees a refreshed cache after --force"
+
+# Sessions outside the default root: an omp profile, a pi profile, and a pi
+# agent dir moved by PI_CODING_AGENT_DIR, all under a $HOME that is a git
+# checkout ignoring everything. A forked session repeats its parent's message
+# (same id and timestamp) and counts once; lines without an id always count;
+# rows whose timestamp or tokens are garbage drop without taking the rest.
+ROOTS_HOME=$(mktemp -d)
+trap 'rm -rf "$TEST_HOME" "$ROOTS_HOME"' EXIT
+mkdir -p "$ROOTS_HOME/.git"
+printf '*\n' >"$ROOTS_HOME/.gitignore"
+mkdir -p "$ROOTS_HOME/.omp/profiles/work/agent/sessions/p" "$ROOTS_HOME/.pi/profiles/home/agent/sessions/p" "$ROOTS_HOME/moved/sessions/p"
+line() {
+  printf '{"type":"message",%s"timestamp":%s,"message":{"role":"assistant","provider":"zai","model":"glm-5","usage":{"input":%s}}}\n' "$1" "$2" "$3"
+}
+{
+  line '"id":"parent",' "\"$timestamp\"" 100
+  line '' "\"$timestamp\"" 1
+  line '' "\"$timestamp\"" 1
+} >"$ROOTS_HOME/.omp/profiles/work/agent/sessions/p/a.jsonl"
+{
+  line '"id":"parent",' "\"$timestamp\"" 100
+  line '"id":"child",' "\"$timestamp\"" 10
+  line '"id":"bad-ts",' 0 5000
+  line '"id":"bad-ts2",' '"not a date"' 5000
+  line '"id":"bad-tokens",' "\"$timestamp\"" true
+  line '"id":"huge-tokens",' "\"$timestamp\"" 1e300
+} >"$ROOTS_HOME/.pi/profiles/home/agent/sessions/p/fork.jsonl"
+line '"id":"moved",' "\"$timestamp\"" 1000 >"$ROOTS_HOME/moved/sessions/p/m.jsonl"
+
+roots=$(env -u ZAI_API_KEY -u ZHIPU_API_KEY -u ZHIPUAI_API_KEY \
+  HOME="$ROOTS_HOME" PI_CODING_AGENT_DIR="$ROOTS_HOME/moved" XDG_CONFIG_HOME="$ROOTS_HOME/.config" XDG_CACHE_HOME="$ROOTS_HOME/.cache" \
+  "$ROOT/bin/omarchy-agent-usage-zai" --force)
+[[ $(jq -r '.todayTotalTokens' <<<"$roots") == "1112" && $(jq -r '.totalPrompts' <<<"$roots") == "5" ]] ||
+  fail "Z.ai collector scans profiles and PI_CODING_AGENT_DIR past ignore rules, dedups forks, counts id-less lines, skips garbage rows" "$roots"
+pass "Z.ai collector scans every pi/omp root, dedups forks, and skips garbage rows"
