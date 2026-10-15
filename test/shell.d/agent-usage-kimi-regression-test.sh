@@ -18,6 +18,7 @@ import time
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from datetime import datetime, timedelta
 from pathlib import Path
 
 requests = []
@@ -288,7 +289,10 @@ def redirects(root):
 def unused(root):
   data = run()
   assert data["ready"] is False and data["usageStatusText"] == "" and data["authHelpText"] == "", "an unused machine was flagged"
-  assert data["limits"] == [] and data["recentDays"] == [] and not requests, "an unused machine probed"
+  assert data["limits"] == [] and not requests, "an unused machine probed"
+  today = datetime.now().astimezone().date()
+  week = [{"date": (today - timedelta(days=offset)).isoformat(), "messageCount": 0} for offset in range(6, -1, -1)]
+  assert data["recentDays"] == week, "an unused machine lacks the seven zeroed days ending today"
 
 def waiting_for_auth(root):
   (root / "code home").mkdir()
