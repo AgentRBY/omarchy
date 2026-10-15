@@ -6,7 +6,7 @@ require_command jq
 require_command python3
 
 # A key in the environment would send the collector to DeepSeek.
-unset DEEPSEEK_API_KEY DEEPSEEK_API_BASE_URL PI_CODING_AGENT_DIR
+unset DEEPSEEK_API_KEY DEEPSEEK_API_BASE_URL DSH_HOME PI_CODING_AGENT_DIR
 
 timestamp="$(date +%Y-%m-%d)T12:00:00Z"
 now_ms="$(date +%s)000"
@@ -173,6 +173,136 @@ result=$(collect "$OPENCODE_HOME" --force)
 [[ $(jq -r '"\(.todayTotalTokens):\(.totalSessions):\(.activeDays)"' <<<"$result") == "176:2:1" ]] ||
   fail "DeepSeek collector counts a day shared by pi and opencode once" "$result"
 pass "DeepSeek collector counts a day shared by pi and opencode once"
+
+# ---------------------------------------------------------- DeepSeek Harness
+
+# dsh keeps one event log per session under $DSH_HOME/sessions, Zstandard-
+# compressed by default. Only its DeepSeek routes count; a retry's settled
+# answer replaces the streamed sample of the same step; a fork's inherited
+# history is its parent's; a torn final record is dropped; and only the
+# newest generation of a session is read.
+DSH_ROOT=$(new_home)
+python3 - "$DSH_ROOT/dsh/sessions" "$now_ms" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+now = int(sys.argv[2])
+
+try:
+  from compression import zstd
+except ImportError:
+  zstd = None
+
+
+def header(session, seeded=False):
+  return {"type": "session", "version": 4, "id": session, "createdAt": now, "isSeeded": seeded, "delegationDepth": 0}
+
+
+def route(provider, model, seq=1):
+  return {"type": "request/header", "seq": seq, "time": now, "data": {"header": {"config": {"provider": provider, "model": model}}, "reason": "initial"}}
+
+
+def message(turn, step, usage, seq=2, kind="assistant/message"):
+  data = {"turn": turn, "step": step, "stream": []}
+  if kind == "assistant/message":
+    data["usage"] = usage
+  else:
+    data["stream"] = [{"type": "chunk", "chunk": {"type": "usage", "usage": usage}}]
+  return {"type": kind, "seq": seq, "time": now, "data": data}
+
+
+def usage(input, output=0, read=0, write=0):
+  return {"inputTokens": input, "outputTokens": output, "cacheReadTokens": read, "cacheWriteTokens": write}
+
+
+def write(path, records, compressed, torn=b""):
+  path.parent.mkdir(parents=True, exist_ok=True)
+  lines = [(json.dumps(record) + "\n").encode() for record in records]
+  if compressed:
+    path.write_bytes(b"".join(zstd.compress(line) for line in lines) + torn)
+  else:
+    path.write_bytes(b"".join(lines) + torn)
+
+
+compressed = zstd is not None
+suffix = ".jsonl.zstd" if compressed else ".jsonl"
+project = root / "--home-me-code--"
+
+# A DeepSeek session: one step streamed a sample, then settled with the real
+# count; a retry of step 2 adds a second billed attempt.
+write(project / "s1" / ("session.v4" + suffix), [
+  header("s1"),
+  route("deepseek-official", "deepseek-v4-pro"),
+  message(1, 1, usage(1, 1), kind="assistant/attempt"),
+  message(1, 1, usage(100, 10, 20, 0)),
+  message(1, 2, usage(5, 1), kind="assistant/attempt"),
+  {"type": "llm/retry-started", "seq": 9, "time": now, "data": {"turn": 1, "step": 2}},
+  message(1, 2, usage(7, 3)),
+], compressed, torn=b'{"type":"assistant/mess' if not compressed else b"\x28\xb5\x2f\xfd")
+# An older generation of the same session is migration history only.
+write(project / "s1" / "session.jsonl", [header("s1"), route("deepseek-official", "deepseek-v4-pro"), message(1, 1, usage(999999))], False)
+
+# A route billed by someone else.
+write(project / "s2" / ("session.v4" + suffix), [
+  header("s2"),
+  route("pi-ai:anthropic", "claude-opus-5"),
+  message(1, 1, usage(888888)),
+], compressed)
+
+# A fork of s1: its copy of the parent's step is inherited, and only what
+# follows its seed marker was spent in it.
+write(project / "s3" / ("session.v4" + suffix), [
+  header("s3", seeded=True),
+  route("deepseek-official", "deepseek-v4-pro"),
+  message(1, 1, usage(100, 10, 20, 0)),
+  {"type": "session/end-seed", "seq": 4, "time": now, "data": {"inherited": True}},
+  route("deepseek-account", "deepseek-v4-flash", seq=5),
+  message(2, 1, usage(4000, 6, 0, 1)),
+], compressed)
+
+# A root written with compression off reads the same, torn tail and all.
+write(project / "s4" / "session.v4.jsonl", [
+  header("s4"),
+  route("deepseek-official", "deepseek-chat"),
+  message(1, 1, usage(30000)),
+], False, torn=b'{"type":"assistant/mess')
+PY
+
+result=$(DSH_HOME="$DSH_ROOT/dsh" collect "$DSH_ROOT")
+[[ $(jq -c '{todayTotalTokens, totalPrompts, totalSessions, modelUsage}' <<<"$result") == '{"todayTotalTokens":34153,"totalPrompts":5,"totalSessions":3,"modelUsage":{"deepseek-v4-pro":{"inputTokens":112,"outputTokens":14,"cacheReadInputTokens":20,"cacheCreationInputTokens":0},"deepseek-v4-flash":{"inputTokens":4000,"outputTokens":6,"cacheReadInputTokens":0,"cacheCreationInputTokens":1},"deepseek-chat":{"inputTokens":30000,"outputTokens":0,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}}' ]] ||
+  fail "DeepSeek collector counts DeepSeek Harness sessions on its DeepSeek routes" "$result"
+pass "DeepSeek collector counts DeepSeek Harness sessions on its DeepSeek routes"
+
+# dsh keeps its key in its managed .credentials.yaml, or a .env beside it.
+# With no network to answer, the key still makes DeepSeek ready and prepaid.
+mkdir -p "$DSH_ROOT/dsh"
+cat >"$DSH_ROOT/dsh/.credentials.yaml" <<'EOF'
+# managed by dsh
+version: 1
+refs:
+  OTHER_KEY: nope
+  DEEPSEEK_API_KEY: "sk-from-dsh" # stored by the Models page
+EOF
+key=$(HOME="$DSH_ROOT" DSH_HOME="$DSH_ROOT/dsh" python3 - "$ROOT/bin/omarchy-agent-usage-deepseek" <<'PY'
+import importlib.machinery
+import importlib.util
+import sys
+
+loader = importlib.machinery.SourceFileLoader("deepseek_collector", sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+collector = importlib.util.module_from_spec(spec)
+loader.exec_module(collector)
+first = collector.api_key()
+(collector.dsh_home() / ".credentials.yaml").unlink()
+(collector.dsh_home() / ".env").write_text("export DEEPSEEK_API_KEY='sk-from-env-file'\n")
+print(first + " " + collector.api_key())
+PY
+)
+[[ $key == "sk-from-dsh sk-from-env-file" ]] ||
+  fail "DeepSeek collector reads dsh's stored key" "$key"
+pass "DeepSeek collector reads dsh's stored key"
 
 # --------------------------------------------------------------- scan cache
 
