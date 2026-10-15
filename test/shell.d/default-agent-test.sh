@@ -146,6 +146,7 @@ goose_package="aqua:aaif-goose/goose"
 kiro_cli_package="http:kiro-cli[platforms_linux_x64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-x86_64-linux.tar.gz,platforms_linux_arm64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-aarch64-linux.tar.gz,version_list_url=https://prod.download.cli.kiro.dev/stable/latest/manifest.json,version_json_path=.version]"
 vibe_package="github:mistralai/mistral-vibe[matching=vibe-linux]"
 freebuff_package="npm:freebuff"
+zeroclaw_package="github:zeroclaw-labs/zeroclaw"
 cursor_agent_package="cursor-agent"
 muse_package="http:muse[url=https://api.meta.ai/muse-launcher.sh,bin=muse,version_list_url=https://api.meta.ai/muse-code/channels/muse-stable,version_json_path=.version]"
 
@@ -174,6 +175,7 @@ assert_lazy_stub "$goose_package" goose
 assert_lazy_stub "$kiro_cli_package" kiro-cli
 assert_lazy_stub "$vibe_package" vibe
 assert_lazy_stub "$freebuff_package" freebuff
+assert_lazy_stub "$zeroclaw_package" zeroclaw
 assert_lazy_stub "$cursor_agent_package" cursor-agent
 assert_lazy_stub "$muse_package" muse
 pass "custom agent lazy stubs preserve their mise packages"
@@ -194,6 +196,7 @@ grep -Fx "$goose_package goose" "$stub_log" >/dev/null || fail "user setup creat
 grep -Fx "$kiro_cli_package kiro-cli" "$stub_log" >/dev/null || fail "user setup creates the Kiro CLI lazy stub"
 grep -Fx "$vibe_package vibe" "$stub_log" >/dev/null || fail "user setup creates the Mistral Vibe lazy stub"
 grep -Fx "$freebuff_package freebuff" "$stub_log" >/dev/null || fail "user setup creates the Freebuff lazy stub"
+grep -Fx "$zeroclaw_package zeroclaw" "$stub_log" >/dev/null || fail "user setup creates the ZeroClaw lazy stub"
 pass "user setup creates the custom agent lazy stubs"
 
 : >"$stub_log"
@@ -208,6 +211,7 @@ grep -Fx "$goose_package goose" "$stub_log" >/dev/null || fail "user setup recre
 grep -Fx "$kiro_cli_package kiro-cli" "$stub_log" >/dev/null || fail "user setup recreates the Kiro CLI lazy stub"
 grep -Fx "$vibe_package vibe" "$stub_log" >/dev/null || fail "user setup recreates the Mistral Vibe lazy stub"
 grep -Fx "$freebuff_package freebuff" "$stub_log" >/dev/null || fail "user setup recreates the Freebuff lazy stub"
+grep -Fx "$zeroclaw_package zeroclaw" "$stub_log" >/dev/null || fail "user setup recreates the ZeroClaw lazy stub"
 pass "user setup recreates wrappers even when the commands are present"
 
 : >"$stub_log"
@@ -255,6 +259,10 @@ grep -Fx "$vibe_package vibe" "$stub_log" >/dev/null || fail "Mistral Vibe migra
 : >"$stub_log"
 OMARCHY_TEST_MISSING_COMMAND=freebuff source "$ROOT/migrations/1792033907.sh" >/dev/null
 grep -Fx "$freebuff_package freebuff" "$stub_log" >/dev/null || fail "Freebuff migration creates its lazy stub"
+
+: >"$stub_log"
+OMARCHY_TEST_MISSING_COMMAND=zeroclaw source "$ROOT/migrations/1792034058.sh" >/dev/null
+grep -Fx "$zeroclaw_package zeroclaw" "$stub_log" >/dev/null || fail "ZeroClaw migration creates its lazy stub"
 
 : >"$stub_log"
 source "$ROOT/migrations/1785617047.sh" >/dev/null
@@ -366,6 +374,7 @@ OMARCHY_TEST_MISSING_COMMAND=goose source "$ROOT/migrations/1792033725.sh" >/dev
 OMARCHY_TEST_MISSING_COMMAND=kiro-cli source "$ROOT/migrations/1792033795.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=vibe source "$ROOT/migrations/1792033880.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=freebuff source "$ROOT/migrations/1792033907.sh" >/dev/null
+OMARCHY_TEST_MISSING_COMMAND=zeroclaw source "$ROOT/migrations/1792034058.sh" >/dev/null
 [[ ! -s $stub_log ]] || fail "agent migrations respect the preinstall opt-out"
 [[ ! -e $test_home/.local/bin/omp ]] || fail "agent migration removes the obsolete Oh My Pi wrapper after opt-out"
 
@@ -506,9 +515,10 @@ pass "agent migrations install working wrappers without overriding the preinstal
 "$ROOT/bin/omarchy-mise-install" "$kiro_cli_package" kiro-cli
 "$ROOT/bin/omarchy-mise-install" "$vibe_package" vibe
 "$ROOT/bin/omarchy-mise-install" "$freebuff_package" freebuff
+"$ROOT/bin/omarchy-mise-install" "$zeroclaw_package" zeroclaw
 touch "$test_home/.local/bin/agy" "$test_home/.local/bin/ori"
 omarchy-remove-preinstalls >/dev/null
-for command in agy omp ori grok crush cursor-agent muse kimi qwen dsh mcode goose kiro-cli vibe freebuff; do
+for command in agy omp ori grok crush cursor-agent muse kimi qwen dsh mcode goose kiro-cli vibe freebuff zeroclaw; do
   [[ ! -e $test_home/.local/bin/$command ]] || fail "Remove Preinstalls deletes the $command lazy stub"
 done
 pass "Remove Preinstalls deletes every optional agent lazy stub"
@@ -606,6 +616,7 @@ declare -A expected_agents=(
   [mistral]="vibe"
   [mistral-vibe]="vibe"
   [freebuff]="freebuff"
+  [zeroclaw]="zeroclaw"
   [cursor]="cursor-agent"
   [cursor-agent]="cursor-agent"
   [muse]="muse"
@@ -632,6 +643,7 @@ declare -A expected_packages=(
   [kiro-cli]="$kiro_cli_package"
   [vibe]="$vibe_package"
   [freebuff]="$freebuff_package"
+  [zeroclaw]="$zeroclaw_package"
   [cursor-agent]="$cursor_agent_package"
   [muse]="$muse_package"
 )
@@ -916,6 +928,7 @@ assert_launch kiro-cli kiro-cli chat --trust-all-tools -- "Review this project"
 assert_launch vibe vibe --auto-approve -- "Review this project"
 : >"$notification_history"
 assert_launch freebuff freebuff
+assert_launch zeroclaw zerocode
 [[ $(<"$clipboard_log") == "Review this project" ]] || fail "Freebuff launcher puts the prompt on the clipboard"
 mapfile -d '' -t notification_args <"$notification_history"
 [[ ${notification_args[*]} == *"Freebuff takes no starting prompt"* ]] || fail "Freebuff launcher says where the prompt went"
@@ -957,6 +970,7 @@ assert_bypass vibe vibe --auto-approve
 : >"$clipboard_log"
 : >"$notification_history"
 assert_bypass freebuff freebuff
+assert_bypass zeroclaw zerocode
 [[ ! -s $clipboard_log && ! -s $notification_history ]] || fail "Freebuff launcher leaves the clipboard alone without a prompt"
 pass "agent launcher skips permission prompts for every supported agent"
 

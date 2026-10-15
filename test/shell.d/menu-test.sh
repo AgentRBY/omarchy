@@ -260,6 +260,7 @@ const expectedAgents = {
   'kiro-cli': { icon: '\ue913', iconFont: 'omarchy', label: 'Kiro CLI' },
   vibe: { icon: '\ue914', iconFont: 'omarchy', label: 'Mistral Vibe' },
   freebuff: { icon: '\ue915', iconFont: 'omarchy', label: 'Freebuff' },
+  zeroclaw: { icon: '\u{f0b21}', label: 'ZeroClaw' },
   hermes: { icon: '\ue90a', iconFont: 'omarchy', label: 'Hermes' },
   openclaw: { icon: '\ue90c', iconFont: 'omarchy', label: 'OpenClaw' },
   copilot: { icon: '', label: 'Copilot' },
@@ -285,7 +286,7 @@ assertDeepEqual(
   defaultItems
     .filter(item => item.parent === 'setup.default.agent')
     .map(item => item.label),
-  ['Antigravity', 'Claude', 'Codex', 'Copilot', 'Crush', 'Cursor CLI', 'DeepSeek Harness', 'Freebuff', 'Goose', 'Grok', 'Hermes', 'Kimi', 'Kiro CLI', 'MiniMax Code', 'Mistral Vibe', 'Muse Code', 'omp', 'OpenClaw', 'OpenCode', 'Ori', 'Pi', 'Qwen Code'],
+  ['Antigravity', 'Claude', 'Codex', 'Copilot', 'Crush', 'Cursor CLI', 'DeepSeek Harness', 'Freebuff', 'Goose', 'Grok', 'Hermes', 'Kimi', 'Kiro CLI', 'MiniMax Code', 'Mistral Vibe', 'Muse Code', 'omp', 'OpenClaw', 'OpenCode', 'Ori', 'Pi', 'Qwen Code', 'ZeroClaw'],
   'menu sorts coding agents alphabetically'
 )
 const expectedDefaults = {

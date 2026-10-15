@@ -185,6 +185,12 @@ freebuff)
   command=(freebuff)
   prompt_via_clipboard="Freebuff"
   ;;
+zeroclaw)
+  # The terminal UI is zerocode, shipped in the same release. It takes no
+  # starting prompt, and autonomy is ZeroClaw configuration, not a flag.
+  command=(zerocode)
+  prompt_via_clipboard="ZeroClaw"
+  ;;
 *)
   echo "Unsupported default agent: $agent" >&2
   exit 1
