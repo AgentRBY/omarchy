@@ -7,7 +7,7 @@ source "$(dirname "$0")/base-test.sh"
 require_command jq
 require_command python3
 
-unset MUSE_DATA_DIR MUSE_AUTH_PATH MUSE_KEY_ENDPOINT
+unset MUSE_DATA_DIR MUSE_AUTH_PATH MUSE_KEY_ENDPOINT PI_CODING_AGENT_DIR OPENCODE_DB
 
 TEST_HOME=$(mktemp -d)
 trap 'rm -rf "$TEST_HOME"' EXIT

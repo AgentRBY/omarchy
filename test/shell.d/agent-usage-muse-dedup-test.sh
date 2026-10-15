@@ -17,6 +17,7 @@ export XDG_DATA_HOME="$TEST_HOME/data"
 # Only view directories within the sessions tree should be excluded.
 export MUSE_DATA_DIR="$TEST_HOME/.msp-view-parent/muse"
 export MUSE_AUTH_PATH="$TEST_HOME/no-auth.json"
+unset PI_CODING_AGENT_DIR OPENCODE_DB
 
 python3 - <<'PY'
 import json

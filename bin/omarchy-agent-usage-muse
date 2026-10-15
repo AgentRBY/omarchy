@@ -13,6 +13,8 @@ session counts, per-day and per-model breakdowns. Sources (all local):
   - opencode sessions with providerID == "meta" (any Muse Spark model).
     Muse Spark served through OpenCode Zen (providerID == "opencode") is
     Zen usage, and the opencode record counts it.
+  - pi/omp sessions on the `meta` provider, in every session root (profiles
+    and PI_CODING_AGENT_DIR included).
 
 Subscription windows (additive, authoritative only): when the CLI is signed
 in via `muse login`, the collector probes the client's own key endpoint
@@ -40,6 +42,7 @@ import math
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -59,8 +62,8 @@ MAX_SESSION_BYTES = 512 * 1024 * 1024
 
 # Cache schema version. Bump when the cached stats shape changes so old
 # caches are rescanned instead of trusted. 3: prompts and sessions from the
-# session index.
-CACHE_SCHEMA_VERSION = 3
+# session index. 4: pi/omp sessions counted.
+CACHE_SCHEMA_VERSION = 4
 
 # A token count past this is a corrupt field, not a model call.
 MAX_TOKENS = 1_000_000_000_000
@@ -541,6 +544,111 @@ def scan_opencode_sessions():
   return True
 
 
+# pi's and omp's session trees, each profile's too: `--profile=<name>` moves
+# the whole agent tree under <base>/profiles/<name>/, and PI_CODING_AGENT_DIR
+# moves pi's.
+def pi_session_roots():
+  roots = []
+  if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    roots.append(base / "agent" / "sessions")
+    try:
+      # Sorted so the scan order does not depend on directory order.
+      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      # No profiles directory, or it is unreadable: the default root stands.
+      pass
+  return list(dict.fromkeys(roots))
+
+
+def add_pi_entry(entry, path, seen):
+  if not isinstance(entry, dict) or entry.get("type") != "message":
+    return
+  message = entry.get("message")
+  if not isinstance(message, dict) or message.get("role") != "assistant":
+    return
+  # The same rule as opencode: the meta provider is Meta's own Muse Spark
+  # API, and Muse Spark through the Zen gateway stays OpenCode usage.
+  if str(message.get("provider") or "") != "meta":
+    return
+  usage = message.get("usage")
+  if not isinstance(usage, dict):
+    return
+  input_tokens = token_number(usage.get("input"))
+  # pi reports reasoning apart from output; both are generated.
+  output_tokens = token_number(usage.get("output")) + token_number(usage.get("reasoning"))
+  cache_read = token_number(usage.get("cacheRead"))
+  cache_write = token_number(usage.get("cacheWrite"))
+  if not (input_tokens or output_tokens or cache_read or cache_write):
+    # Some writers keep only the total; it was still spent.
+    input_tokens = token_number(usage.get("totalTokens"))
+    if not input_tokens:
+      return
+  model = model_name(message.get("model"))
+  if model is None:
+    return
+  timestamp = entry.get("timestamp")
+  day = local_day(timestamp) or local_day(message.get("timestamp"))
+  if day is None:
+    return
+  # A fork copies its parent's entries with their id and timestamp, so the
+  # pair names a message across files; an id alone only within its file.
+  # Without an id, each line is its own.
+  message_id = entry.get("id")
+  if isinstance(message_id, str) and message_id:
+    key = (message_id, str(timestamp)) if timestamp else (path, message_id)
+    if key in seen:
+      return
+    seen.add(key)
+  add_usage(day, path, model, input_tokens, output_tokens, cache_read, cache_write)
+
+
+def scan_pi_sessions():
+  """pi and omp messages on the meta provider, from every session root.
+
+  Returns True when every root was read in full (safe to cache).
+  """
+  roots = [root for root in pi_session_roots() if root.is_dir()]
+  if not roots:
+    return True
+  seen = set()
+  complete = True
+  for root in roots:
+    try:
+      proc = subprocess.run(
+        # --no-ignore: these are data files, not a source tree. A $HOME that
+        # is itself a git checkout would otherwise hide every session file
+        # behind its ignore rules.
+        ["rg", "--json", "--no-ignore", "--hidden", "--glob", "*.jsonl", "-e", r'"provider"\s*:\s*"meta"', str(root)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        errors="replace",
+        check=False,
+      )
+    except OSError:
+      print("omarchy-agent-usage-muse: rg is missing; pi and omp sessions were not scanned", file=sys.stderr)
+      return False
+    for raw in proc.stdout.splitlines():
+      try:
+        event = json.loads(raw)
+        if event.get("type") != "match":
+          continue
+        data = event["data"]
+        text = data["lines"].get("text")
+        if text is None:
+          # rg hands back lines that are not valid UTF-8 as base64.
+          text = base64.b64decode(data["lines"]["bytes"]).decode("utf-8", errors="replace")
+        add_pi_entry(json.loads(text), data["path"].get("text") or "pi-session", seen)
+      except Exception:
+        # One odd line costs that line, never the scan.
+        continue
+    # rg exits 1 for no match and 2 when it couldn't read something.
+    complete = complete and proc.returncode in (0, 1)
+  return complete
+
+
 # ------------------------------------------------------------------ limits
 #
 # Additive subscription windows only. Local metering above always runs; this
@@ -798,9 +906,9 @@ def cache_root():
 
 def scan_cache_paths():
   db = opencode_db()
-  digest = hashlib.sha1(
-    (str(Path.home()) + "\n" + str(muse_sessions_root()) + "\n" + str(db)).encode("utf-8")
-  ).hexdigest()[:16]
+  # The digest covers every data path the scan reads.
+  sources = [str(Path.home()), str(muse_sessions_root()), str(db)] + [str(root) for root in pi_session_roots()]
+  digest = hashlib.sha1("\n".join(sources).encode("utf-8")).hexdigest()[:16]
   root = cache_root()
   return root / f"muse-scan-{digest}.json", root / f"muse-scan-{digest}.lock"
 
@@ -875,6 +983,7 @@ def run_local_scans():
   indexed, index_read = scan_session_index()
   scan_native_muse_sessions(counted=not indexed)
   complete = scan_opencode_sessions()
+  complete = scan_pi_sessions() and complete
   return local_stats(), complete and index_read
 
 

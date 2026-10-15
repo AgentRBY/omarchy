@@ -17,7 +17,7 @@ export XDG_CACHE_HOME="$TEST_HOME/.cache"
 export XDG_CONFIG_HOME="$TEST_HOME/.config"
 export XDG_DATA_HOME="$TEST_HOME/.local/share"
 export MUSE_DATA_DIR="$TEST_HOME/muse-data"
-unset META_API_KEY META_API_BASE_URL MUSE_AUTH_PATH
+unset META_API_KEY META_API_BASE_URL MUSE_AUTH_PATH PI_CODING_AGENT_DIR OPENCODE_DB
 
 now_s=$(date +%s)
 now_us=$((now_s * 1000000))
@@ -414,3 +414,38 @@ result_badindex=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse")
 ! compgen -G "$index_home/cache/omarchy/agent-usage/muse-scan-*.json" >/dev/null ||
   fail "Muse collector doesn't cache a scan past an unreadable session index" "$(ls "$index_home/cache/omarchy/agent-usage")"
 pass "Muse collector falls back on completions past an unreadable session index"
+
+# pi and omp sessions on the meta provider, in every root: pi's and omp's
+# defaults, a profile under each, and a pi agent dir moved by
+# PI_CODING_AGENT_DIR, all under a $HOME that is a git checkout ignoring
+# everything. A forked session repeats its parent's message (same id and
+# timestamp) and counts once; lines without an id always count; Muse Spark
+# through the Zen gateway is opencode's; a user turn and rows whose timestamp
+# or tokens are garbage drop without taking the rest.
+pi_home="$TEST_HOME/pi-home"
+mkdir -p "$pi_home/.git" "$pi_home/.pi/agent/sessions/p" "$pi_home/.omp/agent/sessions/p" \
+  "$pi_home/.pi/profiles/home/agent/sessions/p" "$pi_home/.omp/profiles/work/agent/sessions/p" "$pi_home/moved/sessions/p"
+printf '*\n' >"$pi_home/.gitignore"
+pi_stamp=$(date -u -d "@$now_s" +%Y-%m-%dT%H:%M:%S.000Z)
+pi_line() {
+  printf '{"type":"message",%s"timestamp":%s,"message":{"role":"%s","provider":"%s","model":"muse-spark","usage":{"input":%s,"output":%s,"reasoning":%s}}}\n' "$1" "$2" "${5:-assistant}" "${6:-meta}" "$3" "$4" "${7:-0}"
+}
+pi_line '"id":"pi-default",' "\"$pi_stamp\"" 1 2 assistant meta 3 >"$pi_home/.pi/agent/sessions/p/a.jsonl"
+pi_line '"id":"omp-default",' "\"$pi_stamp\"" 10 0 >"$pi_home/.omp/agent/sessions/p/a.jsonl"
+{
+  pi_line '"id":"parent",' "\"$pi_stamp\"" 100 0
+  pi_line '' "\"$pi_stamp\"" 1000 0
+} >"$pi_home/.omp/profiles/work/agent/sessions/p/a.jsonl"
+{
+  pi_line '"id":"parent",' "\"$pi_stamp\"" 100 0
+  pi_line '"id":"zen",' "\"$pi_stamp\"" 5000 0 assistant opencode
+  pi_line '"id":"user",' "\"$pi_stamp\"" 5000 0 user
+  pi_line '"id":"bad-ts",' 0 5000 0
+  pi_line '"id":"bad-tokens",' "\"$pi_stamp\"" true 0
+} >"$pi_home/.pi/profiles/home/agent/sessions/p/fork.jsonl"
+pi_line '"id":"moved",' "\"$pi_stamp\"" 10000 0 >"$pi_home/moved/sessions/p/m.jsonl"
+result_pi=$(HOME="$pi_home" PI_CODING_AGENT_DIR="$pi_home/moved" XDG_DATA_HOME="$pi_home/data" XDG_CACHE_HOME="$pi_home/cache" \
+  XDG_CONFIG_HOME="$pi_home/config" MUSE_DATA_DIR="$pi_home/muse-data" "$ROOT/bin/omarchy-agent-usage-muse" --force)
+[[ $(jq -c '[.todayTotalTokens, .totalPrompts, .modelUsage["muse-spark"].outputTokens, .ready]' <<<"$result_pi") == '[11116,5,5,true]' ]] ||
+  fail "Muse collector scans every pi/omp root past ignore rules, dedups forks, keeps Zen usage out, skips garbage rows" "$result_pi"
+pass "Muse collector counts meta pi/omp sessions in every root, once each"
