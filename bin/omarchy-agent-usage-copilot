@@ -41,7 +41,6 @@ from __future__ import annotations
 import argparse
 import calendar
 import datetime as dt
-import fcntl
 import hashlib
 import http.client
 import json
@@ -51,11 +50,36 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+# The shared collector plumbing ships with the agents panel.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
+from collectors import (  # noqa: E402
+  PROBE_MIN_INTERVAL_SECONDS,
+  HttpError,
+  LimitsCache,
+  Stats,
+  base_record,
+  cache_root,
+  cached_scan,
+  config_home,
+  emit,
+  empty_bucket,
+  empty_stats,
+  find_command,
+  local_day,
+  now_ms,
+  number,
+  open_json,
+  read_json,
+  scan_max_age,
+  stamp,
+  token_count,
+  write_json,
+)
 
 AGENT_ID = "copilot"
 AGENT_NAME = "GitHub Copilot"
@@ -82,69 +106,16 @@ API_PLAN_LABELS = {
 # size depends on days and models, never on the number of rows.
 MAX_DB_BYTES = 512 * 1024 * 1024
 
-SCAN_REUSE_SECONDS = 20
-LIMITS_ONLY_REUSE_SECONDS = 900
-# Repeated panel opens reuse a quota answer this recent instead of asking
-# GitHub again; --force (a person pressing refresh) always asks.
-PROBE_MIN_INTERVAL_SECONDS = 15
-
-
-def number(value: Any) -> int:
-  try:
-    n = float(value or 0)
-    return round(n) if n == n else 0
-  except (TypeError, ValueError):
-    return 0
-
 
 def expand_path(value: str) -> Path:
   return Path(os.path.expandvars(os.path.expanduser(value))).resolve()
 
 
-def config_path() -> Path:
-  config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
-  return config_home / "omarchy" / "agents" / "copilot.json"
-
-
 def read_config() -> dict[str, Any]:
-  try:
-    parsed = json.loads(config_path().read_text(encoding="utf-8"))
-    return parsed if isinstance(parsed, dict) else {}
-  except (OSError, ValueError):
-    return {}
+  return read_json(config_home() / "omarchy" / "agents" / "copilot.json")
 
 
-def cache_root() -> Path:
-  root = (
-    Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
-    / "omarchy"
-    / "agent-usage"
-  )
-  root.mkdir(parents=True, exist_ok=True)
-  return root
-
-
-TOKEN_KEYS = (
-  "inputTokens",
-  "outputTokens",
-  "cacheReadInputTokens",
-  "cacheCreationInputTokens",
-)
-
-
-def empty_bucket() -> dict[str, int]:
-  return dict.fromkeys(TOKEN_KEYS, 0)
-
-
-def local_date_string() -> str:
-  return dt.datetime.now().date().isoformat()
-
-
-def recent_date_strings() -> list[str]:
-  today = dt.datetime.now().date()
-  return [
-    (today - dt.timedelta(days=offset)).isoformat() for offset in range(6, -1, -1)
-  ]
+TOKEN_KEYS = tuple(empty_bucket())
 
 
 def month_start(now: dt.datetime) -> dt.datetime:
@@ -178,11 +149,11 @@ def token_split(
   disjoint, like the other collectors', so the cached part comes off input
   and reasoning is never added a second time.
   """
-  read = number(cache_read)
-  write = number(cache_write)
+  read = token_count(cache_read)
+  write = token_count(cache_write)
   return {
-    "inputTokens": max(0, number(prompt_tokens) - read - write),
-    "outputTokens": number(output_tokens),
+    "inputTokens": max(0, token_count(prompt_tokens) - read - write),
+    "outputTokens": token_count(output_tokens),
     "cacheReadInputTokens": read,
     "cacheCreationInputTokens": write,
   }
@@ -220,11 +191,6 @@ def parse_event_time(value: Any) -> dt.datetime | None:
   if parsed.tzinfo is None:
     parsed = parsed.replace(tzinfo=dt.timezone.utc)
   return parsed.astimezone()
-
-
-def local_day(value: Any) -> str:
-  parsed = parse_event_time(value)
-  return parsed.date().isoformat() if parsed else local_date_string()
 
 
 def utc_month_key(value: Any) -> str:
@@ -288,47 +254,25 @@ def has_table(conn: sqlite3.Connection, name: str) -> bool:
 
 
 def blank_stats() -> dict[str, Any]:
-  return {
-    "todayPrompts": 0,
-    "todaySessions": 0,
-    "todayTotalTokens": 0,
-    "todayTokensByModel": {},
-    "recentDays": [
-      {"date": day, "messageCount": 0} for day in recent_date_strings()
-    ],
-    "modelUsage": {},
-    "totalPrompts": 0,
-    "totalSessions": 0,
-    "activeDays": 0,
-    "activeDates": [],
-    "monthCredits": 0.0,
-  }
+  return {**empty_stats(), "monthCredits": 0.0}
 
 
 # --------------------------------------------------------------- aggregate
 
 
-class UsageTally:
-  """Running aggregate shared by both scans.
+class UsageTally(Stats):
+  """Running aggregate shared by both scans, on the shared stats fields.
 
-  It grows with days, sessions, and models, never with raw events, so a scan
-  can stream an entire store or transcript directory through it.
+  Unlike a pi or opencode reply, a Copilot prompt and the tokens it spent
+  arrive apart (a transcript books a segment's tokens at its shutdown), so
+  each is counted on its own, along with the month's spend. It grows with
+  days, sessions, and models, never with raw events, so a scan can stream an
+  entire store or transcript directory through it.
   """
 
   def __init__(self) -> None:
-    self.today = local_date_string()
-    self.recent = {
-      day: {"date": day, "messageCount": 0} for day in recent_date_strings()
-    }
+    super().__init__()
     self.current_utc_month = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m")
-    self.sessions: set[str] = set()
-    self.active_dates: set[str] = set()
-    self.today_sessions: set[str] = set()
-    self.today_prompts = 0
-    self.today_total_tokens = 0
-    self.today_tokens_by_model: dict[str, int] = {}
-    self.total_prompts = 0
-    self.model_usage: dict[str, dict[str, int]] = {}
     self.month_credits = 0.0
 
   def prompt(self, session_key: str, day: str) -> None:
@@ -347,12 +291,10 @@ class UsageTally:
     for key in TOKEN_KEYS:
       bucket[key] += tokens[key]
     if day in self.recent:
-      self.recent[day]["messageCount"] += total
+      self.recent[day] += total
     if day == self.today:
-      self.today_total_tokens += total
-      self.today_tokens_by_model[model] = (
-        self.today_tokens_by_model.get(model, 0) + total
-      )
+      self.today_tokens += total
+      self.today_by_model[model] = self.today_by_model.get(model, 0) + total
 
   def spend(self, month_key: str, credits: float) -> None:
     # The allowance window is the current UTC month, matching the reset
@@ -361,19 +303,7 @@ class UsageTally:
       self.month_credits += credits
 
   def stats(self) -> dict[str, Any]:
-    return {
-      "todayPrompts": self.today_prompts,
-      "todaySessions": len(self.today_sessions),
-      "todayTotalTokens": self.today_total_tokens,
-      "todayTokensByModel": self.today_tokens_by_model,
-      "recentDays": [self.recent[day] for day in recent_date_strings()],
-      "modelUsage": self.model_usage,
-      "totalPrompts": self.total_prompts,
-      "totalSessions": len(self.sessions),
-      "activeDays": len(self.active_dates),
-      "activeDates": sorted(self.active_dates),
-      "monthCredits": round(self.month_credits, 6),
-    }
+    return {**self.snapshot(), "monthCredits": round(self.month_credits, 6)}
 
 
 # ---------------------------------------------------------- store scan
@@ -381,8 +311,8 @@ class UsageTally:
 # The session store's assistant_usage_events table records one row per billed
 # assistant request with day, model, session, the token split, and the cost in
 # total_nano_aiu. Rows stream through the tally rather than being fetched, so
-# lifetime totals cover the whole store at constant memory, and timestamps go
-# through the same lenient parser the transcript fallback uses.
+# lifetime totals cover the whole store at constant memory. A row with no time
+# is today's, and one whose time can't be trusted counts nowhere.
 
 
 def scan_store(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -396,6 +326,8 @@ def scan_store(conn: sqlite3.Connection) -> dict[str, Any]:
     for row in rows:
       session_id = clean_name(row["session_id"])
       day = local_day(row["created_at"])
+      if day is None:
+        continue
       tally.prompt(session_id or "unknown", day)
       tally.spend(
         utc_month_key(row["created_at"]),
@@ -556,7 +488,7 @@ def scan_transcript(event_file: Path, session_key: str, tally: UsageTally) -> No
       elif event_type == "assistant.message":
         model = clean_name(data.get("model")) or "copilot"
         replies.append(
-          (model, day, month_key, number(data.get("outputTokens")))
+          (model, day, month_key, token_count(data.get("outputTokens")))
         )
       elif event_type == "session.shutdown":
         for model, totals in shutdown_metrics(data).items():
@@ -595,107 +527,7 @@ def scan_transcripts(session_root: Path) -> dict[str, Any]:
   return tally.stats()
 
 
-# ------------------------------------------------------------------- cache
-
-
-def scan_cache_paths(home_dir: Path) -> tuple[Path, Path]:
-  digest = hashlib.sha1(str(home_dir).encode("utf-8")).hexdigest()[:16]
-  root = cache_root()
-  return root / f"copilot-scan-{digest}.json", root / f"copilot-scan-{digest}.lock"
-
-
-def read_fresh_json(path: Path, max_age_seconds: float) -> dict[str, Any] | None:
-  if max_age_seconds <= 0 or not path.exists():
-    return None
-  try:
-    age = time.time() - path.stat().st_mtime
-    if 0 <= age <= max_age_seconds:
-      return json.loads(path.read_text(encoding="utf-8"))
-  except Exception:
-    return None
-  return None
-
-
-def write_json(path: Path, payload: dict[str, Any]) -> None:
-  # A temp name unique to this writer, not derived from the target: several
-  # collectors can run at once (the update command backgrounds one per agent,
-  # the panel refreshes on its own), and a shared temp path means the second
-  # replace finds the first one's file already moved away.
-  handle_fd, tmp_name = tempfile.mkstemp(
-    dir=path.parent, prefix=path.name + ".", suffix=".tmp"
-  )
-  tmp = Path(tmp_name)
-  try:
-    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
-      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
-    tmp.chmod(0o644)
-    tmp.replace(path)
-  except BaseException:
-    tmp.unlink(missing_ok=True)
-    raise
-
-
-def read_cached_stats(
-  cache_file: Path, max_age_seconds: float, today: str
-) -> dict[str, Any] | None:
-  cached = read_fresh_json(cache_file, max_age_seconds)
-  if not isinstance(cached, dict) or cached.get("schemaVersion") != 1:
-    return None
-  if cached.get("scanDate") != today:
-    return None
-  stats = cached.get("stats")
-  if not isinstance(stats, dict):
-    return None
-  if not all(
-    key in stats
-    for key in (
-      "todayPrompts",
-      "todayTotalTokens",
-      "recentDays",
-      "activeDates",
-      "modelUsage",
-    )
-  ):
-    return None
-  return stats
-
-
-def write_cached_stats(cache_file: Path, stats: dict[str, Any]) -> None:
-  try:
-    write_json(
-      cache_file,
-      {"schemaVersion": 1, "scanDate": local_date_string(), "stats": stats},
-    )
-  except Exception as exc:
-    print(
-      f"omarchy-agent-usage-copilot: could not write usage cache ({exc})",
-      file=sys.stderr,
-    )
-
-
-def cached_scan(home_dir: Path, max_age_seconds: float) -> dict[str, Any]:
-  try:
-    cache_file, lock_file = scan_cache_paths(home_dir)
-    today = local_date_string()
-    cached = read_cached_stats(cache_file, max_age_seconds, today)
-    if cached is not None:
-      return cached
-    with lock_file.open("w") as lock:
-      fcntl.flock(lock, fcntl.LOCK_EX)
-      cached = read_cached_stats(cache_file, max_age_seconds, today)
-      if cached is not None:
-        return cached
-      stats, complete = direct_scan(home_dir)
-      # A scan cut short isn't served to the next runs; they try again.
-      if complete:
-        write_cached_stats(cache_file, stats)
-      return stats
-  except Exception as exc:
-    print(
-      f"omarchy-agent-usage-copilot: cache unavailable ({exc}); scanning directly",
-      file=sys.stderr,
-    )
-    return direct_scan(home_dir)[0]
+# ------------------------------------------------------------------- scan
 
 
 # The stats, and whether they are complete: a store that is there but could
@@ -723,10 +555,6 @@ def direct_scan(home_dir: Path) -> tuple[dict[str, Any], bool]:
 # ------------------------------------------------------------ remote quota
 
 
-def short_hash(value: str) -> str:
-  return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
-
-
 def env_token() -> str:
   for var in ("COPILOT_QUOTA_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
     value = os.environ.get(var)
@@ -736,7 +564,7 @@ def env_token() -> str:
 
 
 def gh_token() -> str:
-  exe = shutil.which("gh")
+  exe = find_command("gh")
   if not exe:
     return ""
   try:
@@ -786,19 +614,20 @@ def github_credential() -> tuple[str, str]:
 
   Environment first, so a user can scope exactly what this sees, then the
   `gh` CLI's own credential store, which is where a machine that has signed
-  in already keeps it. An exported token keys by its own hash. gh keys by the
-  account its hosts.yml names, and its token is only fetched when GitHub is
-  asked; a hosts.yml without a user falls back to fetching it now. Nothing
-  here is ever stored or logged.
+  in already keeps it. An exported token keys by itself (the limits cache
+  hashes whatever it is keyed by). gh keys by the account its hosts.yml
+  names, and its token is only fetched when GitHub is asked; a hosts.yml
+  without a user falls back to fetching it now. Nothing here is ever stored
+  or logged.
   """
   token = env_token()
   if token:
-    return short_hash(token), token
-  user = gh_user() if shutil.which("gh") else ""
+    return token, token
+  user = gh_user() if find_command("gh") else ""
   if user:
-    return short_hash(f"gh:github.com:{user}"), ""
+    return f"gh:github.com:{user}", ""
   token = gh_token()
-  return (short_hash(token), token) if token else ("", "")
+  return (token, token) if token else ("", "")
 
 
 def ask_quota(token: str) -> dict[str, Any]:
@@ -812,16 +641,16 @@ def ask_quota(token: str) -> dict[str, Any]:
     },
   )
   try:
-    with urllib.request.urlopen(request, timeout=REMOTE_TIMEOUT) as response:
-      payload = json.loads(response.read(2_000_000).decode("utf-8", errors="replace"))
-  except urllib.error.HTTPError as exc:
-    return {"available": False, "reason": f"http-{exc.code}"}
-  # A reply that came back unreadable is still an answer from GitHub.
-  except (http.client.HTTPException, ValueError):
+    payload = open_json(request, timeout=REMOTE_TIMEOUT, limit=2_000_000)
+  except HttpError as error:
+    if error.status:
+      return {"available": False, "reason": f"http-{error.status}"}
+    # No route, no DNS, refused, reset or timed out: nothing answered.
+    if error.transport and not isinstance(error.__cause__, http.client.HTTPException):
+      return {"available": False, "reason": "unreachable"}
+    # A reply that came back cut short or unreadable is still an answer from
+    # GitHub.
     return {"available": False, "reason": "bad-payload"}
-  # No route, no DNS, refused, reset or timed out: nothing answered.
-  except OSError:
-    return {"available": False, "reason": "unreachable"}
 
   if not isinstance(payload, dict):
     return {"available": False, "reason": "bad-payload"}
@@ -843,19 +672,11 @@ def ask_quota(token: str) -> dict[str, Any]:
   }
 
 
-def read_json(path: Path) -> dict[str, Any]:
-  try:
-    data = json.loads(path.read_text(encoding="utf-8"))
-  except (OSError, ValueError):
-    return {}
-  return data if isinstance(data, dict) else {}
-
-
 # Before the limits caches were named copilot-limits-*, each token kept its
 # answer as copilot-quota-<token hash>. Read once, when this account has no
 # answer under the new name, so the last allowance survives the rename.
 def adopt_legacy_cache(cache: Path, token: str) -> dict[str, Any]:
-  legacy = cache_root() / f"copilot-quota-{short_hash(token)}.json"
+  legacy = cache_root() / f"copilot-quota-{hashlib.sha256(token.encode('utf-8')).hexdigest()[:16]}.json"
   cached = read_json(legacy)
   if not cached.get("available"):
     return {}
@@ -877,16 +698,17 @@ def fetch_remote_quota(force: bool = False) -> dict[str, Any]:
   account never shows the last one's allowance. The cache is read whatever
   its file time, so a clock that went back doesn't lose it.
   """
-  key, token = github_credential()
-  if not key:
+  identity, token = github_credential()
+  if not identity:
     return {"available": False, "reason": "no-token"}
 
-  cache = cache_root() / f"copilot-limits-{key}.json"
-  cached = read_json(cache)
+  # The cache keeps GitHub's answer itself rather than meter rows: the meter
+  # is drawn from it at print time, budget and reset date included.
+  cache = LimitsCache(AGENT_ID, identity)
+  cached = cache.data
   # A panel opened and shut repeatedly must not turn into a request (and a
   # gh process) per flick, so an answer this recent is the answer.
-  age = time.time() - number(cached.get("fetchedAtMs")) / 1000
-  if not force and cached.get("available") and number(cached.get("fetchedAtMs")) > 0 and 0 <= age < PROBE_MIN_INTERVAL_SECONDS:
+  if not force and cached.get("available") and cache.younger_than(PROBE_MIN_INTERVAL_SECONDS):
     return open_quota(dict(cached, stale=False))
 
   # hosts.yml still naming the account while `gh auth token` fails is gh or
@@ -898,12 +720,12 @@ def fetch_remote_quota(force: bool = False) -> dict[str, Any]:
     quota = {"available": False, "reason": "no-token"}
   else:
     if not cached:
-      cached = adopt_legacy_cache(cache, token)
+      cached = adopt_legacy_cache(cache.path, token)
     quota = ask_quota(token)
   if quota.get("available"):
-    quota.update(stale=False, fetchedAtMs=int(time.time() * 1000))
+    quota.update(stale=False, fetchedAtMs=now_ms())
     try:
-      write_json(cache, quota)
+      write_json(cache.path, quota)
     except OSError:
       pass
     return quota
@@ -982,7 +804,7 @@ def allowance_limits(
       "resetsAt": parsed.isoformat() if parsed is not None and parsed > now else "",
     }]
     result["limitsStale"] = bool(remote.get("stale"))
-    result["limitsFetchedAt"] = number(remote.get("fetchedAtMs"))
+    result["limitsFetchedAt"] = stamp(remote.get("fetchedAtMs"))
     return result
 
   if reason == "no-token":
@@ -1025,8 +847,8 @@ def main() -> int:
   args = parser.parse_args()
 
   home_dir = expand_path(args.copilot_home)
-  max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
-  stats = cached_scan(home_dir, max_age)
+  # The digest covers the one data path the scan reads, the CLI's home.
+  stats = cached_scan(AGENT_ID, [home_dir], scan_max_age(args.force, args.limits_only), lambda: direct_scan(home_dir))
 
   config = read_config()
   now = dt.datetime.now(dt.timezone.utc)
@@ -1042,21 +864,19 @@ def main() -> int:
   allowance = allowance_limits(float(stats.get("monthCredits") or 0.0), config, remote, now, has_stats)
   ready = number(stats.get("totalPrompts")) > 0 or len(allowance["limits"]) > 0
 
-  record: dict[str, Any] = {
-    "schemaVersion": 1,
-    "id": AGENT_ID,
-    "name": AGENT_NAME,
-    "updatedAt": now.isoformat(),
-    "ready": ready,
-    "hasLocalStats": True,
-    "hasPromptStats": stats.get("hasPromptStats") is not False,
-    "tierLabel": allowance["tierLabel"],
-    "usageStatusText": allowance["usageStatusText"],
-    "authHelpText": allowance["authHelpText"],
-    "limits": allowance["limits"],
-    "limitsStale": allowance["limitsStale"],
-    "limitsFetchedAt": allowance["limitsFetchedAt"],
-  }
+  record = base_record(
+    AGENT_ID,
+    AGENT_NAME,
+    ready=ready,
+    hasLocalStats=True,
+    hasPromptStats=stats.get("hasPromptStats") is not False,
+    tierLabel=allowance["tierLabel"],
+    usageStatusText=allowance["usageStatusText"],
+    authHelpText=allowance["authHelpText"],
+    limits=allowance["limits"],
+    limitsStale=allowance["limitsStale"],
+    limitsFetchedAt=allowance["limitsFetchedAt"],
+  )
   # The first probe after login often fires before the network is up.
   if allowance["retryAdvised"]:
     record["retryAdvised"] = True
@@ -1073,7 +893,7 @@ def main() -> int:
   record["recentDays"] = stats.get("recentDays") or []
   record["modelUsage"] = stats.get("modelUsage") or {}
   record["activeDates"] = stats.get("activeDates") or []
-  print(json.dumps(record, separators=(",", ":")))
+  emit(record)
   return 0
 
 
