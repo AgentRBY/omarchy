@@ -255,6 +255,23 @@ if command -v rg >/dev/null; then
   [[ $(jq -r '.usageStatusText' <<<"$record") == "Waiting for auth" ]] ||
     fail "Antigravity collector in use only through local stats waits for a sign-in" "$record"
   pass "Antigravity collector counts usage from pi, omp, OpenClaw, and opencode's plugin"
+
+  # A migrated message sits in both opencode stores under the same id, and
+  # counts once.
+  rm "$test_tmp/.local/share/opencode/opencode.db"
+  sqlite "$test_tmp/.local/share/opencode/opencode.db" \
+    "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);
+     CREATE TABLE session_message (id TEXT, session_id TEXT, data TEXT, type TEXT);
+     INSERT INTO message VALUES
+       ('m1', 's1', '{\"role\":\"assistant\",\"providerID\":\"google\",\"modelID\":\"antigravity-gemini-3-pro\",\"time\":{\"created\":$(in_ms 0)},\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":1,\"cache\":{\"read\":2,\"write\":0}}}');
+     INSERT INTO session_message VALUES
+       ('m1', 's1', '{\"model\":{\"providerID\":\"google\",\"id\":\"antigravity-gemini-3-pro\"},\"time\":{\"created\":$(in_ms 0)},\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":1,\"cache\":{\"read\":2,\"write\":0}}}', 'assistant'),
+       ('m2', 's2', '{\"model\":{\"providerID\":\"google\",\"id\":\"antigravity-gemini-3-pro\"},\"time\":{\"created\":$(in_ms 0)},\"tokens\":{\"input\":4,\"output\":\"x\"}}', 'assistant');"
+  record=$(PI_DIR="$test_tmp/pi-elsewhere" collect "")
+  asked >/dev/null
+  [[ $(jq -c '{totalPrompts, totalSessions, todayTotalTokens, opencode: .modelUsage["antigravity-gemini-3-pro"].inputTokens}' <<<"$record") == '{"totalPrompts":7,"totalSessions":6,"todayTotalTokens":155,"opencode":14}' ]] ||
+    fail "Antigravity collector counts a message in both opencode stores once" "$record"
+  pass "Antigravity collector counts a message in both opencode stores once"
 else
   skip "Antigravity collector counts usage from pi, omp, OpenClaw, and opencode's plugin (no rg)"
 fi

@@ -714,19 +714,27 @@ def opencode_messages(problems):
   except sqlite3.Error:
     problems.append("opencode")
     return
+  # A migrated message sits in both stores under the same id, so V2 is read
+  # first and each id counts once. A table without an id column keys its rows
+  # by table and rowid, which never matches the other store.
+  def message_key(table):
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    return "id" if "id" in columns else f"'{table}:' || rowid"
+
   try:
     tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     rows = []
-    if "message" in tables:
-      rows += [("opencode:", session, raw, None) for session, raw in conn.execute("SELECT session_id, data FROM message WHERE data LIKE '%antigravity-%'")]
     if "session_message" in tables:
-      rows += [("opencode-v2:", session, raw, kind) for session, raw, kind in conn.execute("SELECT session_id, data, type FROM session_message WHERE data LIKE '%antigravity-%'")]
+      rows += conn.execute(f"SELECT {message_key('session_message')}, session_id, data, type FROM session_message WHERE data LIKE '%antigravity-%'").fetchall()
+    if "message" in tables:
+      rows += conn.execute(f"SELECT {message_key('message')}, session_id, data, NULL FROM message WHERE data LIKE '%antigravity-%'").fetchall()
   except sqlite3.Error:
     problems.append("opencode")
     return
   finally:
     conn.close()
-  for prefix, session, raw, kind in rows:
+  seen = set()
+  for message_id, session, raw, kind in rows:
     try:
       entry = json.loads(raw)
       if kind is None:
@@ -743,8 +751,10 @@ def opencode_messages(problems):
       continue
     # opencode keeps thinking tokens out of output; both are generated.
     counts = (number(tokens.get("input")), number(tokens.get("output")) + number(tokens.get("reasoning")), number(cache.get("read")), number(cache.get("write")))
-    if any(counts):
-      yield prefix + str(session), local_day(created), model_key(str(model)), counts
+    if any(counts) and str(message_id) not in seen:
+      seen.add(str(message_id))
+      # One key per session id across both stores: a migrated session is one.
+      yield "opencode:" + str(session), local_day(created), model_key(str(model)), counts
 
 
 # Hermes reaches Antigravity only through plugins that run agy itself, so its
