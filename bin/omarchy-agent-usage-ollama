@@ -5,8 +5,9 @@
 """Collect Ollama Cloud usage into one display-ready JSON record.
 
 Everything the agents panel shows for Ollama Cloud comes from this one
-command: local token stats from pi and omp sessions that ran on the
-`ollama-cloud` provider, and the account's 5-hour session and 7-day weekly
+command: local token stats from pi and omp sessions and from opencode's
+message database that ran on the `ollama-cloud` provider (or on a cloud model
+through the local daemon), and the account's 5-hour session and 7-day weekly
 limits from Ollama's usage endpoint. The panel itself only ever reads the
 JSON this prints; it never talks to disk formats or endpoints.
 """
@@ -21,6 +22,7 @@ import hashlib
 import json
 import math
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -213,7 +215,8 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 # ---------------------------------------------------------------- local scan
 #
 # pi and omp record every assistant message with its provider, model, and
-# token usage in JSONL session files. The `ollama-cloud` provider is the
+# token usage in JSONL session files, and opencode in its message database,
+# under the same provider ids. The `ollama-cloud` provider is the
 # Ollama Cloud API, which serves Claude models alongside the open ones. A
 # cloud-tagged model ("glm-4.6:cloud", "gpt-oss:120b-cloud") reached through
 # the local daemon's `ollama` provider runs on Ollama's servers too, so it
@@ -282,6 +285,118 @@ def matching_lines(root: Path, pattern: str) -> tuple[list[tuple[str, str]], boo
   return lines, proc.returncode in (0, 1)
 
 
+def opencode_db() -> Path:
+  # The database opencode itself reads, as the opencode collector finds it:
+  # OPENCODE_DB when set (a relative name lives beside the default one), and
+  # opencode-v2.db only for the builds that wrote nothing else.
+  root = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "opencode"
+  configured = os.environ.get("OPENCODE_DB", "").strip()
+  if configured:
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else root / path
+  normal = root / "opencode.db"
+  legacy = root / "opencode-v2.db"
+  return legacy if not normal.is_file() and legacy.is_file() else normal
+
+
+def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+  try:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+  except sqlite3.Error:
+    return set()
+
+
+def add_opencode_row(add: Any, message_id: str, session_id: Any, entry: Any, row_type: str, created: Any, seen: set[str]) -> None:
+  """Hand `add` what an opencode row billed to Ollama Cloud, if anything."""
+  # The original `message` table keeps the provider and model at the top
+  # level; V2's `session_message` nests them under `model` and keeps the role
+  # in its `type` column, with a compaction's tokens spent like a reply's.
+  if not isinstance(entry, dict) or (entry.get("role") or row_type) not in ("assistant", "compaction"):
+    return
+  nested = entry.get("model") if isinstance(entry.get("model"), dict) else {}
+  provider = str(entry.get("providerID") or nested.get("providerID") or "")
+  model = str(entry.get("modelID") or nested.get("id") or nested.get("modelID") or "")
+  if not billed_by_ollama_cloud(provider, model):
+    return
+  tokens = entry.get("tokens") if isinstance(entry.get("tokens"), dict) else {}
+  cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+  input_tokens = token_count(tokens.get("input"))
+  # opencode keeps thinking tokens out of output; both are generated.
+  output_tokens = token_count(tokens.get("output")) + token_count(tokens.get("reasoning"))
+  cache_read = token_count(cache.get("read"))
+  cache_write = token_count(cache.get("write"))
+  if not (input_tokens or output_tokens or cache_read or cache_write):
+    return
+  # A message migrated into both stores counts once.
+  if message_id in seen:
+    return
+  seen.add(message_id)
+  stamped = entry.get("time")
+  day = local_date_from_timestamp(stamped.get("created") if isinstance(stamped, dict) else None) or local_date_from_timestamp(created)
+  if day is None:
+    return
+  add("opencode:" + str(session_id), day, model, input_tokens, output_tokens, cache_read, cache_write)
+
+
+def scan_opencode_db(add: Any) -> bool:
+  """Feed `add` the Ollama Cloud rows from both of opencode's message stores,
+  deduplicated by message id. Returns whether the scan ran to completion."""
+  db = opencode_db()
+  if not db.is_file():
+    return True
+  try:
+    # Read-only: opencode may be writing right now.
+    conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+  except sqlite3.Error:
+    return False
+  # The LIKE gate is pure acceleration, matching both provider ids; the
+  # Python filter stays the authority for the rows that reach it.
+  gate = "LIKE '%\"providerID\"%:%\"ollama%'"
+  try:
+    conn.execute("PRAGMA query_only = ON")
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    seen: set[str] = set()
+    # V2 first: a build that migrated keeps reading, and a message in both
+    # stores counts once.
+    columns = table_columns(conn, "session_message") if "session_message" in tables else set()
+    if {"id", "session_id", "type", "data"} <= columns:
+      created = "m.time_created" if "time_created" in columns else "NULL"
+      source = "session_message m"
+      fork_filter = ""
+      if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= table_columns(conn, "session_v2"):
+        # A fork copies its source session's messages under new ids; only
+        # what came after the fork was spent in it.
+        source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
+        fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
+      for message_id, session_id, row_type, time_created, raw in conn.execute(
+        f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
+        f" WHERE m.type IN ('assistant', 'compaction') AND m.data {gate}" + fork_filter
+      ):
+        # One row that still fails must not take the scan down with it.
+        try:
+          add_opencode_row(add, str(message_id), session_id, json.loads(raw), str(row_type or ""), time_created, seen)
+        except Exception:
+          continue
+    columns = table_columns(conn, "message") if "message" in tables else set()
+    if {"session_id", "data"} <= columns:
+      row_id = "id" if "id" in columns else "rowid"
+      for message_id, session_id, raw in conn.execute(
+        f"SELECT {row_id}, session_id, data FROM message"
+        f" WHERE data LIKE '%\"role\"%:%\"assistant\"%' AND data {gate}"
+      ):
+        try:
+          add_opencode_row(add, str(message_id), session_id, json.loads(raw), "", None, seen)
+        except Exception:
+          continue
+  except sqlite3.Error:
+    # Transient lock, schema migration, corruption: the numbers stop here,
+    # incomplete.
+    return False
+  finally:
+    conn.close()
+  return True
+
+
 def scan_sessions(model_prefix: str) -> tuple[dict[str, Any], bool]:
   recent_dates = recent_date_strings()
   recent = {day: {"date": day, "messageCount": 0} for day in recent_dates}
@@ -300,6 +415,32 @@ def scan_sessions(model_prefix: str) -> tuple[dict[str, Any], bool]:
   today_prompt_count = 0
   today_token_total = 0
   complete = True
+
+  def add(session: str, day: str, raw_model: Any, input_tokens: int, output_tokens: int, cache_read: int, cache_write: int) -> None:
+    nonlocal prompts, today_prompt_count, today_token_total
+    total = input_tokens + output_tokens + cache_read + cache_write
+    # Ollama model ids carry a version tag ("deepseek-v4-pro:0813"); merge
+    # tags so the chart groups by model, not by release.
+    model = str(raw_model or "ollama").split(":", 1)[0]
+    if model_prefix and not model.lower().startswith(model_prefix):
+      return
+    sessions.add(session)
+    active_days.add(day)
+    prompts += 1
+    bucket = usage_by_model.setdefault(model, empty_bucket())
+    bucket["inputTokens"] += input_tokens
+    bucket["outputTokens"] += output_tokens
+    bucket["cacheReadInputTokens"] += cache_read
+    bucket["cacheCreationInputTokens"] += cache_write
+    if day in recent:
+      # recentDays.messageCount is actually a token total, despite the
+      # legacy name shared with synced snapshots.
+      recent[day]["messageCount"] += total
+    if day == today:
+      today_prompt_count += 1
+      today_sessions.add(session)
+      today_token_total += total
+      today_tokens[model] = today_tokens.get(model, 0) + total
 
   for root in pi_session_roots():
     if not root.is_dir():
@@ -331,11 +472,6 @@ def scan_sessions(model_prefix: str) -> tuple[dict[str, Any], bool]:
         input_tokens = total
       if total <= 0:
         continue
-      # Ollama model ids carry a version tag ("deepseek-v4-pro:0813"); merge
-      # tags so the chart groups by model, not by release.
-      model = str(message.get("model") or "ollama").split(":", 1)[0]
-      if model_prefix and not model.lower().startswith(model_prefix):
-        continue
       day = local_date_from_timestamp(entry.get("timestamp")) or local_date_from_timestamp(message.get("timestamp"))
       if day is None:
         continue
@@ -348,23 +484,9 @@ def scan_sessions(model_prefix: str) -> tuple[dict[str, Any], bool]:
           continue
         seen.add(key)
 
-      sessions.add(path)
-      active_days.add(day)
-      prompts += 1
-      bucket = usage_by_model.setdefault(model, empty_bucket())
-      bucket["inputTokens"] += input_tokens
-      bucket["outputTokens"] += output_tokens
-      bucket["cacheReadInputTokens"] += cache_read
-      bucket["cacheCreationInputTokens"] += cache_write
-      if day in recent:
-        # recentDays.messageCount is actually a token total, despite the
-        # legacy name shared with synced snapshots.
-        recent[day]["messageCount"] += total
-      if day == today:
-        today_prompt_count += 1
-        today_sessions.add(path)
-        today_token_total += total
-        today_tokens[model] = today_tokens.get(model, 0) + total
+      add(path, day, message.get("model"), input_tokens, output_tokens, cache_read, cache_write)
+
+  complete = scan_opencode_db(add) and complete
 
   stats = {
     "todayPrompts": today_prompt_count,
@@ -382,7 +504,9 @@ def scan_sessions(model_prefix: str) -> tuple[dict[str, Any], bool]:
 
 
 def cached_scan(max_age_seconds: float, model_prefix: str) -> dict[str, Any]:
-  roots = "\0".join(str(root) for root in pi_session_roots())
+  # The digest covers every data path the scan reads: the pi/omp session
+  # roots and the opencode DB.
+  roots = "\0".join([str(root) for root in pi_session_roots()] + [str(opencode_db())])
   digest = hashlib.sha1(roots.encode("utf-8")).hexdigest()[:16]
   cache_file = cache_root() / f"ollama-scan-{digest}.json"
   lock_file = cache_root() / f"ollama-scan-{digest}.lock"

@@ -329,3 +329,68 @@ tagged=$(HOME="$TAGGED_HOME" XDG_CONFIG_HOME="$TAGGED_HOME/.config" XDG_CACHE_HO
 [[ $(jq -r '.todayTotalTokens' <<<"$tagged") == "15" ]] ||
   fail "Ollama collector counts cloud models reached through the local daemon" "$tagged"
 pass "Ollama collector counts cloud models reached through the local daemon"
+
+# opencode's database, both stores side by side as a migrated install keeps
+# them: a row only in the original `message` table (reasoning folds into
+# output), a V2 compaction only in `session_message`, a migrated row in both
+# under one id (counted once), a fork's copy of its source's message (skipped)
+# and what the fork added after (counted), plus a model the local daemon runs
+# itself (the local collector's), a user turn and a malformed row, none of
+# them counted. 21 + 30 + 40 + 50 = 141.
+opencode_fixture() {
+  python3 - "$@" <<'PY'
+import json, sqlite3, sys, time
+db, provider_a, model_a, provider_b, model_b, decoy_provider, decoy_model = sys.argv[1:]
+now = int(time.time() * 1000) - 5000
+def v1(provider, model, tokens, role="assistant"):
+  return json.dumps({"role": role, "providerID": provider, "modelID": model, "tokens": tokens, "time": {"created": now}})
+def v2(provider, model, tokens):
+  return json.dumps({"model": {"providerID": provider, "id": model}, "tokens": tokens, "time": {"created": now}})
+conn = sqlite3.connect(db)
+conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text, time_created integer, time_updated integer, data text)")
+conn.execute("CREATE TABLE session_message (id text PRIMARY KEY, session_id text, type text, time_created integer, data text)")
+conn.execute("CREATE TABLE session_v2 (id text PRIMARY KEY, fork_session_id text, time_created integer)")
+conn.execute("INSERT INTO session_v2 VALUES ('ses_fork', 'ses_v2', ?)", (now - 30000,))
+conn.executemany("INSERT INTO message VALUES (?, ?, ?, ?, ?)", [
+  ("msg_v1", "ses_v1", now, now, v1(provider_a, model_a, {"input": 10, "output": 5, "reasoning": 2, "cache": {"read": 3, "write": 1}})),
+  ("msg_both", "ses_v1", now, now, v1(provider_a, model_a, {"input": 40})),
+  ("msg_decoy", "ses_v1", now, now, v1(decoy_provider, decoy_model, {"input": 999})),
+  ("msg_user", "ses_v1", now, now, v1(provider_a, model_a, {"input": 777}, role="user")),
+])
+conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?)", [
+  ("msg_v2", "ses_v2", "compaction", now, v2(provider_b, model_b, {"input": 30})),
+  ("msg_both", "ses_v1", "assistant", now, v2(provider_a, model_a, {"input": 40})),
+  ("msg_copy", "ses_fork", "assistant", now - 60000, v2(provider_b, model_b, {"input": 1000})),
+  ("msg_forked", "ses_fork", "assistant", now - 10000, v2(provider_b, model_b, {"input": 50})),
+  ("msg_bad", "ses_v2", "assistant", now, '{"model":{"providerID":"%s"' % provider_b),
+])
+conn.commit()
+conn.close()
+PY
+}
+
+OC_HOME=$(mktemp -d)
+trap 'rm -rf "$TEST_HOME" "$PI_HOME" "$CACHE_HOME" "$ROOTS_HOME" "$TAGGED_HOME" "$OC_HOME"' EXIT
+mkdir -p "$OC_HOME/.local/share/opencode"
+opencode_fixture "$OC_HOME/.local/share/opencode/opencode.db" ollama-cloud glm-4.6 ollama gpt-oss:120b-cloud ollama qwen3:8b
+oc_run() {
+  env -u PI_CODING_AGENT_DIR -u XDG_DATA_HOME -u OPENCODE_DB OLLAMA_API_KEY="" "$@" \
+    HOME="$OC_HOME" XDG_CONFIG_HOME="$OC_HOME/.config" XDG_CACHE_HOME="$OC_HOME/.cache" \
+    "$ROOT/bin/omarchy-agent-usage-ollama" --force
+}
+oc=$(oc_run)
+[[ $(jq -c '[.todayTotalTokens, .totalPrompts, .modelUsage["glm-4.6"].outputTokens, .modelUsage["gpt-oss"].inputTokens]' <<<"$oc") == "[141,4,7,80]" ]] ||
+  fail "Ollama collector counts Ollama Cloud rows from both opencode stores once, skipping fork copies and local models" "$oc"
+pass "Ollama collector counts Ollama Cloud rows from both opencode stores once"
+
+# OPENCODE_DB names the database opencode reads, a relative name beside the
+# default one; opencode-v2.db is read only when opencode.db is absent.
+mv "$OC_HOME/.local/share/opencode/opencode.db" "$OC_HOME/.local/share/opencode/custom.db"
+oc=$(oc_run OPENCODE_DB=custom.db)
+[[ $(jq -r '.todayTotalTokens' <<<"$oc") == "141" ]] ||
+  fail "Ollama collector reads the opencode database OPENCODE_DB names" "$oc"
+mv "$OC_HOME/.local/share/opencode/custom.db" "$OC_HOME/.local/share/opencode/opencode-v2.db"
+oc=$(oc_run)
+[[ $(jq -r '.todayTotalTokens' <<<"$oc") == "141" ]] ||
+  fail "Ollama collector falls back to opencode-v2.db" "$oc"
+pass "Ollama collector honours OPENCODE_DB and the opencode-v2.db fallback"
