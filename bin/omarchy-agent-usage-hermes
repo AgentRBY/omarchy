@@ -14,14 +14,34 @@ them as first-class sessions and so does this record.
 """
 
 import argparse
+import fcntl
+import hashlib
 import json
+import math
 import os
-import shutil
 import sqlite3
+import sys
+import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 RECENT_DAYS = 7
+
+# A scan this recent is only reused to dedup concurrent collector runs;
+# --limits-only promises only fresh limits, and Hermes has none, so it may
+# reuse the scan for up to 15 minutes. --force reuses nothing.
+SCAN_REUSE_SECONDS = 20
+LIMITS_ONLY_REUSE_SECONDS = 900
+
+# Token counts beyond this are a corrupt row, not usage.
+MAX_TOKENS = 10**12
+
+
+def cache_root():
+  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
+  root.mkdir(parents=True, exist_ok=True)
+  return root
 
 
 # Hermes anchors named profiles under ~/.hermes whatever HERMES_HOME says, so
@@ -44,8 +64,26 @@ def state_paths():
   return paths
 
 
+# Counts from disk are untrusted: a negative, non-finite, absurdly large or
+# non-numeric value counts as nothing.
+def tokens(value):
+  if isinstance(value, bool):
+    return 0
+  try:
+    parsed = float(value or 0)
+  except (TypeError, ValueError, OverflowError):
+    return 0
+  if not math.isfinite(parsed) or parsed <= 0 or parsed > MAX_TOKENS:
+    return 0
+  return int(parsed)
+
+
 def day_start(day):
   return datetime(day.year, day.month, day.day).astimezone().timestamp()
+
+
+def empty_bucket():
+  return {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
 
 
 # One database's share of the stats, added into the running totals.
@@ -53,13 +91,13 @@ def scan(path, totals, today, week):
   conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
   try:
     today_start = day_start(today)
-    week_start = day_start(week[0])
     totals["sessions"] += conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
     totals["todaySessions"] += conn.execute("SELECT COUNT(*) FROM sessions WHERE started_at >= ?", (today_start,)).fetchone()[0]
     totals["prompts"] += conn.execute("SELECT COUNT(*) FROM messages WHERE role = 'user'").fetchone()[0]
     totals["todayPrompts"] += conn.execute("SELECT COUNT(*) FROM messages WHERE role = 'user' AND timestamp >= ?", (today_start,)).fetchone()[0]
 
-    for date in conn.execute("SELECT DISTINCT date(started_at, 'unixepoch', 'localtime') FROM sessions"):
+    # A start time SQLite can't read as an epoch dates to NULL and names no day.
+    for date in conn.execute("SELECT DISTINCT date(started_at, 'unixepoch', 'localtime') FROM sessions WHERE started_at > 0"):
       if date[0]:
         totals["dates"].add(date[0])
 
@@ -73,72 +111,171 @@ def scan(path, totals, today, week):
          JOIN sessions s ON s.id = smu.session_id
          GROUP BY 1, 2"""
     ):
-      bucket = totals["models"].setdefault(model, {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0})
-      bucket["inputTokens"] += int(uncached or 0)
-      bucket["outputTokens"] += int(output or 0)
-      bucket["cacheReadInputTokens"] += int(cache_read or 0)
-      bucket["cacheCreationInputTokens"] += int(cache_write or 0)
-      tokens = int(uncached or 0) + int(output or 0) + int(cache_read or 0) + int(cache_write or 0)
+      counts = [tokens(uncached), tokens(output), tokens(cache_read), tokens(cache_write)]
+      total = sum(counts)
+      if not total:
+        continue
+      model = str(model or "hermes")
+      bucket = totals["models"].setdefault(model, empty_bucket())
+      for field, count in zip(("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"), counts):
+        bucket[field] += count
       if day in totals["byDay"]:
-        totals["byDay"][day] += tokens
-      if day == today.isoformat() and tokens:
-        totals["todayByModel"][model] = totals["todayByModel"].get(model, 0) + tokens
+        totals["byDay"][day] += total
+      if day == today.isoformat():
+        totals["todayByModel"][model] = totals["todayByModel"].get(model, 0) + total
   finally:
     conn.close()
 
 
-def collect():
-  now = datetime.now().astimezone()
-  today = now.date()
+# The stats from every state.db, with the paths that couldn't be read.
+def collect_stats(paths):
+  today = datetime.now().astimezone().date()
   week = [today - timedelta(days=offset) for offset in range(RECENT_DAYS - 1, -1, -1)]
   totals = {
     "sessions": 0, "todaySessions": 0, "prompts": 0, "todayPrompts": 0,
     "dates": set(), "models": {}, "todayByModel": {},
     "byDay": {day.isoformat(): 0 for day in week},
   }
-
-  paths = state_paths()
-  status = "" if paths else "Hermes state not found"
-  read = 0
+  unreadable = []
   for path in paths:
     try:
       scan(path, totals, today, week)
-      read += 1
-    except sqlite3.Error:
-      status = "Hermes state unreadable"
+    except sqlite3.Error as error:
+      unreadable.append(f"{path}: {error}")
 
   dates = sorted(totals["dates"])
-  return {
-    "schemaVersion": 1,
-    "id": "hermes",
-    "name": "Hermes",
-    "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": shutil.which("hermes") is not None,
-    "hasLocalStats": read > 0,
+  stats = {
     "todayPrompts": totals["todayPrompts"],
     "todaySessions": totals["todaySessions"],
     "todayTotalTokens": sum(totals["todayByModel"].values()),
     "todayTokensByModel": totals["todayByModel"],
-    "recentDays": [{"date": day, "messageCount": tokens} for day, tokens in totals["byDay"].items()],
+    "recentDays": [{"date": day, "messageCount": count} for day, count in totals["byDay"].items()],
     "totalPrompts": totals["prompts"],
     "totalSessions": totals["sessions"],
     "activeDays": len(dates),
-    "activeDates": dates[-400:],
+    # Every date travels: merging several machines' snapshots needs their
+    # union, which a count alone cannot give.
+    "activeDates": dates,
     "modelUsage": totals["models"],
-    "limits": [],
-    "tierLabel": "",
-    "usageStatusText": status,
-    "authHelpText": "",
   }
+  return stats, unreadable
+
+
+def read_fresh_json(path, max_age_seconds):
+  if max_age_seconds <= 0:
+    return None
+  try:
+    # A negative age means the mtime is in the future: the clock moved
+    # backwards since the write, so the cache's freshness cannot be trusted.
+    age = time.time() - path.stat().st_mtime
+    if 0 <= age < max_age_seconds:
+      parsed = json.loads(path.read_text(encoding="utf-8"))
+      return parsed if isinstance(parsed, dict) else None
+  except Exception:
+    return None
+  return None
+
+
+def write_json(path, payload):
+  # A temp name unique to this writer: several collector runs can overlap.
+  handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+  tmp = Path(tmp_name)
+  try:
+    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    tmp.chmod(0o644)
+    tmp.replace(path)
+  except BaseException:
+    tmp.unlink(missing_ok=True)
+    raise
+
+
+# The scan is cached per day and per set of databases, rebuilt under a lock
+# so concurrent runs wait for one scan. A scan that couldn't read every
+# database isn't cached.
+def cached_stats(paths, max_age):
+  scan_date = datetime.now().astimezone().date().isoformat()
+
+  def usable(cached):
+    if isinstance(cached, dict) and cached.get("schemaVersion") == 1 and cached.get("scanDate") == scan_date and isinstance(cached.get("stats"), dict):
+      return cached["stats"]
+    return None
+
+  try:
+    digest = hashlib.sha1("\n".join(str(path.resolve()) for path in paths).encode("utf-8")).hexdigest()[:16]
+    root = cache_root()
+    cache_file, lock_file = root / f"hermes-scan-{digest}.json", root / f"hermes-scan-{digest}.lock"
+    stats = usable(read_fresh_json(cache_file, max_age))
+    if stats is not None:
+      return stats, []
+    with lock_file.open("w") as lock:
+      fcntl.flock(lock, fcntl.LOCK_EX)
+      stats = usable(read_fresh_json(cache_file, max_age))
+      if stats is not None:
+        return stats, []
+      stats, unreadable = collect_stats(paths)
+      if not unreadable:
+        try:
+          write_json(cache_file, {"schemaVersion": 1, "scanDate": scan_date, "stats": stats})
+        except OSError as exc:
+          print(f"omarchy-agent-usage-hermes: could not write usage cache ({exc})", file=sys.stderr)
+      return stats, unreadable
+  except OSError as exc:
+    # The cache is an optimization; the record is the contract.
+    print(f"omarchy-agent-usage-hermes: cache unavailable ({exc}); scanning directly", file=sys.stderr)
+    return collect_stats(paths)
+
+
+def collect(force=False, limits_only=False):
+  record = {
+    "schemaVersion": 1,
+    "id": "hermes",
+    "name": "Hermes",
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "ready": False,
+    "hasLocalStats": False,
+    "hasPromptStats": True,
+    "tierLabel": "",
+    "usageStatusText": "",
+    "authHelpText": "",
+    "limits": [],
+    "limitsStale": False,
+    "limitsFetchedAt": 0,
+    "todayPrompts": 0,
+    "todaySessions": 0,
+    "todayTotalTokens": 0,
+    "todayTokensByModel": {},
+    "recentDays": [],
+    "totalPrompts": 0,
+    "totalSessions": 0,
+    "activeDays": 0,
+    "activeDates": [],
+    "modelUsage": {},
+  }
+
+  # No state.db: Hermes isn't used on this machine, which is not trouble --
+  # with sync on, another machine's Hermes still shows through its stats.
+  paths = state_paths()
+  if not paths:
+    return record
+
+  max_age = 0 if force else (LIMITS_ONLY_REUSE_SECONDS if limits_only else SCAN_REUSE_SECONDS)
+  stats, unreadable = cached_stats(paths, max_age)
+  record.update(stats)
+  record["ready"] = True
+  record["hasLocalStats"] = len(unreadable) < len(paths)
+  if unreadable:
+    record["usageStatusText"] = "Hermes unavailable"
+    record["authHelpText"] = "Couldn't read Hermes' state.db (" + "; ".join(unreadable) + ")."
+  return record
 
 
 def main():
-  # The shared collector flags are accepted; a local read is always fresh.
-  parser = argparse.ArgumentParser()
-  parser.add_argument("--force", action="store_true")
-  parser.add_argument("--limits-only", action="store_true")
-  parser.parse_args()
-  print(json.dumps(collect(), separators=(",", ":")))
+  parser = argparse.ArgumentParser(description="Print the Hermes Agent usage record as JSON")
+  parser.add_argument("--force", action="store_true", help="rescan every state.db, ignoring the cache")
+  parser.add_argument("--limits-only", action="store_true", help="reuse any recent scan; Hermes has no limits to probe")
+  args = parser.parse_args()
+  print(json.dumps(collect(args.force, args.limits_only), separators=(",", ":")))
 
 
 if __name__ == "__main__":
