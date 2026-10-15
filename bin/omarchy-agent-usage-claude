@@ -115,6 +115,64 @@ def number(value: Any) -> int:
     return 0
 
 
+# pi, omp, and opencode counts and times are read as every collector reading
+# those sources reads them. A boolean, NaN, negative, or absurdly large value
+# reads as nothing, never as a number that would swamp the totals. The
+# ceiling sits well above any epoch millisecond time.
+SOURCE_NUMBER_CEILING = 10 ** 15
+
+
+def source_number(value: Any) -> int:
+  if isinstance(value, bool):
+    return 0
+  try:
+    n = float(value or 0)
+  except (TypeError, ValueError, OverflowError):
+    return 0
+  if n != n or n in (float("inf"), float("-inf")) or n < 0 or n >= SOURCE_NUMBER_CEILING:
+    return 0
+  return round(n)
+
+
+# pi, omp, and the harnesses that copy their format spell usage camelCase or
+# snake_case; the first spelling present wins.
+def source_tokens(usage: dict[str, Any], *keys: str) -> int:
+  for key in keys:
+    if key in usage:
+      return source_number(usage.get(key))
+  return 0
+
+
+# The local day a pi or opencode row was spent on, or None when its time
+# can't be trusted, so the caller skips that row rather than the whole scan.
+# A row with no time at all is today's.
+def source_day(value: Any) -> str | None:
+  if value is None:
+    return local_date_string()
+  if isinstance(value, str) and value.strip().isdigit():
+    value = int(value.strip())
+  if isinstance(value, bool):
+    return None
+  if isinstance(value, (int, float)):
+    seconds = source_number(value)
+    if seconds <= 0:
+      return None
+    # pi and opencode write milliseconds.
+    if seconds > 10_000_000_000:
+      seconds = seconds / 1000
+    try:
+      return date_string(dt.datetime.fromtimestamp(seconds).date())
+    except (OverflowError, OSError, ValueError):
+      return None
+  try:
+    parsed = dt.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+  except ValueError:
+    return None
+  if parsed.tzinfo is not None:
+    parsed = parsed.astimezone()
+  return date_string(parsed.date())
+
+
 def empty_bucket() -> dict[str, int]:
   return {
     "inputTokens": 0,
@@ -556,7 +614,9 @@ def pi_session_roots() -> list[Path]:
 
 def scan_pi_usage(max_age_seconds: float) -> dict[str, Any] | None:
   roots = pi_session_roots()
-  cache_file = cache_root() / "claude-pi-sessions.json"
+  # Keyed by the roots read, so moving pi's tree is a cache miss.
+  digest = hashlib.sha1("\n".join(str(root) for root in roots).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+  cache_file = cache_root() / f"claude-pi-sessions-{digest}.json"
   cached = read_fresh_json(cache_file, max_age_seconds)
   if cached is not None:
     return cached.get("stats")
@@ -573,8 +633,12 @@ def scan_pi_usage(max_age_seconds: float) -> dict[str, Any] | None:
   prompts = 0
   today_prompt_count = 0
   today_token_total = 0
+  # A file that couldn't be read leaves the scan incomplete: it still serves
+  # this run, but isn't cached as the whole story.
+  complete = True
 
   for root in roots:
+    # Read directly rather than through rg, so no ignore rules apply.
     files = root.rglob("*.jsonl") if root.is_dir() else []
     for path in files:
       try:
@@ -605,19 +669,26 @@ def scan_pi_usage(max_age_seconds: float) -> dict[str, Any] | None:
               if unique_key in seen:
                 continue
               seen.add(unique_key)
-              usage = message.get("usage") or {}
-              input_tokens = usage_token(usage, "input", "inputTokens")
-              output_tokens = usage_token(usage, "output", "outputTokens")
-              cache_read = usage_token(usage, "cacheRead", "cache_read_input_tokens")
-              cache_write = usage_token(usage, "cacheWrite", "cache_creation_input_tokens")
+              usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
+              input_tokens = source_tokens(usage, "input", "inputTokens", "input_tokens")
+              # pi folds thinking into its own field; both are generated.
+              output_tokens = source_tokens(usage, "output", "outputTokens", "output_tokens") + source_tokens(usage, "reasoning", "reasoningTokens", "reasoning_tokens")
+              cache_read = source_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens")
+              cache_write = source_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens")
               total = input_tokens + output_tokens + cache_read + cache_write
               if total <= 0:
-                total = number(usage.get("totalTokens"))
+                # Some writers keep only the total; it still spent the subscription.
+                total = source_tokens(usage, "totalTokens", "total_tokens")
                 input_tokens = total
               if total <= 0:
                 continue
               model = str(message.get("model") or "claude")
-              day = local_date_from_timestamp(entry.get("timestamp") or message.get("timestamp"))
+              # The first time present decides: none at all is today's, and
+              # an untrusted one, zero included, skips only this line.
+              stamp = entry.get("timestamp")
+              day = source_day(message.get("timestamp") if stamp is None else stamp)
+              if day is None:
+                continue
             except Exception:
               continue
 
@@ -638,6 +709,7 @@ def scan_pi_usage(max_age_seconds: float) -> dict[str, Any] | None:
               today_token_total += total
               today_tokens[model] = today_tokens.get(model, 0) + total
       except OSError:
+        complete = False
         continue
 
   stats = None
@@ -654,7 +726,8 @@ def scan_pi_usage(max_age_seconds: float) -> dict[str, Any] | None:
       "activeDays": len(active_days),
       "activeDates": sorted(active_days),
     }
-  write_json(cache_file, {"stats": stats})
+  if complete:
+    write_json(cache_file, {"stats": stats})
   return stats
 
 
@@ -666,15 +739,115 @@ def scan_pi_usage(max_age_seconds: float) -> dict[str, Any] | None:
 # messages and merge the result into whatever the transcript scan found.
 
 
+def opencode_db() -> Path:
+  # OPENCODE_DB points opencode at another database, as the CLI itself reads
+  # it; a relative name lives beside the default one. Only a build whose
+  # channel was literally "v2" wrote opencode-v2.db, so it is a fallback for
+  # those installs alone.
+  root = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode"
+  configured = os.environ.get("OPENCODE_DB", "").strip()
+  if configured:
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else root / path
+  normal = root / "opencode.db"
+  legacy = root / "opencode-v2.db"
+  return legacy if not normal.is_file() and legacy.is_file() else normal
+
+
+def opencode_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+  try:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+  except sqlite3.Error:
+    return set()
+
+
+def opencode_row(entry: Any, row_type: str, created: Any) -> tuple[str, str, int, int, int, int] | None:
+  """(day, model, input, output, cache read, cache write) for one Anthropic
+  row, or None.
+
+  Shared by both message stores. The original `message` table keeps the
+  provider and model at the top level; the V2 `session_message` table nests
+  them under `model` and keeps the role in its `type` column, with a
+  compaction's tokens spent like any reply's.
+  """
+  if not isinstance(entry, dict):
+    return None
+  if (entry.get("role") or row_type) not in ("assistant", "compaction"):
+    return None
+  model = entry.get("model") if isinstance(entry.get("model"), dict) else {}
+  provider = entry.get("providerID") or model.get("providerID")
+  # Exact match: opencode provider ids are free-form, and a custom
+  # "anthropic-proxy" gateway is not this subscription.
+  if str(provider or "") != "anthropic":
+    return None
+  tokens = entry.get("tokens") if isinstance(entry.get("tokens"), dict) else {}
+  cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+  input_tokens = source_number(tokens.get("input"))
+  # opencode keeps thinking tokens out of output; both are generated.
+  output_tokens = source_number(tokens.get("output")) + source_number(tokens.get("reasoning"))
+  cache_read = source_number(cache.get("read"))
+  cache_write = source_number(cache.get("write"))
+  if not (input_tokens or output_tokens or cache_read or cache_write):
+    return None
+  # The message's own time, else the row's: none at all is today's, and an
+  # untrusted one, zero included, skips only this row.
+  times = entry.get("time") if isinstance(entry.get("time"), dict) else {}
+  stamp = times.get("created")
+  day = source_day(created if stamp is None else stamp)
+  if day is None:
+    return None
+  model_id = entry.get("modelID") or model.get("id") or model.get("modelID")
+  name = str(model_id or "claude").rstrip("/").split("/")[-1] or "claude"
+  return day, name, input_tokens, output_tokens, cache_read, cache_write
+
+
+def opencode_rows(conn: sqlite3.Connection, tables: set[str]):
+  """(message id, session id, entry, row type, created) for every row that may
+  be Anthropic's, V2's store first.
+
+  The LIKE gates skip rows whose JSON cannot name the provider before any
+  parse; opencode_row stays the authority for the rows that reach it.
+  """
+  columns = opencode_columns(conn, "session_message") if "session_message" in tables else set()
+  if {"id", "session_id", "type", "data"} <= columns:
+    created = "m.time_created" if "time_created" in columns else "NULL"
+    source = "session_message m"
+    fork_filter = ""
+    if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= opencode_columns(conn, "session_v2"):
+      # A fork copies its source session's messages under new ids; only what
+      # came after the fork was spent in it.
+      source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
+      fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
+    for message_id, session_id, row_type, time_created, raw in conn.execute(
+      f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
+      " WHERE m.type IN ('assistant', 'compaction')"
+      " AND m.data LIKE '%\"providerID\"%:%\"anthropic\"%'" + fork_filter
+    ):
+      yield str(message_id), session_id, raw, str(row_type or ""), time_created
+  columns = opencode_columns(conn, "message") if "message" in tables else set()
+  if {"session_id", "data"} <= columns:
+    # json_extract RAISES on malformed JSON, so each call sits inside a
+    # json_valid CASE rather than a bare AND term.
+    row_id = "id" if "id" in columns else "rowid"
+    for message_id, session_id, raw in conn.execute(
+      f"SELECT {row_id}, session_id, data FROM message"
+      " WHERE data LIKE '%\"role\"%:%\"assistant\"%'"
+      " AND data LIKE '%\"providerID\"%:%\"anthropic\"%'"
+      " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END = 'assistant'"
+      " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.providerID') END = 'anthropic'"
+    ):
+      yield str(message_id), session_id, raw, "", None
+
+
 def scan_opencode_usage(max_age_seconds: float) -> dict[str, Any] | None:
-  db = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode" / "opencode.db"
+  db = opencode_db()
   if not db.is_file():
     return None
 
   # Same freshness contract as the transcript scan: --limits-only promises to
   # reuse recent local stats, and a big opencode history walked on every panel
   # open would break that promise.
-  cache_file = cache_root() / f"claude-opencode-{hashlib.sha1(str(db).encode('utf-8')).hexdigest()[:16]}.json"
+  cache_file = cache_root() / f"claude-opencode-{hashlib.sha1(str(db).encode('utf-8', 'surrogatepass')).hexdigest()[:16]}.json"
   cached = read_fresh_json(cache_file, max_age_seconds)
   if cached is not None:
     return cached.get("stats")
@@ -696,66 +869,26 @@ def scan_opencode_usage(max_age_seconds: float) -> dict[str, Any] | None:
     conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
   except sqlite3.Error:
     return None
+  # A scan cut short by a database error still contributes what it read, but
+  # must not be cached as if it were the whole story.
+  complete = True
   try:
     conn.execute("PRAGMA query_only = ON")
     tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    # opencode v1 keeps messages in `message`, with the role, provider and model
-    # in each row's data. v2 writes `session_message` instead: the role moves to
-    # the `type` column and the provider and model nest under data.model. A
-    # database can hold either or both, and a migrated message sits in both
-    # under the same id, so V2 is read first and each id counts once.
-    # A table without an id column keys its rows by table and rowid, which
-    # never matches the other store.
-    def message_key(table: str) -> str:
-      columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-      return "id" if "id" in columns else f"'{table}:' || rowid"
-
-    queries = []
-    if "session_message" in tables:
-      queries.append(f"SELECT {message_key('session_message')}, session_id, data, type FROM session_message")
-    if "message" in tables:
-      queries.append(f"SELECT {message_key('message')}, session_id, data, NULL FROM message")
+    # Both stores, V2 first, deduplicated by message id: a build that
+    # migrated keeps reading, and a message in both counts once.
     seen: set[str] = set()
-    rows = (row for query in queries for row in conn.execute(query))
-    for row_id, session_id, raw, row_type in rows:
-      # One malformed row must not abort the scan, so every shape assumption
-      # lives inside the try.
+    for message_id, session_id, raw, row_type, created in opencode_rows(conn, tables):
+      # One malformed row must not abort the scan.
       try:
-        entry = json.loads(raw)
-        if not isinstance(entry, dict):
-          continue
-        if row_type is None:
-          role = entry.get("role")
-          provider = entry.get("providerID")
-          model_id = entry.get("modelID")
-        else:
-          role = row_type
-          model_info = entry.get("model") or {}
-          provider = model_info.get("providerID")
-          model_id = model_info.get("id")
-        # Exact match: opencode provider ids are free-form, and a custom
-        # "anthropic-proxy" gateway is not this subscription.
-        if role != "assistant" or str(provider or "") != "anthropic":
-          continue
-        tokens = entry.get("tokens") or {}
-        cache = tokens.get("cache") or {}
-        input_tokens = number(tokens.get("input"))
-        # opencode keeps thinking tokens out of output; both are generated.
-        output_tokens = number(tokens.get("output")) + number(tokens.get("reasoning"))
-        cache_read = number(cache.get("read"))
-        cache_write = number(cache.get("write"))
-        total = input_tokens + output_tokens + cache_read + cache_write
-        if total <= 0:
-          continue
-
-        created = number((entry.get("time") or {}).get("created"))
-        day = dt.datetime.fromtimestamp(created / 1000).strftime("%Y-%m-%d") if created > 0 else today
-        model = str(model_id or "claude").rstrip("/").split("/")[-1]
+        row = opencode_row(json.loads(raw), row_type, created)
       except Exception:
         continue
-      if str(row_id) in seen:
+      if row is None or message_id in seen:
         continue
-      seen.add(str(row_id))
+      seen.add(message_id)
+      day, model, input_tokens, output_tokens, cache_read, cache_write = row
+      total = input_tokens + output_tokens + cache_read + cache_write
       # One key per session id across both stores: a migrated session is one.
       session_key = "opencode:" + str(session_id)
       sessions.add(session_key)
@@ -776,7 +909,7 @@ def scan_opencode_usage(max_age_seconds: float) -> dict[str, Any] | None:
         today_token_total += total
         today_tokens[model] = today_tokens.get(model, 0) + total
   except sqlite3.Error:
-    return None
+    complete = False
   finally:
     conn.close()
 
@@ -794,7 +927,8 @@ def scan_opencode_usage(max_age_seconds: float) -> dict[str, Any] | None:
       "activeDays": len(active_days),
       "activeDates": sorted(active_days),
     }
-  write_json(cache_file, {"stats": stats})
+  if complete:
+    write_json(cache_file, {"stats": stats})
   return stats
 
 
