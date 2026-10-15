@@ -193,20 +193,20 @@ def credits_limit(data):
   }
 
 
-# A window whose reset has passed starts over empty. A weekly one's next
-# reset is a whole number of weeks later; a monthly one's isn't known.
-def rolled_forward(limits):
+# A kept window whose reset has passed starts over empty. Its next reset is
+# xAI's to say, so it stays unknown until a probe answers.
+def usable_cached_limits(cached):
+  limits = cached.get("limits")
+  if not isinstance(limits, list):
+    return []
   now = datetime.now(timezone.utc)
-  rolled = []
+  usable = []
   for limit in limits:
+    if not isinstance(limit, dict):
+      continue
     resets = parse_time(limit.get("resetsAt"))
-    if resets and resets <= now:
-      limit = dict(limit, percent=0.0, resetsAt="")
-      if limit.get("label") == "Weekly":
-        weeks = (now - resets) // timedelta(weeks=1) + 1
-        limit["resetsAt"] = (resets + weeks * timedelta(weeks=1)).isoformat()
-    rolled.append(limit)
-  return rolled
+    usable.append(dict(limit, percent=0.0, resetsAt="") if resets and resets <= now else limit)
+  return usable
 
 
 def collect_limits(home, key, force):
@@ -218,19 +218,21 @@ def collect_limits(home, key, force):
     return result
 
   cache = cache_root() / f"grok-limits-{key}.json"
-  cached = read_json(cache) or {}
+  cached = read_json(cache)
+  cached = cached if isinstance(cached, dict) else {}
+  fallback = usable_cached_limits(cached)
   fetched_at = float(cached.get("fetchedAtMs") or 0)
   result["fetchedAtMs"] = fetched_at
 
   expires = parse_time(entry.get("expires_at"))
   if expires and expires.timestamp() <= time.time():
-    result["limits"] = cached.get("limits") or []
+    result["limits"] = fallback
     # The access token lives six hours and Grok mints a new one from its
     # refresh token whenever it starts, so a lapsed one is routine, not a
     # sign-out. And while Grok hasn't run, nothing here has spent its
-    # allowance, so the last numbers still stand, rolled past any reset.
+    # allowance, so the last numbers still stand, an elapsed window at zero.
     if entry.get("refresh_token") and time.time() - expires.timestamp() < REFRESH_LIFETIME_SECONDS:
-      result.update(limits=rolled_forward(result["limits"]), live=True)
+      result["live"] = True
       if not result["limits"]:
         result["usageStatusText"] = "Limits paused"
         result["authHelpText"] = "Start Grok to see its limits; signing in again is not needed."
@@ -239,8 +241,8 @@ def collect_limits(home, key, force):
       result["authHelpText"] = "Grok's saved sign-in expired. Start Grok to refresh it."
     return result
 
-  if cached.get("limits") and not force and time.time() - fetched_at / 1000 < PROBE_REUSE_SECONDS:
-    result.update(limits=cached["limits"], live=True, authHelpText="")
+  if fallback and not force and time.time() - fetched_at / 1000 < PROBE_REUSE_SECONDS:
+    result.update(limits=fallback, live=True, authHelpText="")
     return result
 
   request = urllib.request.Request(CREDITS_URL, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
@@ -258,7 +260,7 @@ def collect_limits(home, key, force):
     result.update(limits=[limit], live=True, fetchedAtMs=round(time.time() * 1000), authHelpText="")
     write_json(cache, {"fetchedAtMs": result["fetchedAtMs"], "limits": result["limits"]})
   else:
-    result["limits"] = cached.get("limits") or []
+    result["limits"] = fallback
     if not result["usageStatusText"] and not result["limits"]:
       result["usageStatusText"] = "Grok limits unavailable"
   return result

@@ -43,6 +43,11 @@ end = os.environ["PERIOD_END"]
 # percentage of zero.
 def urlopen(request, timeout=None):
   assert request.full_url == collector.CREDITS_URL
+  failure = os.environ.get("GROK_FAIL")
+  if failure == "unreachable":
+    raise collector.urllib.error.URLError(OSError("Name or service not known"))
+  if failure:
+    raise collector.urllib.error.HTTPError(request.full_url, int(failure), "refused", {}, None)
   token = request.get_header("Authorization").split(" ", 1)[1]
   config = {"currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY", "end": end}, "billingPeriodEnd": end}
   if used.get(token):
@@ -96,17 +101,16 @@ record=$(collect)
   fail "a lapsed access token with a refresh token keeps showing the last numbers" "$record"
 pass "a lapsed access token with a refresh token keeps showing the last numbers"
 
-# A week that reset while Grok sat idle starts over at 0%, a week later.
+# A week that reset while Grok sat idle starts over at 0%, its next reset
+# unknown until xAI says.
 cache=$(ls "$XDG_CACHE_HOME"/omarchy/agent-usage/grok-limits-*.json | head -1)
 reset_past=$(python3 -c 'import datetime as dt; print((dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)).isoformat())')
 jq --arg at "$reset_past" '.limits[0].resetsAt = $at' "$cache" >"$test_tmp/cache.json"
 mv "$test_tmp/cache.json" "$cache"
 record=$(collect)
-next_reset=$(jq -r '.limits[0].resetsAt' <<<"$record")
-[[ $(jq -r '.limits[0].percent' <<<"$record") == 0.0 ]] &&
-  python3 -c 'import datetime as dt, sys; n = dt.datetime.fromisoformat(sys.argv[1]); d = n - dt.datetime.now(dt.timezone.utc); sys.exit(0 if dt.timedelta(days=6) < d < dt.timedelta(days=7) else 1)' "$next_reset" ||
-  fail "a week that reset while Grok was idle starts over a week later" "$record"
-pass "a week that reset while Grok was idle starts over a week later"
+[[ $(jq -c '.limits[0] | {percent, resetsAt}' <<<"$record") == '{"percent":0.0,"resetsAt":""}' ]] ||
+  fail "a week that reset while Grok was idle starts over at zero" "$record"
+pass "a week that reset while Grok was idle starts over at zero"
 
 # Without cached numbers there's nothing to show, so it says how to get them.
 rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/grok-limits-*.json
@@ -123,6 +127,24 @@ record=$(collect)
 [[ $(jq -r '.usageStatusText' <<<"$record") == "Sign-in expired" ]] ||
   fail "a sign-in lapsed past Grok's 30 days asks for a sign-in" "$record"
 pass "a sign-in lapsed past Grok's 30 days asks for a sign-in"
+
+# A failed check keeps the last numbers, stale, and a window that has reset
+# since comes back at zero rather than at what it read then.
+signed_in "$HOME/.grok" token-main u-main "$future" "X Premium+"
+rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/grok-limits-*.json
+fresh=$(collect)
+fetched_at=$(jq '.limitsFetchedAt' <<<"$fresh")
+record=$(GROK_FAIL=500 collect)
+[[ $(jq -c --argjson at "$fetched_at" '{stale: .limitsStale, at: (.limitsFetchedAt == $at), percent: .limits[0].percent, status: .usageStatusText}' <<<"$record") == '{"stale":true,"at":true,"percent":0.42,"status":""}' ]] ||
+  fail "a failed Grok check keeps the last credits, stale" "$record"
+pass "a failed Grok check keeps the last credits, stale"
+cache=$(ls "$XDG_CACHE_HOME"/omarchy/agent-usage/grok-limits-*.json | head -1)
+jq --arg at "$reset_past" '.limits[0].resetsAt = $at' "$cache" >"$test_tmp/cache.json"
+mv "$test_tmp/cache.json" "$cache"
+record=$(GROK_FAIL=500 collect)
+[[ $(jq -c '{stale: .limitsStale, window: (.limits[0] | {percent, resetsAt})}' <<<"$record") == '{"stale":true,"window":{"percent":0.0,"resetsAt":""}}' ]] ||
+  fail "a failed Grok check zeroes a kept window that has reset since" "$record"
+pass "a failed Grok check zeroes a kept window that has reset since"
 
 # A period with nothing used yet comes without a percentage.
 signed_in "$HOME/.grok" token-fresh u-main "$future" "X Premium+"
