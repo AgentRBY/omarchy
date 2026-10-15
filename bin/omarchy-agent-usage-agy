@@ -11,7 +11,10 @@ Local stats come from Antigravity's history log, conversation summaries, and
 conversation transcripts under ~/.gemini/antigravity-cli/. The plan and
 limits come from the Google Cloud Code API (v1internal:loadCodeAssist and
 v1internal:retrieveUserQuotaSummary), asked with the sign-in agy keeps in the
-Secret Service keyring. The agents panel only ever reads the JSON this prints.
+Secret Service keyring (or its antigravity-oauth-token file), or with the
+Antigravity sign-in omp, pi, or opencode's Antigravity plugin keeps; a lapsed
+omp sign-in is asked through `omp usage`, which renews it. Those stores are
+only ever read. The agents panel only ever reads the JSON this prints.
 """
 
 import argparse
@@ -22,6 +25,7 @@ import http.client
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -33,9 +37,9 @@ from pathlib import Path
 
 AGENT_ID = "agy"
 AGENT_NAME = "Antigravity"
-AUTH_HELP = "Run `agy` to sign in."
+AUTH_HELP = "Run `agy` to sign in, or sign in to Antigravity in omp, pi, or opencode."
 # How each source of a sign-in is named when it needs attention.
-SOURCE_NAMES = {"agy": "`agy`"}
+SOURCE_NAMES = {"agy": "`agy`", "omp": "omp", "pi": "pi", "opencode": "opencode"}
 PROBE_MIN_INTERVAL_SECONDS = 15
 SCAN_REUSE_SECONDS = 20
 # A limits-only refresh needs fresh limits, not a fresh history scan.
@@ -110,6 +114,7 @@ def local_day(value):
 
 # The sign-in agy keeps in the keyring: its access token, when that lapses,
 # whether a refresh token stands behind it, and which kind of account it is.
+# Without a Secret Service, agy keeps the same sign-in in a file of its own.
 def login():
   try:
     raw = subprocess.check_output(
@@ -119,6 +124,8 @@ def login():
     data = json.loads(raw) if raw.strip() else None
   except Exception:
     data = None
+  if not isinstance(data, dict):
+    data = read_json(app_root() / "antigravity-oauth-token")
   if not isinstance(data, dict):
     return None
 
@@ -134,9 +141,76 @@ def login():
   }
 
 
+# omp, pi, and opencode's Antigravity plugin sign in with the same Google
+# client agy uses, so the access tokens they keep reach the same plan and
+# quota. Each refreshes its own token while it runs; these are only ever
+# read, never refreshed or written back.
+def harness_login(source, data):
+  if not isinstance(data, dict) or data.get("type", "oauth") != "oauth" or not isinstance(data.get("access"), str) or not data["access"]:
+    return None
+  expires = parse_time(data.get("expires"))
+  return {
+    "source": source,
+    "accessToken": data["access"],
+    "expiresAt": expires.timestamp() if expires else 0,
+    "refresh": str(data.get("refresh") or ""),
+    "authMethod": "consumer",
+    "email": str(data.get("email") or ""),
+  }
+
+
+def omp_logins():
+  database = Path.home() / ".omp" / "agent" / "agent.db"
+  if not database.is_file():
+    return []
+  try:
+    conn = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+    try:
+      rows = conn.execute(
+        "SELECT data FROM auth_credentials WHERE provider = 'google-antigravity' "
+        "AND credential_type = 'oauth' AND disabled_cause IS NULL"
+      ).fetchall()
+    finally:
+      conn.close()
+  except sqlite3.Error:
+    return []
+  logins = []
+  for (data,) in rows:
+    try:
+      entry = harness_login("omp", json.loads(data))
+    except (TypeError, ValueError):
+      continue
+    if entry:
+      logins.append(entry)
+  return logins
+
+
+def pi_agent_dir():
+  return Path(os.environ.get("PI_CODING_AGENT_DIR") or (Path.home() / ".pi" / "agent"))
+
+
+def pi_logins():
+  auth = read_json(pi_agent_dir() / "auth.json")
+  entry = harness_login("pi", auth.get("google-antigravity")) if isinstance(auth, dict) else None
+  return [entry] if entry else []
+
+
+# opencode files the Antigravity plugin's sign-in under its "google"
+# provider, which other Google sign-ins share, so it only counts alongside
+# the plugin's own accounts file.
+def opencode_logins():
+  config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+  if not (config_home / "opencode" / "antigravity-accounts.json").is_file():
+    return []
+  data_home = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+  auth = read_json(data_home / "opencode" / "auth.json")
+  entry = harness_login("opencode", auth.get("google")) if isinstance(auth, dict) else None
+  return [entry] if entry else []
+
+
 def logins():
   entry = login()
-  return [entry] if entry else []
+  return ([entry] if entry else []) + omp_logins() + pi_logins() + opencode_logins()
 
 
 def email_of(id_token):
@@ -313,27 +387,31 @@ def collect_limits(entries, force):
   ordered = sorted(entries, key=lambda e: (not token_fresh(e, now), -e["expiresAt"]))
   fresh = [e for e in ordered if token_fresh(e, now)]
   lead = next(iter(fresh or [e for e in ordered if e["accessToken"]] or ordered), None)
+  omp = shutil.which("omp") if any(e["source"] == "omp" for e in entries) else None
+  omp_entries = [e for e in ordered if e["source"] == "omp"] if omp else []
 
   def keep(entry):
     cached = cached_answer(entry) if entry else {}
     result.update(limits=usable_cached_limits(cached), tierLabel=str(cached.get("tierLabel") or ""), fetchedAtMs=fetched_at_ms(cached))
+
+  def answered(entry, tier, limits):
+    # A plan with no quota windows to report is healthy, with no meters.
+    fetched = round(time.time() * 1000)
+    result.update(limits=limits, tierLabel=tier, live=True, fetchedAtMs=fetched)
+    path = limits_cache(entry)
+    if path:
+      write_json(path, {"fetchedAtMs": fetched, "limits": limits, "tierLabel": tier})
+    return result
 
   keep(lead)
   if not lead or not lead["accessToken"]:
     result.update(usageStatusText="Waiting for auth", authHelpText=AUTH_HELP)
     return result
 
-  # agy refreshes its token while it runs; one left to lapse can't be used
-  # until agy starts again, which needs no new sign-in while a refresh token
-  # stands behind it.
-  if not fresh:
-    result.update(usageStatusText="Limits paused" if lead["refresh"] else "Sign-in expired", authHelpText=lapsed_help(lead, result["limits"]))
-    return result
-
   # A panel that is opened and shut repeatedly must not turn into a request
   # per flick; --force is a person asking for fresh numbers.
   if not force:
-    for entry in fresh:
+    for entry in fresh + [e for e in omp_entries if e not in fresh]:
       cached = cached_answer(entry)
       if cached and 0 <= now - fetched_at_ms(cached) / 1000 < PROBE_MIN_INTERVAL_SECONDS:
         keep(entry)
@@ -359,13 +437,7 @@ def collect_limits(entries, force):
     except ValueError:
       failure = entry, "Google's quota service sent an answer that couldn't be read.", False
       break
-    # A plan with no quota windows to report is healthy, with no meters.
-    fetched = round(time.time() * 1000)
-    result.update(limits=limits, tierLabel=tier, live=True, fetchedAtMs=fetched)
-    path = limits_cache(entry)
-    if path:
-      write_json(path, {"fetchedAtMs": fetched, "limits": limits, "tierLabel": tier})
-    return result
+    return answered(entry, tier, limits)
 
   if failure:
     entry, help_text, transport = failure
@@ -375,11 +447,75 @@ def collect_limits(entries, force):
       result["usageStatusText"] = "Antigravity limits unavailable"
     return result
 
-  keep(refused[0])
-  result.update(usageStatusText="Sign-in expired", authHelpText=refused_help(refused[0]))
+  # No token in hand answered, but omp renews its own sign-in when asked
+  # for usage.
+  answer = omp_answer(omp, omp_entries) if omp_entries else None
+  if answer:
+    entry, tier, limits = answer
+    return answered(entry, tier or str(cached_answer(entry).get("tierLabel") or ""), limits)
+
+  if refused:
+    keep(refused[0])
+    result.update(usageStatusText="Sign-in expired", authHelpText=refused_help(refused[0]))
+    return result
+
+  # Every harness refreshes its token while it runs; one left to lapse can't
+  # be used until that harness starts again, which needs no new sign-in
+  # while a refresh token stands behind it.
+  result.update(usageStatusText="Limits paused" if lead["refresh"] else "Sign-in expired", authHelpText=lapsed_help(lead, result["limits"]))
   return result
 
 
+# omp refreshes its own Antigravity sign-in when asked for usage, so its
+# limits come from `omp usage` even after the token it keeps has lapsed. The
+# report is folded back into the shape Google's quota summary has.
+def omp_usage(omp):
+  try:
+    output = subprocess.run(
+      [omp, "usage", "--json", "--provider", "google-antigravity"],
+      capture_output=True, text=True, timeout=20, check=True,
+    ).stdout
+    reports = [r for r in json.loads(output).get("reports") or [] if isinstance(r, dict) and r.get("provider") == "google-antigravity"]
+  except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+    return None
+  if not reports:
+    return None
+  groups, seen = {}, set()
+  for limit in reports[0].get("limits") or []:
+    if not isinstance(limit, dict):
+      continue
+    window = limit.get("window") if isinstance(limit.get("window"), dict) else {}
+    amount = limit.get("amount") if isinstance(limit.get("amount"), dict) else {}
+    label = str(limit.get("label") or "")
+    # A shared allowance is listed once per model family that draws on it.
+    if (label, window.get("id")) in seen:
+      continue
+    seen.add((label, window.get("id")))
+    fraction = amount.get("usedFraction")
+    if isinstance(fraction, bool) or not isinstance(fraction, (int, float)):
+      continue
+    groups.setdefault(label, []).append({"window": str(window.get("id") or ""), "remainingFraction": 1.0 - fraction, "resetTime": window.get("resetsAt")})
+  metadata = reports[0].get("metadata") if isinstance(reports[0].get("metadata"), dict) else {}
+  quota = {"groups": [{"displayName": name, "buckets": buckets} for name, buckets in groups.items()]}
+  return quota, str(metadata.get("email") or "")
+
+
+# The sign-in `omp usage` answered for, its plan when the token omp just
+# renewed can still ask Google for it, and its limits.
+def omp_answer(omp, entries):
+  answer = omp_usage(omp)
+  if not answer:
+    return None
+  quota, email = answer
+  renewed = [e for e in omp_logins() if not email or e["email"] == email]
+  entry = (renewed or [e for e in entries if not email or e["email"] == email] or [dict(entries[0], email=email)])[0]
+  tier = ""
+  if token_fresh(entry, time.time()):
+    try:
+      tier = extract_tier(post("loadCodeAssist", entry["accessToken"]))
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError):
+      pass
+  return entry, tier, extract_limits(quota)
 def model_bucket(models, model):
   return models.setdefault(model, {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0})
 
