@@ -78,7 +78,7 @@ PY
 }
 
 record=$(collect)
-[[ $(jq -c '{ready, tierLabel, limits, hasLocalStats, balance}' <<<"$record") == '{"ready":false,"tierLabel":"","limits":[],"hasLocalStats":false,"balance":null}' ]] ||
+[[ $(jq -c '{ready, tierLabel, limits, hasLocalStats, balance, usageStatusText, authHelpText, limitsStale, limitsFetchedAt, totalPrompts, days: (.recentDays | length), modelUsage}' <<<"$record") == '{"ready":false,"tierLabel":"","limits":[],"hasLocalStats":false,"balance":null,"usageStatusText":"","authHelpText":"","limitsStale":false,"limitsFetchedAt":0,"totalPrompts":0,"days":7,"modelUsage":{}}' ]] ||
   fail "a machine nobody signed in to Kimchi on gives an empty record" "$record"
 [[ ! -s $test_tmp/requests ]] || fail "no key means the gateway is never asked" "$(cat "$test_tmp/requests")"
 pass "a machine nobody signed in to Kimchi on gives an empty record"
@@ -119,15 +119,16 @@ record=$(KIMCHI_API_KEY=key-empty collect)
 pass "an empty balance says Kimchi is rate limited"
 
 record=$(KIMCHI_API_KEY=key-revoked collect)
-[[ $(jq -c '{ready, usageStatusText, retry: .retryAdvised}' <<<"$record") == '{"ready":true,"usageStatusText":"Kimchi key rejected","retry":null}' ]] ||
-  fail "a rejected key says so without the panel's sign-in link, which can't sign in to Kimchi" "$record"
+[[ $(jq -c '{ready, usageStatusText, retry: .retryAdvised}' <<<"$record") == '{"ready":true,"usageStatusText":"Sign-in expired","retry":null}' ]] ||
+  fail "a rejected key asks for a sign-in" "$record"
+[[ $(jq -r '.authHelpText' <<<"$record") == *"Log in again in Kimchi"* ]] || fail "a rejected key says to log in again in Kimchi" "$record"
 record=$(KIMCHI_API_KEY=key-offline collect)
-[[ $(jq -c '{usageStatusText, retry: .retryAdvised}' <<<"$record") == '{"usageStatusText":"Kimchi credits unavailable","retry":true}' ]] ||
+[[ $(jq -c '{usageStatusText, retry: .retryAdvised}' <<<"$record") == '{"usageStatusText":"Balance unavailable","retry":true}' ]] ||
   fail "an unreachable gateway asks for a sooner retry" "$record"
 pass "a rejected key and an unreachable gateway are told apart"
 
-# A gateway that stops answering leaves the last numbers up, dimmed and dated,
-# rather than an empty section.
+# A gateway that stops answering leaves the last numbers up, marked stale and
+# dated, rather than an empty section.
 record=$(KIMCHI_API_KEY=key-budget collect)
 fetched=$(jq -r '.limitsFetchedAt' <<<"$record")
 (( fetched > 0 )) && [[ $(jq -r '.limitsStale' <<<"$record") == false ]] || fail "a live answer is dated and not stale" "$record"
@@ -151,14 +152,15 @@ record=$(KIMCHI_API_KEY=key-budget GATEWAY_DOWN=credits collect)
 pass "one endpoint failing keeps its own last answer"
 
 # A part that fails before anything was cached is missing, not current: the
-# record is stale and asks for a sooner retry, a server error included.
-rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-budget-*.json
+# record is stale, but a server that answered with an error isn't retried
+# sooner.
+rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-limits-*.json
 record=$(KIMCHI_API_KEY=key-sprint GATEWAY_ERROR=budget collect)
-[[ $(jq -c '{stale: .limitsStale, limits, credits: (.balance.remaining == 12), retry: .retryAdvised, usageStatusText}' <<<"$record") == '{"stale":true,"limits":[],"credits":true,"retry":true,"usageStatusText":""}' ]] ||
-  fail "a budget endpoint failing with nothing cached leaves the record stale and retrying" "$record"
+[[ $(jq -c '{stale: .limitsStale, limits, credits: (.balance.remaining == 12), retry: .retryAdvised, usageStatusText}' <<<"$record") == '{"stale":true,"limits":[],"credits":true,"retry":null,"usageStatusText":""}' ]] ||
+  fail "a budget endpoint failing with nothing cached leaves the record stale" "$record"
 rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-credits-*.json
 record=$(KIMCHI_API_KEY=key-sprint GATEWAY_ERROR=credits collect)
-[[ $(jq -c '{stale: .limitsStale, balance, usageStatusText, retry: .retryAdvised}' <<<"$record") == '{"stale":true,"balance":null,"usageStatusText":"Kimchi credits unavailable","retry":true}' ]] ||
+[[ $(jq -c '{stale: .limitsStale, balance, usageStatusText, retry: .retryAdvised}' <<<"$record") == '{"stale":true,"balance":null,"usageStatusText":"Balance unavailable","retry":null}' ]] ||
   fail "a credits endpoint failing with nothing cached says credits are unavailable" "$record"
 pass "a part that fails before anything was cached is missing, not current"
 
@@ -177,7 +179,7 @@ pass "overlapping refreshes keep the latest answer"
 
 # The same key asked of another gateway is another answer.
 record=$(KIMCHI_API_KEY=key-budget KIMCHI_BASE_URL="https://gateway.example" GATEWAY_DOWN=all collect)
-[[ $(jq -c '{tierLabel, limits, usageStatusText}' <<<"$record") == '{"tierLabel":"","limits":[],"usageStatusText":"Kimchi credits unavailable"}' ]] ||
+[[ $(jq -c '{tierLabel, limits, usageStatusText}' <<<"$record") == '{"tierLabel":"","limits":[],"usageStatusText":"Balance unavailable"}' ]] ||
   fail "another gateway never shows the last gateway's numbers" "$record"
 pass "another gateway never shows the last gateway's numbers"
 
@@ -229,8 +231,80 @@ pass "a limits-only refresh reuses the session scan"
 
 # A scan from another day is never reused, so yesterday's sessions don't
 # count as today's after midnight.
-jq '.day = "2000-01-01"' "$XDG_CACHE_HOME/omarchy/agent-usage/kimchi-stats.json" >"$test_tmp/stats.json"
-mv "$test_tmp/stats.json" "$XDG_CACHE_HOME/omarchy/agent-usage/kimchi-stats.json"
+scan_cache=$(ls -t "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-scan-*.json | head -1)
+jq '.scanDate = "2000-01-01"' "$scan_cache" >"$test_tmp/stats.json"
+mv "$test_tmp/stats.json" "$scan_cache"
 record=$(KIMCHI_API_KEY=key-coder COLLECT_ARGS="--limits-only" collect)
 [[ $(jq -r '.totalSessions' <<<"$record") == 3 ]] || fail "a scan from another day is made again" "$record"
 pass "a scan from another day is made again"
+
+# A recent answer is reused rather than asking the gateway again, unless a
+# person pressed refresh. (The overlap test above left a credits answer
+# stamped in the future, which is never reused.)
+rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-credits-*.json
+KIMCHI_API_KEY=key-budget collect >/dev/null
+: >"$test_tmp/requests"
+record=$(KIMCHI_API_KEY=key-budget COLLECT_ARGS="--limits-only" collect)
+[[ ! -s $test_tmp/requests ]] || fail "a recent gateway answer is reused" "$(cat "$test_tmp/requests")"
+[[ $(jq -c '{stale: .limitsStale, tierLabel, limits: (.limits | length)}' <<<"$record") == '{"stale":false,"tierLabel":"Teams","limits":2}' ]] ||
+  fail "a reused answer is current, not stale" "$record"
+KIMCHI_API_KEY=key-budget collect >/dev/null
+(( $(wc -l <"$test_tmp/requests") == 2 )) || fail "--force asks the gateway again" "$(cat "$test_tmp/requests")"
+pass "a recent gateway answer is reused, and --force asks again"
+
+# A kept budget whose period ended comes back at zero with no reset time,
+# never dropped, and a budget cached under its old name is still read.
+limits_cache=$(ls -t "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-limits-*.json | head -1)
+legacy_cache=${limits_cache/kimchi-limits-/kimchi-budget-}
+jq -c '.limits[0].resetsAt = "2020-01-01T00:00:00Z" | .limits[0].percent = 0.9 | .limits[1].resetsAt = ""' "$limits_cache" >"$legacy_cache"
+rm "$limits_cache"
+record=$(KIMCHI_API_KEY=key-budget GATEWAY_DOWN=budget collect)
+[[ $(jq -c '[.limits[] | {percent: (.percent * 100 | round), resetsAt}]' <<<"$record") == '[{"percent":0,"resetsAt":""},{"percent":25,"resetsAt":""}]' ]] ||
+  fail "an elapsed kept budget is zeroed, and one with no reset time is kept as it is" "$record"
+[[ $(jq -r '.limitsStale' <<<"$record") == true ]] || fail "an elapsed kept budget is still stale" "$record"
+pass "an elapsed kept budget comes back at zero"
+
+# Sessions on disk without a key: Kimchi is in use here and waits for a sign-in.
+rm "$HOME/.config/kimchi/config.json"
+record=$(collect)
+[[ $(jq -c '{ready, usageStatusText, authHelpText, hasLocalStats}' <<<"$record") == '{"ready":true,"usageStatusText":"Waiting for auth","authHelpText":"Start Kimchi and log in, or set KIMCHI_API_KEY.","hasLocalStats":true}' ]] ||
+  fail "local sessions without a key wait for auth" "$record"
+pass "local sessions without a key wait for auth"
+
+# A forked session repeats its parent's replies with the same id and time, and
+# counts them once; a reply without an id always counts. Untrusted stamps and
+# token fields skip the field, never the record.
+fork="$HOME/.config/kimchi/harness/sessions/--fork--"
+mkdir -p "$fork"
+{
+  reply a-1 "$now" minimax-m3 '{"input": 100, "output": 20, "cacheRead": 800, "cacheWrite": 5, "totalTokens": 925}'
+  jq -nc --arg at "$now" '{type: "message", timestamp: $at, message: {role: "assistant", model: "glm-5.3", usage: {input: 4}}}'
+  jq -nc --arg at "$now" '{type: "message", timestamp: $at, message: {role: "assistant", model: "glm-5.3", usage: {input: 4}}}'
+  reply z-1 "not a time" glm-5.3 '{"input": 6, "output": true, "cacheRead": "lots", "cacheWrite": 1e300}'
+  jq -nc '{type: "message", id: "z-2", timestamp: -5, message: {role: "assistant", model: "glm-5.3", usage: {input: 2}}}'
+  jq -nc '{type: "message", id: "z-3", timestamp: 99999999999999999, message: {role: "assistant", model: "glm-5.3", usage: {input: 1}}}'
+} >"$fork/fork.jsonl"
+record=$(KIMCHI_API_KEY=key-coder collect)
+[[ $(jq -c '{totalPrompts, totalSessions, today: .todayTokensByModel["glm-5.3"], glm: .modelUsage["glm-5.3"].inputTokens, out: .modelUsage["glm-5.3"].outputTokens}' <<<"$record") == '{"totalPrompts":10,"totalSessions":4,"today":98,"glm":102,"out":5}' ]] ||
+  fail "forks count once, unidentified replies always count, and bad fields are skipped" "$record"
+pass "forks count once and untrusted fields are skipped"
+
+# A $HOME kept as a git checkout that ignores everything still has its sessions
+# found.
+mkdir -p "$HOME/.git"
+printf '*\n' >"$HOME/.gitignore"
+record=$(KIMCHI_API_KEY=key-coder collect)
+[[ $(jq -r '.totalSessions' <<<"$record") == 4 ]] || fail "an ignoring git checkout in HOME doesn't hide sessions" "$record"
+pass "an ignoring git checkout in HOME doesn't hide sessions"
+
+# A scan that couldn't read every session isn't kept for the next run.
+if (( EUID != 0 )); then
+  chmod 000 "$fork/fork.jsonl"
+  rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-scan-*.json
+  record=$(KIMCHI_API_KEY=key-coder collect)
+  chmod 644 "$fork/fork.jsonl"
+  [[ $(jq -r '.totalSessions' <<<"$record") == 3 ]] || fail "an unreadable session is skipped" "$record"
+  ! compgen -G "$XDG_CACHE_HOME/omarchy/agent-usage/kimchi-scan-*.json" >/dev/null ||
+    fail "a partial scan is not cached" "$(ls "$XDG_CACHE_HOME/omarchy/agent-usage")"
+  pass "a scan that couldn't read every session isn't cached"
+fi
