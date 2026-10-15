@@ -156,7 +156,7 @@ def local_day(value: Any) -> str | None:
 
   A row with no time at all is today's. Epoch seconds and milliseconds, a
   string of digits, and ISO times are read; zero, a huge or negative number,
-  NaN, a boolean, and anything else are untrusted.
+  NaN, a boolean, a date outside 2000-2100, and anything else are untrusted.
   """
   if value is None:
     return today()
@@ -172,14 +172,19 @@ def local_day(value: Any) -> str | None:
     if seconds > 10_000_000_000:
       seconds = seconds / 1000
     try:
-      return date_string(datetime.fromtimestamp(seconds))
+      parsed = datetime.fromtimestamp(seconds)
     except (OverflowError, OSError, ValueError):
       return None
-  try:
-    parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
-    if parsed.tzinfo is not None:
-      parsed = parsed.astimezone()
-  except (OverflowError, OSError, ValueError):
+  else:
+    try:
+      parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+      if parsed.tzinfo is not None:
+        parsed = parsed.astimezone()
+    except (OverflowError, OSError, ValueError):
+      return None
+  # No agent wrote a row before 2000 or after 2100: a time out there is a
+  # damaged stamp (a stray 1 reads as 1970), not usage to count.
+  if not 2000 <= parsed.year <= 2100:
     return None
   return date_string(parsed)
 
@@ -669,7 +674,9 @@ def _pi_row(entry: Any, path: str, accept: Accept) -> tuple[tuple, UsageRow] | N
   # The first time present decides: none at all is today's, and an untrusted
   # one, zero included, skips only this line.
   timestamp = entry.get("timestamp")
-  day = local_day(message.get("timestamp") if timestamp is None else timestamp)
+  if timestamp is None:
+    timestamp = message.get("timestamp")
+  day = local_day(timestamp)
   if day is None:
     return None
   # A fork copies its parent's entries with their id and timestamp, so the

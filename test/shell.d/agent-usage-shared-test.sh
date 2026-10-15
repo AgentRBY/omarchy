@@ -58,6 +58,10 @@ check(
   "local_day skips zero, negative, huge, NaN, boolean, and garbage times",
   [collectors.local_day(value) for value in (0, -5, 1e300, float("nan"), True, "not a date", "", [1])] == [None] * 8,
 )
+check(
+  "local_day skips a damaged stamp dated before 2000 or after 2100",
+  [collectors.local_day(value) for value in (1, 86400, "1999-12-31T12:00:00", "2102-06-01T00:00:00Z")] == [None] * 4,
+)
 check("local_day reads epoch milliseconds, seconds, and digit strings alike", len({
   collectors.local_day(1_700_000_000_000),
   collectors.local_day(1_700_000_000),
@@ -390,6 +394,16 @@ check("thinking tokens count as output", (reasoning.output_tokens, reasoning.cac
 check("a forked message counts toward the session it was forked from", next(row for row in rows if row.input_tokens == 100).session == os.path.realpath(parent))
 check("a fork that only copied its parent is no session of its own", os.path.realpath(sessions / "a" / "copy-only.jsonl") not in {row.session for row in rows})
 check("the provider filter is the caller's", all(row.provider == "demo" for row in rows))
+
+# A writer that keeps the time on the message rather than the entry: a fork's
+# copy still shares the message's (id, timestamp) and counts once.
+inner = work / "inner" / "sessions"
+inner_stamp = int(time.time() * 1000)
+inner_line = {"type": "message", "id": "k1", "message": {"role": "assistant", "provider": "demo", "model": "demo", "timestamp": inner_stamp, "usage": {"input": 77}}}
+write_session(inner / "parent.jsonl", [inner_line])
+write_session(inner / "fork.jsonl", [inner_line], header={"type": "session", "parentSession": str(inner / "parent.jsonl")})
+inner_rows, _ = collectors.scan_pi_sessions(r'"provider"\s*:\s*"demo"', lambda provider, model, entry: True, roots=[inner])
+check("a copy timed only on its message counts once", [row.input_tokens for row in inner_rows] == [77], json.dumps([row._asdict() for row in inner_rows]))
 
 harness = work / "harness" / "sessions"
 write_session(harness / "h.jsonl", [reply("demo", 300, "h1"), reply("demo", 100, "m1")])
