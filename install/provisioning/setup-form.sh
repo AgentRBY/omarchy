@@ -96,6 +96,20 @@ omarchy_username_taken() { return 1; }
 # by `status=$?`: one caller runs under `set -e`, where a cancelled prompt is a
 # failing assignment that would kill the script before the status is read.
 
+# Install media for one market can leave its keyboard and timezone choices for
+# a first-boot owner setup: plain KEY=value lines, read as data. The live
+# installer sets the same defaults in its environment instead.
+omarchy_form_defaults=${OMARCHY_FORM_DEFAULTS:-/etc/omarchy/form-defaults}
+if [[ -r $omarchy_form_defaults ]]; then
+  while IFS='=' read -r omarchy_form_key omarchy_form_value; do
+    case "$omarchy_form_key" in
+      KEYBOARD) : "${OMARCHY_FORM_KEYBOARD_DEFAULT:=$omarchy_form_value}" ;;
+      TIMEZONE) : "${OMARCHY_FORM_TIMEZONE_DEFAULT:=$omarchy_form_value}" ;;
+    esac
+  done <"$omarchy_form_defaults"
+  unset omarchy_form_key omarchy_form_value
+fi
+
 omarchy_prompt_keyboard() {
   local choice status
   choice=$(printf '%s\n' "$OMARCHY_KEYBOARD_LAYOUTS" | cut -d'|' -f1 |

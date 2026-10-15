@@ -50,4 +50,8 @@ seed zh-CN
 grep -qx 'export LANG=zh_CN.UTF-8' "$XDG_CONFIG_HOME/uwsm/env.d/50-omarchy-language" || fail "seeding sets the session LANG for the first login"
 ! grep -qE '^(sudo|pkexec|locale-gen|omarchy-notification-send) ' "$SEED_LOG" || fail "seeding elevates, generates and notifies nothing" "$(<"$SEED_LOG")"
 if seed xx 2>/dev/null; then fail "seeding rejects unknown codes"; fi
+printf 'da\n' >"$OMARCHY_LANGUAGE_FILE"
+seed zh-CN
+[[ $(<"$OMARCHY_LANGUAGE_FILE") == da ]] || fail "seeding keeps a language the user already chose"
+! grep -q '^dbus-update-activation-environment ' "$SEED_LOG" || fail "seeding needs no session bus" "$(<"$SEED_LOG")"
 pass "seeding sets the user's language and session LANG without elevating or notifying"

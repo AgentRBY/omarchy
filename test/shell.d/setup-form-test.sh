@@ -82,6 +82,9 @@ export NOTICES="$tmp_dir/notices" MARKER="$tmp_dir/marker"
 status=0
 
 # run_prompt <function> <status:output>... — each response answers one gum screen
+# The machine's own form defaults never reach these tests.
+export OMARCHY_FORM_DEFAULTS="$tmp_dir/no-form-defaults"
+
 run_prompt() {
   local prompt=$1
   shift
@@ -141,6 +144,16 @@ grep -qF -- '--selected Chinese (Simplified, Pinyin)' "$GUM_ARGS" || fail "insta
 [[ $(head -n 1 "$tmp_dir/stdin.1") == "English (US)" ]] || fail "a preset keeps the list in its usual order"
 [[ $(field keyboard_input_method) == "pinyin" ]] || fail "the preset choice carries its input method"
 pass "install media can preselect the keyboard, which stays a choice"
+
+printf 'KEYBOARD=Chinese (Simplified, Pinyin)\nTIMEZONE=Asia/Shanghai\nOTHER=$(touch %s/NEVER)\n' "$tmp_dir" >"$tmp_dir/form-defaults"
+OMARCHY_FORM_DEFAULTS="$tmp_dir/form-defaults" run_prompt omarchy_prompt_keyboard "0:Chinese (Simplified, Pinyin)"
+grep -qF -- '--selected Chinese (Simplified, Pinyin)' "$GUM_ARGS" || fail "a first-boot owner setup takes the media's keyboard default" "$(cat "$GUM_ARGS")"
+OMARCHY_FORM_DEFAULTS="$tmp_dir/form-defaults" TZ_GUESS=Europe/Copenhagen run_prompt omarchy_prompt_timezone "0:Asia/Shanghai"
+grep -qF -- '--selected Asia/Shanghai' "$GUM_ARGS" || fail "a first-boot owner setup takes the media's timezone default" "$(cat "$GUM_ARGS")"
+[[ ! -e $tmp_dir/NEVER ]] || fail "form defaults are read as data"
+OMARCHY_FORM_DEFAULTS="$tmp_dir/form-defaults" OMARCHY_FORM_KEYBOARD_DEFAULT=Japanese run_prompt omarchy_prompt_keyboard "0:Japanese"
+grep -qF -- '--selected Japanese' "$GUM_ARGS" || fail "the live installer's environment wins over the file"
+pass "a first-boot owner setup reads the media's defaults as data"
 
 for selection in 'Japanese|jp106|mozc|' 'Japanese (US keyboard)|us|mozc|' 'Korean|us|hangul|kr:kr104' 'Lao|us|none|la' 'Chinese (Simplified, Pinyin)|us|pinyin|' 'Taiwan (Zhuyin)|us|chewing|' 'Hong Kong (Cangjie)|us|cangjie5|'; do
   IFS='|' read -r label keymap method layout <<< "$selection"
