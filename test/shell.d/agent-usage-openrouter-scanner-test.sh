@@ -59,7 +59,7 @@ mod = importlib.util.module_from_spec(spec)
 loader.exec_module(mod)
 
 today = datetime.now().astimezone()
-scan = mod.LocalScan(today)
+scan = mod.Stats()
 complete = mod.scan_opencode(scan)
 stats = scan.snapshot()
 
@@ -424,7 +424,7 @@ INSERT INTO message VALUES
 SQL
 robust=$(run_py <<'PY'
 from datetime import datetime
-scan = mod.LocalScan(datetime.now().astimezone())
+scan = mod.Stats()
 complete = mod.scan_opencode(scan)
 stats = scan.snapshot()
 print(json.dumps({"complete": complete, "prompts": stats["totalPrompts"], "models": sorted(stats["modelUsage"])}))
@@ -453,7 +453,7 @@ cat >"$HOME/.omp/profiles/work/agent/sessions/--q--/omp.jsonl" <<EOF
 EOF
 pi_check=$(run_py <<'PY'
 from datetime import datetime
-scan = mod.LocalScan(datetime.now().astimezone())
+scan = mod.Stats()
 complete = mod.scan_pi(scan)
 stats = scan.snapshot()
 print(json.dumps({"complete": complete, "prompts": stats["totalPrompts"], "sessions": stats["totalSessions"], "today": stats["todayTotalTokens"], "models": sorted(stats["modelUsage"])}))
@@ -470,9 +470,8 @@ base = mod.scan(Args(force=True))["totalPrompts"]
 cache_file, _ = mod.scan_cache_paths()
 cached = json.loads(cache_file.read_text())
 cached["stats"]["totalPrompts"] = 999
+cached["scannedAtMs"] = int((time.time() - 120) * 1000)
 mod.write_json(cache_file, cached)
-old = time.time() - 120
-os.utime(cache_file, (old, old))
 limits_only = mod.scan(Args(limits_only=True))["totalPrompts"]
 normal = mod.scan(Args())["totalPrompts"] == base
 mod.write_json(cache_file, cached)
@@ -492,7 +491,7 @@ cache_file, lock_file = mod.scan_cache_paths()
 holder = subprocess.Popen([sys.executable, "-c", "import fcntl,sys,time; f=open(sys.argv[1],'w'); fcntl.flock(f, fcntl.LOCK_EX); print('locked', flush=True); time.sleep(1.5)", str(lock_file)], stdout=subprocess.PIPE, text=True)
 holder.stdout.readline()
 started = time.time()
-mod.cached_local_stats(datetime.now().astimezone(), 0)
+mod.cached_local_stats(0)
 waited = time.time() - started
 holder.wait()
 print(json.dumps({"waited": waited >= 1.0}))
@@ -600,7 +599,7 @@ conn.close()
 PY
 v2=$(OPENCODE_DB="$TEST_HOME/elsewhere/opencode-dev.db" run_py <<'PY'
 from datetime import datetime
-scan = mod.LocalScan(datetime.now().astimezone())
+scan = mod.Stats()
 complete = mod.scan_opencode(scan)
 stats = scan.snapshot()
 print(json.dumps({"complete": complete, "today": stats["todayTotalTokens"], "prompts": stats["totalPrompts"], "sessions": stats["totalSessions"], "models": sorted(stats["modelUsage"])}))
@@ -616,7 +615,7 @@ home = Path(os.environ["HOME"])
 os.environ["XDG_DATA_HOME"] = str(home / "legacy")
 (home / "legacy" / "opencode").mkdir(parents=True)
 shutil.copy(home / "elsewhere" / "opencode-dev.db", home / "legacy" / "opencode" / "opencode-v2.db")
-scan = mod.LocalScan(datetime.now().astimezone())
+scan = mod.Stats()
 mod.scan_opencode(scan)
 print(scan.snapshot()["todayTotalTokens"])
 PY
