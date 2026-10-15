@@ -416,6 +416,22 @@ rm -rf "$index_home/muse-data/sessions/2026/10/12/fresh"
   fail "Muse collector counts a native session the index hasn't seen yet" "$result_unindexed"
 pass "Muse collector counts a native session the index hasn't seen yet"
 
+# A session carried on from an earlier day counts today what its prompt count
+# grew by since the last scan before today, not its whole count on the day
+# it began.
+prompts_file=$(compgen -G "$index_home/cache/omarchy/agent-usage/muse-prompts-*.json")
+[[ -n $prompts_file ]] || fail "Muse collector keeps the session prompt counts it saw" "$(ls "$index_home/cache/omarchy/agent-usage")"
+jq --arg day "$(date -d yesterday +%F)" '.day = $day | .last = {"earlier": 3}' "$prompts_file" >"$prompts_file.new"
+mv "$prompts_file.new" "$prompts_file"
+result_carried=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
+[[ $(jq -c '{totalPrompts, todayPrompts, todaySessions}' <<<"$result_carried") == '{"totalPrompts":8,"todayPrompts":4,"todaySessions":2}' ]] ||
+  fail "Muse collector counts today the prompts a session from an earlier day grew by" "$result_carried"
+sqlite3 "$index_home/muse-data/session-index.db" "UPDATE sessions SET prompt_count = 7 WHERE session_id = 'earlier'"
+result_carried=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
+[[ $(jq -c '{totalPrompts, todayPrompts, todaySessions}' <<<"$result_carried") == '{"totalPrompts":10,"todayPrompts":6,"todaySessions":2}' ]] ||
+  fail "Muse collector keeps counting today from the count before today" "$result_carried"
+pass "Muse collector counts today the prompts a session from an earlier day grew by"
+
 # An index that's there but unreadable falls back on completions, and that
 # scan isn't cached.
 printf 'not a database' >"$index_home/muse-data/session-index.db"

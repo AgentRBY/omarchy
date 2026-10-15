@@ -63,8 +63,9 @@ MAX_SESSION_BYTES = 512 * 1024 * 1024
 # Cache schema version. Bump when the cached stats shape changes so old
 # caches are rescanned instead of trusted. 3: prompts and sessions from the
 # session index. 4: pi/omp sessions counted. 5: native sessions the index
-# hasn't seen counted.
-CACHE_SCHEMA_VERSION = 5
+# hasn't seen counted. 6: today's prompts from what each session's count
+# grew by today.
+CACHE_SCHEMA_VERSION = 6
 
 # A token count past this is a corrupt field, not a model call.
 MAX_TOKENS = 1_000_000_000_000
@@ -253,22 +254,65 @@ def scan_session_index():
     except Exception:
       pass
   indexed = {str(session_id) for session_id, _, _ in rows}
+  counts, created_today = {}, set()
   for session_id, created_at_us, prompt_count in rows:
     prompts = token_number(prompt_count)
     if not prompts:
       continue
-    session_key = "muse-index:" + str(session_id)
+    session_id = str(session_id)
+    counts[session_id] = prompts
     total_prompts += prompts
-    total_sessions.add(session_key)
+    total_sessions.add("muse-index:" + session_id)
     # created_at_us is microseconds, which local_day recognises by size.
     day = local_day(created_at_us)
-    if day is None:
-      continue
-    active_days.add(day)
+    if day is not None:
+      active_days.add(day)
     if day == today:
-      today_prompts += prompts
-      today_sessions.add(session_key)
+      created_today.add(session_id)
+  for session_id, prompts in prompts_today(database, counts, created_today).items():
+    today_prompts += prompts
+    today_sessions.add("muse-index:" + session_id)
+    active_days.add(today)
   return indexed, True
+
+
+# The index keeps a session's running prompt count and the day it was
+# created, not when each prompt came, so a session carried on from an
+# earlier day would put every prompt on the day it began. Today's prompts are
+# instead what each count grew by since the last scan before today, which
+# this collector keeps in a file of its own; a session created today counts
+# whole. A session from before today that no earlier scan saw counts from
+# when it is first seen, since nothing says when its earlier prompts came.
+def prompts_today(database, counts, created_today):
+  digest = hashlib.sha1(str(database).encode("utf-8")).hexdigest()[:16]
+  path = cache_root() / f"muse-prompts-{digest}.json"
+  try:
+    kept = json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    kept = {}
+  kept = kept if isinstance(kept, dict) else {}
+  day = kept.get("day") if isinstance(kept.get("day"), str) else ""
+  if day == today:
+    start = kept.get("start")
+  elif day and day < today:
+    start = kept.get("last")
+  else:
+    # Never scanned, or kept from a clock that went back.
+    start = None
+  start = {str(key): token_number(value) for key, value in start.items()} if isinstance(start, dict) else {}
+  for session_id, prompts in counts.items():
+    if session_id not in start and session_id not in created_today:
+      start[session_id] = prompts
+  try:
+    write_json(path, {"day": today, "start": start, "last": counts})
+  except Exception as exc:
+    print(f"omarchy-agent-usage-muse: could not keep the session prompt counts ({exc})", file=sys.stderr)
+  grown = {}
+  for session_id, prompts in counts.items():
+    added = prompts - start.get(session_id, 0)
+    if added > 0:
+      grown[session_id] = added
+  return grown
 
 
 def muse_sessions_root():
