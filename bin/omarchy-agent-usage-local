@@ -357,16 +357,6 @@ def read_codex_rollout(path, stat_result):
   return record
 
 
-def add_totals(stats, session, day, model, input_tokens, output_tokens, cache_read, cache_write, prompts):
-  # A Codex rollout's totals arrive per day and model, prompts counted.
-  if input_tokens + output_tokens + cache_read + cache_write <= 0:
-    return
-  stats.add(day, session, model, input_tokens, output_tokens, cache_read, cache_write)
-  stats.total_prompts += prompts - 1
-  if day == stats.today:
-    stats.today_prompts += prompts - 1
-
-
 def scan_codex(stats, use_file_cache):
   cached_files = read_file_cache() if use_file_cache else {}
   scanned_files = {}
@@ -395,7 +385,8 @@ def scan_codex(stats, use_file_cache):
       for day, models in record["days"].items():
         for model, (input_tokens, output_tokens, cache_read, cache_write, prompts) in models.items():
           if not is_cloud_model(model):
-            add_totals(stats, key, day, model, input_tokens, output_tokens, cache_read, cache_write, prompts)
+            # A Codex rollout's totals arrive per day and model, prompts counted.
+            stats.add(day, key, model, input_tokens, output_tokens, cache_read, cache_write, prompts=prompts)
   write_file_cache(scanned_files)
   return complete
 
