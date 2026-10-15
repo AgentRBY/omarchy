@@ -274,6 +274,27 @@ if command -v rg >/dev/null; then
   [[ $(jq -c '{totalPrompts, totalSessions, todayTotalTokens, opencode: .modelUsage["antigravity-gemini-3-pro"].inputTokens}' <<<"$record") == '{"totalPrompts":7,"totalSessions":6,"todayTotalTokens":185,"opencode":14}' ]] ||
     fail "Antigravity collector counts a message in both opencode stores once" "$record"
   pass "Antigravity collector counts a message in both opencode stores once"
+
+  # rg still prints the matches it could read when a session file is
+  # unreadable, and only its exit status tells; that partial scan isn't
+  # cached for a later --limits-only run to reuse.
+  if (( EUID != 0 )); then
+    rm -rf "$test_tmp/cache"
+    printf '%s\n' "$answer" >"$test_tmp/.omp/agent/sessions/project/locked.jsonl"
+    chmod 000 "$test_tmp/.omp/agent/sessions/project/locked.jsonl"
+    record=$(PI_DIR="$test_tmp/pi-elsewhere" collect "")
+    asked >/dev/null
+    scans=$(compgen -G "$test_tmp/cache/omarchy/agent-usage/agy-scan-*.json" || true)
+    [[ -z $scans && $(jq '.totalPrompts' <<<"$record") == "7" ]] ||
+      fail "Antigravity collector doesn't cache a scan rg couldn't finish" "$scans $record"
+    chmod 600 "$test_tmp/.omp/agent/sessions/project/locked.jsonl"
+    record=$(PI_DIR="$test_tmp/pi-elsewhere" collect "")
+    asked >/dev/null
+    [[ -n $(compgen -G "$test_tmp/cache/omarchy/agent-usage/agy-scan-*.json") ]] ||
+      fail "Antigravity collector caches a scan that read every session" "$record"
+    rm -f "$test_tmp/.omp/agent/sessions/project/locked.jsonl"
+    pass "Antigravity collector doesn't cache a scan rg couldn't finish"
+  fi
 else
   skip "Antigravity collector counts usage from pi, omp, OpenClaw, and opencode's plugin (no rg)"
 fi
