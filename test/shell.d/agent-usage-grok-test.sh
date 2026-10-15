@@ -69,9 +69,19 @@ export PERIOD_END="$period_end"
 record=$(collect)
 [[ $(jq -c '{ready, tierLabel, limits}' <<<"$record") == '{"ready":false,"tierLabel":"","limits":[]}' ]] ||
   fail "a machine nobody signed in to Grok on gives an empty record" "$record"
-[[ $(jq -c '{hasLocalStats, totalPrompts, totalSessions, todayTotalTokens, days: (.recentDays | length), modelUsage, status: .usageStatusText}' <<<"$record") == '{"hasLocalStats":false,"totalPrompts":0,"totalSessions":0,"todayTotalTokens":0,"days":7,"modelUsage":{},"status":"Waiting for auth"}' ]] ||
+[[ $(jq -c '{hasLocalStats, totalPrompts, totalSessions, todayTotalTokens, days: (.recentDays | length), modelUsage, status: .usageStatusText}' <<<"$record") == '{"hasLocalStats":false,"totalPrompts":0,"totalSessions":0,"todayTotalTokens":0,"days":7,"modelUsage":{},"status":""}' ]] ||
   fail "an empty Grok record still carries the full stats block" "$record"
+[[ $(jq -r '.authHelpText' <<<"$record") == "" ]] ||
+  fail "a machine without Grok is not asked to sign in" "$record"
 pass "a machine nobody signed in to Grok on gives an empty record"
+
+# A Grok home with no sign-in in it has been set up, so the sign-in is
+# what's missing.
+mkdir -p "$test_tmp/bare-grok"
+record=$(GROK_HOME="$test_tmp/bare-grok" collect)
+[[ $(jq -c '{ready, status: .usageStatusText}' <<<"$record") == '{"ready":false,"status":"Waiting for auth"}' ]] ||
+  fail "a signed-out Grok home waits for auth" "$record"
+pass "a signed-out Grok home waits for auth"
 
 # Sessions on disk put Grok in use here even with no sign-in, which is then
 # what's missing.
