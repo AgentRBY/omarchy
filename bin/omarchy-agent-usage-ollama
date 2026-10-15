@@ -14,10 +14,14 @@ JSON this prints; it never talks to disk formats or endpoints.
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import fcntl
+import hashlib
 import json
+import math
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -28,29 +32,60 @@ from typing import Any
 
 AGENT_ID = "ollama"
 AGENT_NAME = "Ollama Cloud"
+PROVIDER = "ollama-cloud"
 USAGE_ENDPOINT = "https://ollama.com/api/usage"
 ME_ENDPOINT = "https://ollama.com/api/me"
+AUTH_HELP_NO_KEY = "Set OLLAMA_API_KEY, or sign in to pi with an Ollama Cloud key, to show the account limits."
+AUTH_HELP_BAD_KEY = (
+  "Ollama Cloud rejected the API key. Update OLLAMA_API_KEY or ~/.config/omarchy/agents/ollama.json,"
+  " or sign in to pi again. Local stats are still shown."
+)
+# A scan this recent is only reused to dedup concurrent collector runs (the
+# update command backgrounds one per agent while the panel refreshes on its
+# own). --limits-only promises only fresh limits, so it may reuse a scan for
+# up to 15 minutes.
+SCAN_REUSE_SECONDS = 20
+LIMITS_ONLY_REUSE_SECONDS = 900
+# The panel opens and shuts fire a probe each; a recent probe result is reused
+# for this window rather than turning every flick into a request.
 PROBE_MIN_INTERVAL_SECONDS = 15
 # The usage endpoint reports how much of each window is used but not when it
 # resets, so the limits carry no reset time rather than a guessed one.
 
+# Bounds for numbers read from session files. A timestamp outside them, or a
+# token count above the cap, is corruption rather than usage.
+EARLIEST_SECONDS = 946_684_800  # 2000-01-01
+LATEST_SECONDS = 4_102_444_800  # 2100-01-01
+MAX_TOKENS = 10_000_000_000
+
 
 def config_dir() -> Path:
-  return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "omarchy" / "agents"
+  return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "omarchy" / "agents"
 
 
 def cache_root() -> Path:
-  root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "omarchy" / "agent-usage"
+  root = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "omarchy" / "agent-usage"
   root.mkdir(parents=True, exist_ok=True)
   return root
 
 
-def read_config() -> dict[str, Any]:
+def read_json(path: Path) -> dict[str, Any]:
+  # Read whatever the file's time: a clock that went back must not lose the
+  # last good answer. Freshness is judged by the times stored inside.
   try:
-    data = json.loads((config_dir() / "ollama.json").read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
   except Exception:
     return {}
   return data if isinstance(data, dict) else {}
+
+
+def read_config() -> dict[str, Any]:
+  return read_json(config_dir() / "ollama.json")
+
+
+def pi_agent_dir() -> Path:
+  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
+  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
 
 
 def api_key() -> str:
@@ -61,15 +96,13 @@ def api_key() -> str:
   if configured:
     return configured
   # pi and omp store the Ollama Cloud key they signed in with; either one
-  # proves the account, and the usage endpoint accepts the same key.
-  for auth_path in (Path.home() / ".pi" / "agent" / "auth.json", Path.home() / ".omp" / "agent" / "auth.json"):
-    try:
-      data = json.loads(auth_path.read_text(encoding="utf-8"))
-      entry = data.get("ollama-cloud")
-      if isinstance(entry, dict) and str(entry.get("key") or "").strip():
-        return str(entry["key"]).strip()
-    except Exception:
-      continue
+  # proves the account, and the usage endpoint accepts the same key. Only a
+  # literal key is taken: a `$VAR` or `!command` entry is resolved by pi alone.
+  for auth_path in (pi_agent_dir() / "auth.json", Path.home() / ".omp" / "agent" / "auth.json"):
+    entry = read_json(auth_path).get(PROVIDER)
+    key = str(entry.get("key") or "").strip() if isinstance(entry, dict) else ""
+    if key and not key.startswith(("!", "$")):
+      return key
   return ""
 
 
@@ -86,36 +119,53 @@ def local_date_string() -> str:
   return date_string(dt.datetime.now().date())
 
 
-def local_date_from_timestamp(value: Any) -> str:
-  if value is None:
-    return local_date_string()
-
+def local_date_from_timestamp(value: Any) -> str | None:
+  """The local date of an untrusted timestamp, or None when it isn't one."""
+  if isinstance(value, bool):
+    return None
   if isinstance(value, (int, float)):
-    try:
-      seconds = float(value) / 1000.0 if float(value) > 10_000_000_000 else float(value)
-      return date_string(dt.datetime.fromtimestamp(seconds).date())
-    except Exception:
-      return local_date_string()
-
-  raw = str(value).strip()
-  if not raw:
-    return local_date_string()
-
+    if not math.isfinite(value):
+      return None
+    # pi/omp message timestamps are milliseconds.
+    seconds = value / 1000 if value > 10_000_000_000 else value
+    if not EARLIEST_SECONDS <= seconds < LATEST_SECONDS:
+      return None
+    return date_string(dt.datetime.fromtimestamp(seconds).date())
+  if not isinstance(value, str) or not value.strip():
+    return None
   try:
-    parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    if parsed.tzinfo is not None:
-      parsed = parsed.astimezone()
-    return date_string(parsed.date())
-  except Exception:
-    return local_date_string()
+    parsed = dt.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+  except ValueError:
+    return None
+  if parsed.tzinfo is not None:
+    parsed = parsed.astimezone()
+  if not 2000 <= parsed.year < 2100:
+    return None
+  return date_string(parsed.date())
 
 
-def number(value: Any) -> int:
-  try:
-    n = float(value or 0)
-    return round(n) if n == n else 0
-  except Exception:
+def token_count(value: Any) -> int:
+  # Booleans are ints to Python, and a NaN or negative count would poison
+  # every sum it reaches, so anything but a plain finite count reads as none.
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
     return 0
+  if not math.isfinite(value) or value < 0 or value > MAX_TOKENS:
+    return 0
+  return int(value)
+
+
+def stamp(value: Any) -> int:
+  # An epoch-ms stamp this collector wrote, read back without trusting it.
+  if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    return 0
+  return max(0, int(value))
+
+
+def age_below(stamp_seconds: float, limit_seconds: float) -> bool:
+  # A negative age is a stamp from the future: the clock moved back since it
+  # was written, so it proves nothing about freshness.
+  age = time.time() - stamp_seconds
+  return 0 <= age < limit_seconds
 
 
 def empty_bucket() -> dict[str, int]:
@@ -127,15 +177,19 @@ def empty_bucket() -> dict[str, int]:
   }
 
 
-def read_fresh_json(path: Path, max_age_seconds: float) -> dict[str, Any] | None:
-  if max_age_seconds <= 0 or not path.exists():
-    return None
-  try:
-    if time.time() - path.stat().st_mtime <= max_age_seconds:
-      return json.loads(path.read_text(encoding="utf-8"))
-  except Exception:
-    return None
-  return None
+def empty_stats() -> dict[str, Any]:
+  return {
+    "todayPrompts": 0,
+    "todaySessions": 0,
+    "todayTotalTokens": 0,
+    "todayTokensByModel": {},
+    "recentDays": [{"date": day, "messageCount": 0} for day in recent_date_strings()],
+    "modelUsage": {},
+    "totalPrompts": 0,
+    "totalSessions": 0,
+    "activeDays": 0,
+    "activeDates": [],
+  }
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -163,123 +217,211 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 # Ollama Cloud API, which serves Claude models alongside the open ones.
 
 
-def scan_sessions(max_age_seconds: float, model_prefix: str) -> dict[str, Any] | None:
-  roots = [
-    Path.home() / ".pi" / "agent" / "sessions",
-    Path.home() / ".omp" / "agent" / "sessions",
-  ]
-  cache_file = cache_root() / "ollama-pi-sessions.json"
-  # A scan only answers for the day it ran on (its today* counts would be
-  # yesterday's after midnight) and for the model filter it applied.
-  today = local_date_string()
-  cached = read_fresh_json(cache_file, max_age_seconds)
-  if cached is not None and cached.get("scanDate") == today and cached.get("modelPrefix") == model_prefix:
-    return cached.get("stats")
+# `omp --profile=<name>` (and pi's equivalent) relocates the whole agent tree
+# under <base>/profiles/<name>/, and PI_CODING_AGENT_DIR moves pi's, so a
+# subscription driven through either would otherwise go uncounted.
+def pi_session_roots() -> list[Path]:
+  roots = [pi_agent_dir() / "sessions", Path.home() / ".omp" / "agent" / "sessions"]
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    try:
+      # Sorted so the scan order does not depend on directory order.
+      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      # No profiles directory, or it is unreadable: the default roots stand.
+      pass
+  unique: list[Path] = []
+  for root in roots:
+    if root not in unique:
+      unique.append(root)
+  return unique
 
+
+def matching_lines(root: Path, pattern: str) -> tuple[list[tuple[str, str]], bool]:
+  """(path, line) for each session line matching `pattern`, and whether every file was read."""
+  try:
+    proc = subprocess.run(
+      # --no-ignore: these are data files, not a source tree. When $HOME is
+      # itself a git checkout (a common dotfiles setup), its ignore rules
+      # would otherwise hide every session file and count zero usage.
+      ["rg", "--json", "--no-ignore", "--hidden", "--glob", "*.jsonl", "-e", pattern, str(root)],
+      stdout=subprocess.PIPE,
+      stderr=subprocess.DEVNULL,
+      text=True,
+      errors="replace",
+      check=False,
+    )
+  except OSError:
+    return [], False
+  lines = []
+  for raw in proc.stdout.splitlines():
+    try:
+      event = json.loads(raw)
+      if event.get("type") != "match":
+        continue
+      data = event["data"]
+      text = data["lines"].get("text")
+      if text is None:
+        # rg hands back lines that are not valid UTF-8 as base64.
+        text = base64.b64decode(data["lines"]["bytes"]).decode("utf-8", errors="replace")
+      lines.append((data["path"].get("text") or "", text))
+    except Exception:
+      continue
+  # 1 is "no match"; 2 means some file could not be read.
+  return lines, proc.returncode in (0, 1)
+
+
+def scan_sessions(model_prefix: str) -> tuple[dict[str, Any], bool]:
   recent_dates = recent_date_strings()
   recent = {day: {"date": day, "messageCount": 0} for day in recent_dates}
+  today = local_date_string()
 
   sessions: set[str] = set()
   active_days: set[str] = set()
   today_sessions: set[str] = set()
   today_tokens: dict[str, int] = {}
   usage_by_model: dict[str, dict[str, int]] = {}
-  seen: set[str] = set()
+  # A forked session copies its parent's messages, ids and timestamps alike,
+  # so (id, timestamp) counts each once across files. A line with an id but
+  # no timestamp dedups within its file only; a line with no id always counts.
+  seen: set[tuple[str, ...]] = set()
   prompts = 0
   today_prompt_count = 0
   today_token_total = 0
+  complete = True
 
-  for root in roots:
-    files = root.rglob("*.jsonl") if root.is_dir() else []
-    for path in files:
+  for root in pi_session_roots():
+    if not root.is_dir():
+      continue
+    lines, read_all = matching_lines(root, r'"provider"\s*:\s*"ollama-cloud"')
+    complete = complete and read_all
+    for path, line in lines:
       try:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-          for line_number, line in enumerate(handle, 1):
-            # Cheap pre-filter before JSON parsing keeps files with unrelated
-            # lines inexpensive.
-            if '"usage"' not in line or '"ollama-cloud"' not in line:
-              continue
-            try:
-              entry = json.loads(line)
-              message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
-              if entry.get("type") != "message" or message.get("role") != "assistant":
-                continue
-              if str(message.get("provider") or "") != "ollama-cloud":
-                continue
-              unique_key = f"{path}:{entry.get('id') or line_number}"
-              if unique_key in seen:
-                continue
-              seen.add(unique_key)
-              usage = message.get("usage") or {}
-              input_tokens = number(usage.get("input"))
-              output_tokens = number(usage.get("output"))
-              cache_read = number(usage.get("cacheRead"))
-              cache_write = number(usage.get("cacheWrite"))
-              total = input_tokens + output_tokens + cache_read + cache_write
-              if total <= 0:
-                total = number(usage.get("totalTokens"))
-                input_tokens = total
-              if total <= 0:
-                continue
-              # Ollama model ids carry a version tag ("deepseek-v4-pro:0813");
-              # merge tags so the chart groups by model, not by release.
-              model = str(message.get("model") or "ollama").split(":", 1)[0]
-              if model_prefix and not model.startswith(model_prefix):
-                continue
-              day = local_date_from_timestamp(entry.get("timestamp") or message.get("timestamp"))
-            except Exception:
-              continue
-
-            session_key = str(path)
-            sessions.add(session_key)
-            active_days.add(day)
-            prompts += 1
-            bucket = usage_by_model.setdefault(model, empty_bucket())
-            bucket["inputTokens"] += input_tokens
-            bucket["outputTokens"] += output_tokens
-            bucket["cacheReadInputTokens"] += cache_read
-            bucket["cacheCreationInputTokens"] += cache_write
-            if day in recent:
-              # recentDays.messageCount is actually a token total, despite the
-              # legacy name shared with synced snapshots.
-              recent[day]["messageCount"] += total
-            if day == today:
-              today_prompt_count += 1
-              today_sessions.add(session_key)
-              today_token_total += total
-              today_tokens[model] = today_tokens.get(model, 0) + total
-      except OSError:
+        entry = json.loads(line)
+      except ValueError:
+        continue
+      if not isinstance(entry, dict) or entry.get("type") != "message":
+        continue
+      message = entry.get("message")
+      if not isinstance(message, dict) or message.get("role") != "assistant":
+        continue
+      if str(message.get("provider") or "") != PROVIDER:
+        continue
+      usage = message.get("usage")
+      if not isinstance(usage, dict):
+        continue
+      input_tokens = token_count(usage.get("input"))
+      output_tokens = token_count(usage.get("output"))
+      cache_read = token_count(usage.get("cacheRead"))
+      cache_write = token_count(usage.get("cacheWrite"))
+      total = input_tokens + output_tokens + cache_read + cache_write
+      if total <= 0:
+        total = token_count(usage.get("totalTokens"))
+        input_tokens = total
+      if total <= 0:
+        continue
+      # Ollama model ids carry a version tag ("deepseek-v4-pro:0813"); merge
+      # tags so the chart groups by model, not by release.
+      model = str(message.get("model") or "ollama").split(":", 1)[0]
+      if model_prefix and not model.lower().startswith(model_prefix):
+        continue
+      day = local_date_from_timestamp(entry.get("timestamp")) or local_date_from_timestamp(message.get("timestamp"))
+      if day is None:
         continue
 
-  stats = None
-  if prompts > 0:
-    stats = {
-      "todayPrompts": today_prompt_count,
-      "todaySessions": len(today_sessions),
-      "todayTotalTokens": today_token_total,
-      "todayTokensByModel": today_tokens,
-      "recentDays": [recent[day] for day in recent_dates],
-      "modelUsage": usage_by_model,
-      "totalPrompts": prompts,
-      "totalSessions": len(sessions),
-      "activeDays": len(active_days),
-      "activeDates": sorted(active_days),
-    }
-  write_json(cache_file, {"scanDate": today, "modelPrefix": model_prefix, "stats": stats})
-  return stats
+      message_id = entry.get("id")
+      timestamp = entry.get("timestamp")
+      if isinstance(message_id, str) and message_id:
+        key = ("entry", message_id, str(timestamp)) if timestamp else ("path", path, message_id)
+        if key in seen:
+          continue
+        seen.add(key)
+
+      sessions.add(path)
+      active_days.add(day)
+      prompts += 1
+      bucket = usage_by_model.setdefault(model, empty_bucket())
+      bucket["inputTokens"] += input_tokens
+      bucket["outputTokens"] += output_tokens
+      bucket["cacheReadInputTokens"] += cache_read
+      bucket["cacheCreationInputTokens"] += cache_write
+      if day in recent:
+        # recentDays.messageCount is actually a token total, despite the
+        # legacy name shared with synced snapshots.
+        recent[day]["messageCount"] += total
+      if day == today:
+        today_prompt_count += 1
+        today_sessions.add(path)
+        today_token_total += total
+        today_tokens[model] = today_tokens.get(model, 0) + total
+
+  stats = {
+    "todayPrompts": today_prompt_count,
+    "todaySessions": len(today_sessions),
+    "todayTotalTokens": today_token_total,
+    "todayTokensByModel": today_tokens,
+    "recentDays": [recent[day] for day in recent_dates],
+    "modelUsage": usage_by_model,
+    "totalPrompts": prompts,
+    "totalSessions": len(sessions),
+    "activeDays": len(active_days),
+    "activeDates": sorted(active_days),
+  }
+  return stats, complete
+
+
+def cached_scan(max_age_seconds: float, model_prefix: str) -> dict[str, Any]:
+  roots = "\0".join(str(root) for root in pi_session_roots())
+  digest = hashlib.sha1(roots.encode("utf-8")).hexdigest()[:16]
+  cache_file = cache_root() / f"ollama-scan-{digest}.json"
+  lock_file = cache_root() / f"ollama-scan-{digest}.lock"
+
+  # A scan only answers for the day it ran on (its today* counts would be
+  # yesterday's after midnight) and for the model filter it applied.
+  def reusable() -> dict[str, Any] | None:
+    cached = read_json(cache_file)
+    stats = cached.get("stats")
+    if (
+      cached.get("scanDate") == local_date_string()
+      and cached.get("modelPrefix") == model_prefix
+      and age_below(stamp(cached.get("scannedAtMs")) / 1000, max_age_seconds)
+      and isinstance(stats, dict)
+    ):
+      return stats
+    return None
+
+  stats = reusable()
+  if stats is not None:
+    return stats
+  try:
+    with lock_file.open("w") as lock:
+      fcntl.flock(lock, fcntl.LOCK_EX)
+      stats = reusable()
+      if stats is not None:
+        return stats
+      stats, complete = scan_sessions(model_prefix)
+      # A scan that missed a file would stand in for a real one until the
+      # next rescan; only a complete one is kept.
+      if complete:
+        write_json(cache_file, {
+          "scanDate": local_date_string(),
+          "scannedAtMs": round(time.time() * 1000),
+          "modelPrefix": model_prefix,
+          "stats": stats,
+        })
+      return stats
+  except OSError as exc:
+    # The cache is an optimization; the record is the contract.
+    print(f"omarchy-agent-usage-ollama: cache unavailable ({exc}); scanning directly", file=sys.stderr)
+    return scan_sessions(model_prefix)[0]
 
 
 # ------------------------------------------------------------------- limits
 
 
 def clamp_fraction(value: Any) -> float:
-  try:
-    n = float(value)
-  except Exception:
+  if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
     return -1.0
-  if not (n >= 0):
-    return -1.0
-  return min(1.0, n)
+  return min(1.0, float(value))
 
 
 def probe_limits(access_key: str) -> dict[str, Any]:
@@ -292,9 +434,9 @@ def probe_limits(access_key: str) -> dict[str, Any]:
       payload = json.loads(response.read().decode("utf-8", errors="replace"))
   except urllib.error.HTTPError as error:
     if error.code in (401, 403):
-      return {"ok": False, "auth": True, "helpText": "The Ollama Cloud API key was rejected. Local stats are still shown."}
+      return {"ok": False, "auth": True, "helpText": AUTH_HELP_BAD_KEY}
     return {"ok": False, "helpText": f"Ollama's usage endpoint returned status {error.code}. Local stats are still shown."}
-  except Exception:
+  except OSError:
     # A transport failure reached no server at all — no route, no DNS. Any
     # real answer, including an error status, is a server we should stop
     # pestering; this is not.
@@ -303,6 +445,8 @@ def probe_limits(access_key: str) -> dict[str, Any]:
       "transport": True,
       "helpText": "Couldn't reach Ollama's usage endpoint. Retrying shortly. Local stats are still shown.",
     }
+  except ValueError:
+    return {"ok": False, "helpText": "Ollama's usage endpoint returned an invalid answer. Local stats are still shown."}
 
   limits = payload.get("limits") if isinstance(payload, dict) else None
   if not isinstance(limits, dict):
@@ -324,7 +468,8 @@ def probe_limits(access_key: str) -> dict[str, Any]:
   return {"ok": True, "limits": out}
 
 
-def probe_plan(access_key: str) -> str:
+def probe_plan(access_key: str) -> str | None:
+  """The plan Ollama names for the key, "" when it names none, None when it couldn't be asked."""
   request = urllib.request.Request(
     ME_ENDPOINT,
     headers={"Authorization": "Bearer " + access_key, "Accept": "application/json"},
@@ -334,47 +479,53 @@ def probe_plan(access_key: str) -> str:
     with urllib.request.urlopen(request, timeout=10) as response:
       payload = json.loads(response.read().decode("utf-8", errors="replace"))
   except Exception:
-    return ""
-  plan = str(payload.get("Plan") or "").strip()
+    return None
+  plan = str(payload.get("Plan") or "").strip()[:64] if isinstance(payload, dict) else ""
   return plan[0].upper() + plan[1:] if plan else ""
+
+
+def limits_cache_path(access_key: str) -> Path:
+  # Keyed by the credential: another key never shows this one's allowance or
+  # plan.
+  digest = hashlib.sha256(access_key.encode("utf-8")).hexdigest()[:16]
+  return cache_root() / f"ollama-limits-{digest}.json"
 
 
 def collect_limits(access_key: str, force: bool) -> dict[str, Any]:
   # `live` says whether the limits are this check's (or a probe recent enough
   # to stand in for one), `fetchedAtMs` when they were measured, so the panel
-  # can dim limits kept from an earlier check.
+  # can tell kept limits from fresh ones.
   result = {"limits": [], "tierLabel": "", "usageStatusText": "", "authHelpText": "", "live": False, "fetchedAtMs": 0}
+
+  if access_key == "":
+    result["usageStatusText"] = "Waiting for auth"
+    result["authHelpText"] = AUTH_HELP_NO_KEY
+    return result
 
   # A panel that is opened and shut repeatedly must not turn into a request
   # per flick, so recent probe results are reused for a short window — and
-  # kept as the answer of record when a later probe fails.
-  probe_cache = cache_root() / "ollama-limits.json"
-  cached = read_fresh_json(probe_cache, float("inf")) or {}
-  fallback = cached.get("limits") if isinstance(cached.get("limits"), list) else []
-  result["tierLabel"] = str(cached.get("plan") or "")
-  result["fetchedAtMs"] = number(cached.get("fetchedAtMs"))
-
-  if access_key == "":
-    result["limits"] = fallback
-    result["usageStatusText"] = "Waiting for auth"
-    result["authHelpText"] = "Set OLLAMA_API_KEY, or sign in to pi with an Ollama Cloud key, to show the account limits."
-    return result
+  # kept as the answer of record when a later probe fails. The endpoint names
+  # no reset times, so a kept window stays as it was measured.
+  probe_cache = limits_cache_path(access_key)
+  cached = read_json(probe_cache)
+  fallback = [entry for entry in cached.get("limits") or [] if isinstance(entry, dict)] if isinstance(cached.get("limits"), list) else []
+  cached_plan = str(cached.get("plan") or "")
+  fetched_ms = stamp(cached.get("fetchedAtMs"))
 
   # --force is a person asking for fresh numbers, so it skips the reuse window
   # entirely; the interval is there to absorb repeated panel opens, not to
   # overrule someone who pressed refresh.
-  fetched_at = number(cached.get("fetchedAtMs")) / 1000
-  if fallback and not force and time.time() - fetched_at < PROBE_MIN_INTERVAL_SECONDS:
-    result["limits"] = fallback
-    result["live"] = True
+  if fallback and not force and age_below(fetched_ms / 1000, PROBE_MIN_INTERVAL_SECONDS):
+    result.update(limits=fallback, tierLabel=cached_plan, live=True, fetchedAtMs=fetched_ms)
     return result
 
   probe = probe_limits(access_key)
   if probe["ok"]:
     plan = probe_plan(access_key)
-    result["limits"] = probe["limits"]
-    result["tierLabel"] = plan
-    result.update(live=True, fetchedAtMs=round(time.time() * 1000))
+    # A plan lookup that failed keeps the plan last named, rather than
+    # blanking a label the account still has.
+    plan = cached_plan if plan is None else plan
+    result.update(limits=probe["limits"], tierLabel=plan, live=True, fetchedAtMs=round(time.time() * 1000))
     write_json(probe_cache, {"fetchedAtMs": result["fetchedAtMs"], "limits": probe["limits"], "plan": plan})
     return result
 
@@ -382,11 +533,13 @@ def collect_limits(access_key: str, force: bool) -> dict[str, Any]:
   # route. Ask the shell to try again sooner than its regular interval.
   if probe.get("transport"):
     result["retryAdvised"] = True
+  result["authHelpText"] = probe["helpText"]
   if fallback:
-    result["limits"] = fallback
-  else:
+    result.update(limits=fallback, tierLabel=cached_plan, fetchedAtMs=fetched_ms)
+  if probe.get("auth"):
+    result["usageStatusText"] = "Sign-in expired"
+  elif not fallback:
     result["usageStatusText"] = "Ollama limits unavailable"
-    result["authHelpText"] = probe["helpText"]
   return result
 
 
@@ -397,33 +550,48 @@ def main() -> int:
   parser = argparse.ArgumentParser()
   parser.add_argument("--force", action="store_true", help="rescan sessions and re-probe limits, ignoring caches")
   parser.add_argument("--limits-only", action="store_true", help="reuse any recent session scan; only the limits probe must be fresh")
-  parser.add_argument("--cache-seconds", type=float, default=20)
   args = parser.parse_args()
 
   config = read_config()
   model_prefix = str(config.get("modelPrefix") or "").strip().lower()
-  scan_age = 0 if args.force else (900 if args.limits_only else args.cache_seconds)
-  stats = scan_sessions(scan_age, model_prefix)
+  scan_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
+  stats = cached_scan(scan_age, model_prefix)
+  has_stats = bool(stats.get("modelUsage"))
 
-  limits = collect_limits(api_key(), args.force)
-
+  key = api_key()
   record = {
     "schemaVersion": 1,
     "id": AGENT_ID,
     "name": AGENT_NAME,
     "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
-    "ready": number((stats or {}).get("totalPrompts")) > 0 or len(limits["limits"]) > 0,
-    "hasLocalStats": stats is not None,
-    "tierLabel": limits["tierLabel"],
-    "usageStatusText": limits["usageStatusText"],
-    "authHelpText": limits["authHelpText"],
-    "limits": limits["limits"],
-    "limitsStale": not limits["live"],
-    "limitsFetchedAt": limits["fetchedAtMs"],
+    "ready": False,
+    "hasLocalStats": has_stats,
+    "hasPromptStats": True,
+    "tierLabel": "",
+    "usageStatusText": "",
+    "authHelpText": "",
+    "limits": [],
+    "limitsStale": False,
+    "limitsFetchedAt": 0,
   }
-  if limits.get("retryAdvised"):
-    record["retryAdvised"] = True
-  record.update(stats or {})
+  record.update(empty_stats())
+  record.update(stats)
+
+  # A machine with neither a key nor any Ollama Cloud sessions doesn't use it,
+  # and the panel skips the record; that is no trouble to report.
+  if key or has_stats:
+    limits = collect_limits(key, args.force)
+    record.update(
+      ready=True,
+      tierLabel=limits["tierLabel"],
+      usageStatusText=limits["usageStatusText"],
+      authHelpText=limits["authHelpText"],
+      limits=limits["limits"],
+      limitsStale=bool(limits["limits"]) and not limits["live"],
+      limitsFetchedAt=limits["fetchedAtMs"],
+    )
+    if limits.get("retryAdvised"):
+      record["retryAdvised"] = True
   print(json.dumps(record, separators=(",", ":"), sort_keys=True))
   return 0
 

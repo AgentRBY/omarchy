@@ -8,14 +8,17 @@ require_command python3
 TEST_HOME=$(mktemp -d)
 trap 'rm -rf "$TEST_HOME"' EXIT
 
-# Without credentials the collector must still print a full, hidden-by-default
-# record: the update runner writes whatever valid JSON appears on stdout.
-no_key=$(HOME="$TEST_HOME" XDG_CONFIG_HOME="$TEST_HOME/.config" XDG_CACHE_HOME="$TEST_HOME/.cache" \
+# A machine that has never used Ollama Cloud must still print a full,
+# hidden-by-default record with no status to alarm anyone: the update runner
+# writes whatever valid JSON appears on stdout.
+no_key=$(env -u PI_CODING_AGENT_DIR HOME="$TEST_HOME" XDG_CONFIG_HOME="$TEST_HOME/.config" XDG_CACHE_HOME="$TEST_HOME/.cache" \
   OLLAMA_API_KEY="" "$ROOT/bin/omarchy-agent-usage-ollama" --force)
 
-[[ $(jq -r '.id + ":" + (.ready | tostring) + ":" + .usageStatusText + ":" + .tierLabel + ":" + (.limits | length | tostring) + ":" + (.hasLocalStats | tostring)' <<<"$no_key") == "ollama:false:Waiting for auth::0:false" ]] ||
+[[ $(jq -r '.id + ":" + (.ready | tostring) + ":" + .usageStatusText + ":" + .tierLabel + ":" + (.limits | length | tostring) + ":" + (.hasLocalStats | tostring)' <<<"$no_key") == "ollama:false:::0:false" ]] ||
   fail "Ollama collector prints a valid record without credentials" "$no_key"
-pass "Ollama collector prints a valid record without credentials"
+[[ $(jq -c '{authHelpText, limitsStale, limitsFetchedAt, totalPrompts, days: (.recentDays | length), modelUsage, activeDates}' <<<"$no_key") == '{"authHelpText":"","limitsStale":false,"limitsFetchedAt":0,"totalPrompts":0,"days":7,"modelUsage":{},"activeDates":[]}' ]] ||
+  fail "Ollama collector prints the full, zeroed stats block on an unused machine" "$no_key"
+pass "Ollama collector prints an empty, unready record on an unused machine"
 
 # Pi and omp sessions on the ollama-cloud provider are the local stats; other
 # providers in the same files must not leak in, and model version tags merge.
@@ -41,6 +44,11 @@ result=$(HOME="$PI_HOME" XDG_CONFIG_HOME="$PI_HOME/.config" XDG_CACHE_HOME="$PI_
 [[ $(jq -r '.todayTotalTokens' <<<"$result") == "55" ]] ||
   fail "Ollama collector counts usage from pi and omp sessions" "$result"
 pass "Ollama collector counts usage from pi and omp sessions"
+
+# In use here, but no key to ask for the account's limits.
+[[ $(jq -c '{ready, usageStatusText, limitsStale}' <<<"$result") == '{"ready":true,"usageStatusText":"Waiting for auth","limitsStale":false}' ]] ||
+  fail "Ollama collector waits for auth when used without a key" "$result"
+pass "Ollama collector waits for auth when used without a key"
 
 [[ $(jq -c '.modelUsage' <<<"$result") == '{"deepseek-v4-pro":{"cacheCreationInputTokens":2,"cacheReadInputTokens":3,"inputTokens":15,"outputTokens":5},"kimi-k3":{"cacheCreationInputTokens":1,"cacheReadInputTokens":4,"inputTokens":20,"outputTokens":5}}' ]] ||
   fail "Ollama collector filters to the ollama-cloud provider and merges model tags" "$result"
@@ -70,7 +78,7 @@ result=$(HOME="$PI_HOME" XDG_CONFIG_HOME="$PI_HOME/.config" XDG_CACHE_HOME="$PI_
   OLLAMA_API_KEY="" "$ROOT/bin/omarchy-agent-usage-ollama" --limits-only)
 [[ $(jq -c '.modelUsage | keys' <<<"$result") == '["deepseek-v4-pro","kimi-k3"]' ]] ||
   fail "Ollama collector rescans when the model filter changes" "$result"
-cache_file="$PI_HOME/.cache/omarchy/agent-usage/ollama-pi-sessions.json"
+cache_file=$(ls "$PI_HOME/.cache/omarchy/agent-usage/"ollama-scan-*.json | head -n 1)
 jq -c '.scanDate = "2000-01-01" | .stats.todayTotalTokens = 999' "$cache_file" >"$cache_file.tmp" && mv "$cache_file.tmp" "$cache_file"
 result=$(HOME="$PI_HOME" XDG_CONFIG_HOME="$PI_HOME/.config" XDG_CACHE_HOME="$PI_HOME/.cache" \
   OLLAMA_API_KEY="" "$ROOT/bin/omarchy-agent-usage-ollama" --limits-only)
@@ -126,8 +134,9 @@ pass "Ollama collector reports a payload without usable limits"
 CACHE_HOME=$(mktemp -d)
 trap 'rm -rf "$TEST_HOME" "$PI_HOME" "$CACHE_HOME"' EXIT
 
+# force, cached-json (seeded for the key "key"), mode, [key]
 collect_limits() {
-  COLLECTOR="$ROOT/bin/omarchy-agent-usage-ollama" FORCE="$1" CACHED="$2" MODE="$3" \
+  COLLECTOR="$ROOT/bin/omarchy-agent-usage-ollama" FORCE="$1" CACHED="$2" MODE="$3" KEY="${4:-key}" \
     XDG_CACHE_HOME="$CACHE_HOME" python3 - <<'PY'
 import importlib.machinery, importlib.util, io, json, os
 
@@ -136,7 +145,7 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 collector = importlib.util.module_from_spec(spec)
 loader.exec_module(collector)
 
-cache = collector.cache_root() / "ollama-limits.json"
+cache = collector.limits_cache_path("key")
 cached = os.environ["CACHED"]
 if cached:
   cache.write_text(cached, encoding="utf-8")
@@ -152,12 +161,16 @@ def urlopen(request, timeout=None):
     raise OSError("no route to host")
   if mode == "rejected":
     raise collector.urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, io.BytesIO(b""))
+  if mode == "server":
+    raise collector.urllib.error.HTTPError(request.full_url, 500, "Oops", {}, io.BytesIO(b""))
   if request.full_url.endswith("/api/me"):
+    if mode == "planless":
+      raise OSError("plan lookup timed out")
     return io.BytesIO(b'{"Plan":"pro"}')
   return io.BytesIO(b'{"limits":{"session":{"usage":0.44},"weekly":{"usage":0.11}}}')
 
 collector.urllib.request.urlopen = urlopen
-result = collector.collect_limits("key", os.environ["FORCE"] == "true")
+result = collector.collect_limits(os.environ["KEY"], os.environ["FORCE"] == "true")
 print(json.dumps({
   "result": result,
   "probes": probes,
@@ -184,17 +197,55 @@ unreachable=$(collect_limits false "$stale" transport)
   fail "Ollama collector falls back to cache when the probe cannot connect" "$unreachable"
 [[ $(jq -r '.result.retryAdvised' <<<"$unreachable") == "true" ]] ||
   fail "Ollama collector advises a retry after a transport failure" "$unreachable"
-[[ $(jq -c '{live: .result.live, fetchedAtMs: .result.fetchedAtMs}' <<<"$unreachable") == '{"live":false,"fetchedAtMs":1}' ]] ||
-  fail "Ollama collector marks kept limits stale with when they were fetched" "$unreachable"
+[[ $(jq -c '{live: .result.live, fetchedAtMs: .result.fetchedAtMs, status: .result.usageStatusText}' <<<"$unreachable") == '{"live":false,"fetchedAtMs":1,"status":""}' ]] ||
+  fail "Ollama collector marks kept limits stale with when they were fetched, without a status" "$unreachable"
+# The endpoint names no reset times, so a kept window is kept as measured:
+# never zeroed on a guessed reset, never given a reset time.
+[[ $(jq -c '[.result.limits[] | {percent, resetsAt}]' <<<"$unreachable") == '[{"percent":0.11,"resetsAt":""}]' ]] ||
+  fail "Ollama collector keeps a window without a reset time as it was measured" "$unreachable"
 pass "Ollama collector falls back to cache when the probe cannot connect"
 
-# A rejected key says so instead of pretending the endpoint is down.
-rejected=$(collect_limits false "" rejected)
-[[ $(jq -r '.result.usageStatusText' <<<"$rejected") == "Ollama limits unavailable" ]] ||
-  fail "Ollama collector reports a rejected key" "$rejected"
+# With nothing kept, a failed check says the limits are unavailable; only a
+# transport failure asks for an early retry.
+offline=$(collect_limits false "" transport)
+[[ $(jq -c '.result | {usageStatusText, retryAdvised}' <<<"$offline") == '{"usageStatusText":"Ollama limits unavailable","retryAdvised":true}' ]] ||
+  fail "Ollama collector reports unavailable limits when offline with nothing kept" "$offline"
+server=$(collect_limits false "" server)
+[[ $(jq -c '.result | {usageStatusText, retryAdvised}' <<<"$server") == '{"usageStatusText":"Ollama limits unavailable","retryAdvised":null}' ]] ||
+  fail "Ollama collector does not advise a retry for a server's error status" "$server"
+pass "Ollama collector advises a retry only when the endpoint can't be reached"
+
+# A rejected key is a sign-in to redo, and kept limits stay, stale.
+rejected=$(collect_limits false "$stale" rejected)
+[[ $(jq -r '.result.usageStatusText' <<<"$rejected") == "Sign-in expired" ]] ||
+  fail "Ollama collector reports a rejected key as an expired sign-in" "$rejected"
 [[ $(jq -r '.result.authHelpText' <<<"$rejected") == *"rejected"* ]] ||
   fail "Ollama collector explains a rejected key" "$rejected"
-pass "Ollama collector reports a rejected key"
+[[ $(jq -c '{live: .result.live, n: (.result.limits | length)}' <<<"$rejected") == '{"live":false,"n":1}' ]] ||
+  fail "Ollama collector keeps the last limits past a rejected key" "$rejected"
+pass "Ollama collector reports a rejected key as Sign-in expired"
+
+# Another key never shows this one's numbers or plan.
+other=$(collect_limits false "$fresh" transport other-key)
+[[ $(jq -c '.result | {n: (.limits | length), tierLabel, usageStatusText}' <<<"$other") == '{"n":0,"tierLabel":"","usageStatusText":"Ollama limits unavailable"}' ]] ||
+  fail "Ollama collector keys its limits cache by credential" "$other"
+pass "Ollama collector keeps each key's limits and plan apart"
+
+# A cache stamped in the future (the clock went back) is no proof of a recent
+# probe, but it is still the last good answer to fall back on.
+ahead=$(jq -nc --argjson ms "$(python3 -c 'import time; print(round((time.time() + 86400) * 1000))')" '{
+  fetchedAtMs: $ms, limits: [{ label: "Weekly (7-day)", percent: 0.11, resetsAt: "" }], plan: "Pro"
+}')
+skewed=$(collect_limits false "$ahead" transport)
+[[ $(jq -c '{probes: (.probes | length), n: (.result.limits | length), live: .result.live}' <<<"$skewed") == '{"probes":1,"n":1,"live":false}' ]] ||
+  fail "Ollama collector re-probes past a future-stamped cache and still falls back on it" "$skewed"
+pass "Ollama collector neither trusts nor loses a future-stamped cache"
+
+# A plan lookup that fails keeps the plan last named.
+planless=$(collect_limits true "$fresh" planless)
+[[ $(jq -r '.result.tierLabel' <<<"$planless") == "Pro" && $(jq -c '[.result.limits[].percent]' <<<"$planless") == "[0.44,0.11]" ]] ||
+  fail "Ollama collector keeps the cached plan when the plan lookup fails" "$planless"
+pass "Ollama collector keeps the cached plan when the plan lookup fails"
 
 # A fresh cache answers repeated panel opens without a request apiece.
 reused=$(collect_limits false "$fresh" normal)
@@ -216,3 +267,48 @@ pass "Ollama collector re-probes on --force despite a fresh cache"
 [[ $(jq -c '[.cached.limits[].percent]' <<<"$forced") == "[0.44,0.11]" && $(jq -r '.cached.plan' <<<"$forced") == "Pro" ]] ||
   fail "Ollama collector caches a successful probe" "$forced"
 pass "Ollama collector caches a successful probe"
+
+# Sessions outside the default root: an omp profile, a pi profile, and a pi
+# agent dir moved by PI_CODING_AGENT_DIR, all under a $HOME that is a git
+# checkout ignoring everything. A forked session repeats its parent's message
+# (same id and timestamp) and counts once; lines without an id always count;
+# rows whose timestamp or tokens are garbage drop without taking the rest.
+ROOTS_HOME=$(mktemp -d)
+trap 'rm -rf "$TEST_HOME" "$PI_HOME" "$CACHE_HOME" "$ROOTS_HOME"' EXIT
+mkdir -p "$ROOTS_HOME/.git"
+printf '*\n' >"$ROOTS_HOME/.gitignore"
+mkdir -p "$ROOTS_HOME/.omp/profiles/work/agent/sessions/p" "$ROOTS_HOME/.pi/profiles/home/agent/sessions/p" "$ROOTS_HOME/moved/sessions/p"
+line() {
+  printf '{"type":"message",%s"timestamp":%s,"message":{"role":"assistant","provider":"ollama-cloud","model":"kimi-k3","usage":{"input":%s}}}\n' "$1" "$2" "$3"
+}
+{
+  line '"id":"parent",' "\"$timestamp\"" 100
+  line '' "\"$timestamp\"" 1
+  line '' "\"$timestamp\"" 1
+} >"$ROOTS_HOME/.omp/profiles/work/agent/sessions/p/a.jsonl"
+{
+  line '"id":"parent",' "\"$timestamp\"" 100
+  line '"id":"child",' "\"$timestamp\"" 10
+  line '"id":"bad-ts",' -5 5000
+  line '"id":"bad-ts2",' '"not a date"' 5000
+  line '"id":"bad-tokens",' "\"$timestamp\"" '"12"'
+  line '"id":"huge-tokens",' "\"$timestamp\"" 1e300
+} >"$ROOTS_HOME/.pi/profiles/home/agent/sessions/p/fork.jsonl"
+line '"id":"moved",' "\"$timestamp\"" 1000 >"$ROOTS_HOME/moved/sessions/p/m.jsonl"
+
+roots=$(HOME="$ROOTS_HOME" PI_CODING_AGENT_DIR="$ROOTS_HOME/moved" XDG_CONFIG_HOME="$ROOTS_HOME/.config" XDG_CACHE_HOME="$ROOTS_HOME/.cache" \
+  OLLAMA_API_KEY="" "$ROOT/bin/omarchy-agent-usage-ollama" --force)
+[[ $(jq -r '.todayTotalTokens' <<<"$roots") == "1112" && $(jq -r '.totalPrompts' <<<"$roots") == "5" ]] ||
+  fail "Ollama collector scans profiles and PI_CODING_AGENT_DIR past ignore rules, dedups forks, counts id-less lines, skips garbage rows" "$roots"
+pass "Ollama collector scans every pi/omp root, dedups forks, and skips garbage rows"
+
+# A normal run reuses a scan for a few seconds only to absorb concurrent runs;
+# --force always rescans.
+line '"id":"later",' "\"$timestamp\"" 7 >>"$ROOTS_HOME/moved/sessions/p/m.jsonl"
+again=$(HOME="$ROOTS_HOME" PI_CODING_AGENT_DIR="$ROOTS_HOME/moved" XDG_CONFIG_HOME="$ROOTS_HOME/.config" XDG_CACHE_HOME="$ROOTS_HOME/.cache" \
+  OLLAMA_API_KEY="" "$ROOT/bin/omarchy-agent-usage-ollama")
+forced=$(HOME="$ROOTS_HOME" PI_CODING_AGENT_DIR="$ROOTS_HOME/moved" XDG_CONFIG_HOME="$ROOTS_HOME/.config" XDG_CACHE_HOME="$ROOTS_HOME/.cache" \
+  OLLAMA_API_KEY="" "$ROOT/bin/omarchy-agent-usage-ollama" --force)
+[[ $(jq -r '.todayTotalTokens' <<<"$again") == "1112" && $(jq -r '.todayTotalTokens' <<<"$forced") == "1119" ]] ||
+  fail "Ollama collector reuses a seconds-old scan on a normal run and rescans on --force" "$again $forced"
+pass "Ollama collector reuses a seconds-old scan and rescans on --force"
