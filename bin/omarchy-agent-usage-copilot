@@ -19,9 +19,11 @@ The monthly meter is an allowance of AI credits: GitHub's own account-wide
 figure from the internal quota endpoint (the same one the editor plugins
 use), asked with a token from COPILOT_QUOTA_TOKEN, GH_TOKEN, GITHUB_TOKEN, or
 `gh auth token`. It names the plan, the allowance, and when it resets, and a
-failed check keeps the last answer, marked stale. Only when it can't be asked
-at all does a monthlyCredits budget from ~/.config/omarchy/agents/copilot.json
-give a local estimate, labeled as one, of this machine's CLI spend:
+failed check keeps the last answer, marked stale. An answer under 15 seconds
+old is reused rather than asked again (--force always asks), and `gh` is only
+run when GitHub is actually asked. Only when it can't be asked at all does a
+monthlyCredits budget from ~/.config/omarchy/agents/copilot.json give a local
+estimate, labeled as one, of this machine's CLI spend:
 
   {
     "monthlyCredits": 1500,
@@ -41,6 +43,7 @@ import calendar
 import datetime as dt
 import fcntl
 import hashlib
+import http.client
 import json
 import os
 import shutil
@@ -57,7 +60,7 @@ from typing import Any
 AGENT_ID = "copilot"
 AGENT_NAME = "GitHub Copilot"
 AUTH_HELP = (
-  "Run `copilot` in a terminal and sign in to GitHub to start recording sessions."
+  "Run `gh auth login`, or set COPILOT_QUOTA_TOKEN, to show Copilot's monthly allowance."
 )
 
 ULTRA_SECONDS = 1_000_000_000
@@ -81,6 +84,9 @@ MAX_DB_BYTES = 512 * 1024 * 1024
 
 SCAN_REUSE_SECONDS = 20
 LIMITS_ONLY_REUSE_SECONDS = 900
+# Repeated panel opens reuse a quota answer this recent instead of asking
+# GitHub again; --force (a person pressing refresh) always asks.
+PROBE_MIN_INTERVAL_SECONDS = 15
 
 
 def number(value: Any) -> int:
@@ -717,17 +723,19 @@ def direct_scan(home_dir: Path) -> tuple[dict[str, Any], bool]:
 # ------------------------------------------------------------ remote quota
 
 
-def github_token() -> str:
-  """Find a GitHub token without ever storing or logging one.
+def short_hash(value: str) -> str:
+  return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
-  Environment first, so a user can scope exactly what this sees, then the
-  `gh` CLI's own credential store, which is where a machine that has signed
-  in already keeps it.
-  """
+
+def env_token() -> str:
   for var in ("COPILOT_QUOTA_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
     value = os.environ.get(var)
     if value and value.strip():
       return value.strip()
+  return ""
+
+
+def gh_token() -> str:
   exe = shutil.which("gh")
   if not exe:
     return ""
@@ -742,6 +750,55 @@ def github_token() -> str:
   except (OSError, subprocess.SubprocessError):
     return ""
   return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def gh_user() -> str:
+  """Who `gh` is signed in to github.com as, from its hosts.yml.
+
+  Read as plain lines rather than YAML: only the host's own `user:` key
+  matters, and reading it costs no process, so a reused answer never has to
+  run `gh` to know whose it is.
+  """
+  config = os.environ.get("GH_CONFIG_DIR") or str(Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "gh")
+  try:
+    lines = (Path(config) / "hosts.yml").read_text(encoding="utf-8").splitlines()
+  except (OSError, UnicodeDecodeError):
+    return ""
+  in_host, child_indent = False, None
+  for line in lines:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+      continue
+    indent = len(line) - len(line.lstrip(" "))
+    if indent == 0:
+      in_host, child_indent = stripped == "github.com:", None
+      continue
+    if not in_host:
+      continue
+    child_indent = indent if child_indent is None else child_indent
+    if indent == child_indent and stripped.startswith("user:"):
+      return stripped.split(":", 1)[1].strip().strip("'\"")
+  return ""
+
+
+def github_credential() -> tuple[str, str]:
+  """Who the quota is asked as, and the token when it is already in hand.
+
+  Environment first, so a user can scope exactly what this sees, then the
+  `gh` CLI's own credential store, which is where a machine that has signed
+  in already keeps it. An exported token keys by its own hash. gh keys by the
+  account its hosts.yml names, and its token is only fetched when GitHub is
+  asked; a hosts.yml without a user falls back to fetching it now. Nothing
+  here is ever stored or logged.
+  """
+  token = env_token()
+  if token:
+    return short_hash(token), token
+  user = gh_user() if shutil.which("gh") else ""
+  if user:
+    return short_hash(f"gh:github.com:{user}"), ""
+  token = gh_token()
+  return (short_hash(token), token) if token else ("", "")
 
 
 def ask_quota(token: str) -> dict[str, Any]:
@@ -759,7 +816,11 @@ def ask_quota(token: str) -> dict[str, Any]:
       payload = json.loads(response.read(2_000_000).decode("utf-8", errors="replace"))
   except urllib.error.HTTPError as exc:
     return {"available": False, "reason": f"http-{exc.code}"}
-  except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+  # A reply that came back unreadable is still an answer from GitHub.
+  except (http.client.HTTPException, ValueError):
+    return {"available": False, "reason": "bad-payload"}
+  # No route, no DNS, refused, reset or timed out: nothing answered.
+  except OSError:
     return {"available": False, "reason": "unreachable"}
 
   if not isinstance(payload, dict):
@@ -782,20 +843,58 @@ def ask_quota(token: str) -> dict[str, Any]:
   }
 
 
-def fetch_remote_quota() -> dict[str, Any]:
+def read_json(path: Path) -> dict[str, Any]:
+  try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+  except (OSError, ValueError):
+    return {}
+  return data if isinstance(data, dict) else {}
+
+
+# Before the limits caches were named copilot-limits-*, each token kept its
+# answer as copilot-quota-<token hash>. Read once, when this account has no
+# answer under the new name, so the last allowance survives the rename.
+def adopt_legacy_cache(cache: Path, token: str) -> dict[str, Any]:
+  legacy = cache_root() / f"copilot-quota-{short_hash(token)}.json"
+  cached = read_json(legacy)
+  if not cached.get("available"):
+    return {}
+  try:
+    write_json(cache, cached)
+    legacy.unlink(missing_ok=True)
+  except OSError:
+    pass
+  return cached
+
+
+def fetch_remote_quota(force: bool = False) -> dict[str, Any]:
   """The live quota, or the last good one marked stale.
 
   Every failure is soft: a missing token, an offline machine, or a changed
-  payload keeps the last answer this token got, marked stale, or leaves the record
-  on its local stats rather than failing the whole collection. The cache is
-  keyed by the token, so a machine signed in to another account never shows
-  the last one's allowance.
+  payload keeps the last answer this account got, marked stale, or leaves
+  the record on its local stats rather than failing the whole collection.
+  Each account keeps its own cache, so a machine signed in to another
+  account never shows the last one's allowance. The cache is read whatever
+  its file time, so a clock that went back doesn't lose it.
   """
-  token = github_token()
-  if not token:
+  key, token = github_credential()
+  if not key:
     return {"available": False, "reason": "no-token"}
 
-  cache = cache_root() / f"copilot-quota-{hashlib.sha256(token.encode('utf-8')).hexdigest()[:16]}.json"
+  cache = cache_root() / f"copilot-limits-{key}.json"
+  cached = read_json(cache)
+  # A panel opened and shut repeatedly must not turn into a request (and a
+  # gh process) per flick, so an answer this recent is the answer.
+  age = time.time() - number(cached.get("fetchedAtMs")) / 1000
+  if not force and cached.get("available") and number(cached.get("fetchedAtMs")) > 0 and 0 <= age < PROBE_MIN_INTERVAL_SECONDS:
+    return open_quota(dict(cached, stale=False))
+
+  token = token or gh_token()
+  if not token:
+    return {"available": False, "reason": "no-token"}
+  if not cached:
+    cached = adopt_legacy_cache(cache, token)
+
   quota = ask_quota(token)
   if quota.get("available"):
     quota.update(stale=False, fetchedAtMs=round(time.time() * 1000))
@@ -805,25 +904,31 @@ def fetch_remote_quota() -> dict[str, Any]:
       pass
     return quota
 
-  cached = read_fresh_json(cache, float("inf")) or {}
   if cached.get("available"):
-    if not quota_window_open(cached):
-      cached.update(used=0.0, resetsAt="")
-    cached.update(stale=True, failure=quota.get("reason", ""))
-    return cached
+    return open_quota(dict(cached, stale=True, failure=quota.get("reason", "")))
   return quota
 
 
-# A kept answer describes its own allowance window and nothing after it: once
-# that window resets, its usage is back at zero. Without a reset date, the window is
-# the calendar month (UTC) it was fetched in.
-def quota_window_open(cached: dict[str, Any]) -> bool:
-  now = dt.datetime.now(dt.timezone.utc)
+# A kept answer describes its own allowance window and nothing after it:
+# once GitHub's reset date passes, its usage is back at zero and the next
+# reset is unknown until GitHub is asked again. One without a reset date is
+# kept as it is.
+def open_quota(cached: dict[str, Any]) -> dict[str, Any]:
   resets_at = parse_event_time(str(cached.get("resetsAt") or ""))
-  if resets_at is not None:
-    return resets_at > now
-  fetched = number(cached.get("fetchedAtMs")) / 1000
-  return fetched > 0 and utc_month_key(fetched) == now.strftime("%Y-%m")
+  if resets_at is not None and resets_at <= dt.datetime.now(dt.timezone.utc):
+    cached.update(used=0.0, resetsAt="")
+  return cached
+
+
+# What went wrong asking GitHub, and what to do about it.
+def quota_trouble(reason: str) -> str:
+  if reason == "unreachable":
+    return "Couldn't reach GitHub's Copilot quota endpoint. Retrying shortly."
+  if reason in ("http-401", "http-403"):
+    return "GitHub refused the token for Copilot's quota. " + AUTH_HELP
+  if reason.startswith("http-"):
+    return f"GitHub's Copilot quota endpoint returned status {reason[5:]}."
+  return "GitHub's Copilot quota endpoint sent no allowance."
 
 
 # ---------------------------------------------------------------- allowance
@@ -847,40 +952,53 @@ def allowance_limits(
     "limits": [],
     "tierLabel": "",
     "usageStatusText": "",
-    "authHelpText": AUTH_HELP,
+    "authHelpText": "",
     "limitsStale": False,
     "limitsFetchedAt": 0,
+    "retryAdvised": False,
   }
-  resets_at = next_month_start(now).isoformat()
+  remote = remote if isinstance(remote, dict) else {}
+  reason = str(remote.get("failure") or remote.get("reason") or "")
+  result["retryAdvised"] = reason == "unreachable"
 
-  live = remote if isinstance(remote, dict) and remote.get("available") else None
-  if live:
-    result["tierLabel"] = str(live.get("planLabel") or "")
-    if live.get("unlimited") or float(live.get("entitlement") or 0) <= 0:
+  if remote.get("available"):
+    result["tierLabel"] = str(remote.get("planLabel") or "")
+    if remote.get("stale"):
+      result["authHelpText"] = quota_trouble(reason) + " Showing the last known allowance."
+    if remote.get("unlimited") or float(remote.get("entitlement") or 0) <= 0:
       return result
-    parsed = parse_event_time(str(live.get("resetsAt") or ""))
-    if parsed is not None and parsed > now:
-      resets_at = parsed.isoformat()
+    # GitHub's own reset date, or none: a kept window that has reset has no
+    # known next one.
+    parsed = parse_event_time(str(remote.get("resetsAt") or ""))
     result["limits"] = [{
       "label": "Monthly allowance",
-      "percent": min(1.0, float(live.get("used") or 0.0) / float(live["entitlement"])),
-      "resetsAt": resets_at,
+      "percent": min(1.0, float(remote.get("used") or 0.0) / float(remote["entitlement"])),
+      "resetsAt": parsed.isoformat() if parsed is not None and parsed > now else "",
     }]
-    result["limitsStale"] = bool(live.get("stale"))
-    result["limitsFetchedAt"] = number(live.get("fetchedAtMs"))
+    result["limitsStale"] = bool(remote.get("stale"))
+    result["limitsFetchedAt"] = number(remote.get("fetchedAtMs"))
     return result
 
-  if remote is not None and remote.get("reason") not in ("no-token", "disabled"):
+  if reason == "no-token":
+    result["usageStatusText"] = "Waiting for auth"
+    result["authHelpText"] = AUTH_HELP
+  elif reason in ("http-401", "http-403"):
+    result["usageStatusText"] = "Sign-in expired"
+    result["authHelpText"] = quota_trouble(reason)
+  elif reason and reason != "disabled":
     result["usageStatusText"] = "Copilot limits unavailable"
+    result["authHelpText"] = quota_trouble(reason)
 
   # A budget must not advertise a meter on a machine the CLI has never
-  # touched: the estimate needs local numbers to mean anything.
+  # touched: the estimate needs local numbers to mean anything. Its window is
+  # the calendar month in UTC, the boundary GitHub documents for Copilot's
+  # allowance.
   budget = config.get("monthlyCredits")
   if isinstance(budget, (int, float)) and budget > 0 and has_stats:
     result["limits"] = [{
       "label": "Monthly allowance (est.)",
       "percent": min(1.0, month_credits / float(budget)),
-      "resetsAt": resets_at,
+      "resetsAt": next_month_start(now).isoformat(),
     }]
   return result
 
@@ -912,17 +1030,18 @@ def main() -> int:
   # machine with gh signed in but no Copilot stays an empty record.
   remote = {"available": False, "reason": "disabled"}
   if config.get("remote") is True or (config.get("remote", True) is not False and home_dir.is_dir()):
-    remote = fetch_remote_quota()
+    remote = fetch_remote_quota(args.force)
 
   has_stats = number(stats.get("totalPrompts")) > 0 or float(stats.get("monthCredits") or 0.0) > 0
   allowance = allowance_limits(float(stats.get("monthCredits") or 0.0), config, remote, now, has_stats)
+  ready = number(stats.get("totalPrompts")) > 0 or len(allowance["limits"]) > 0
 
   record: dict[str, Any] = {
     "schemaVersion": 1,
     "id": AGENT_ID,
     "name": AGENT_NAME,
     "updatedAt": now.isoformat(),
-    "ready": number(stats.get("totalPrompts")) > 0 or len(allowance["limits"]) > 0,
+    "ready": ready,
     "hasLocalStats": True,
     "hasPromptStats": stats.get("hasPromptStats") is not False,
     "tierLabel": allowance["tierLabel"],
@@ -932,6 +1051,9 @@ def main() -> int:
     "limitsStale": allowance["limitsStale"],
     "limitsFetchedAt": allowance["limitsFetchedAt"],
   }
+  # The first probe after login often fires before the network is up.
+  if allowance["retryAdvised"]:
+    record["retryAdvised"] = True
   for key in (
     "todayPrompts",
     "todaySessions",

@@ -187,7 +187,7 @@ record = run()
 collector.urllib.request.urlopen = offline
 stale = run()
 # Once the kept answer's window has reset, its usage is back at zero.
-for cache in collector.cache_root().glob("copilot-quota-*.json"):
+for cache in collector.cache_root().glob("copilot-limits-*.json"):
   kept = json.loads(cache.read_text())
   cache.write_text(json.dumps(dict(kept, resetsAt="2020-01-01T00:00:00.000Z")))
 lapsed = run()
@@ -206,7 +206,7 @@ pass "Copilot collector stamps the live allowance"
   fail "Copilot collector keeps the last live allowance, stale, after a failed check" "$result"
 pass "Copilot collector keeps the last live allowance, stale, after a failed check"
 
-[[ $(jq -c '.lapsed | {label: .limits[0].label, zero: (.limits[0].percent == 0), stale: .limitsStale, tierLabel}' <<<"$result") == '{"label":"Monthly allowance","zero":true,"stale":true,"tierLabel":"Business"}' ]] ||
+[[ $(jq -c '.lapsed | {label: .limits[0].label, zero: (.limits[0].percent == 0), resetsAt: .limits[0].resetsAt, stale: .limitsStale, tierLabel}' <<<"$result") == '{"label":"Monthly allowance","zero":true,"resetsAt":"","stale":true,"tierLabel":"Business"}' ]] ||
   fail "Copilot collector resets a kept allowance once its window ends" "$result"
 pass "Copilot collector resets a kept allowance once its window ends"
 
@@ -348,3 +348,157 @@ result=$(run_collector_in "$EMPTY_HOME")
 [[ $(jq -r '.ready' <<<"$result") == "false" && $(jq -c '.limits' <<<"$result") == "[]" ]] ||
   fail "Copilot collector stays hidden on a clean machine" "$result"
 pass "Copilot collector stays hidden on a clean machine"
+
+# The quota as gh's account sees it: a fake gh logs every run, and hosts.yml
+# names who it is signed in as, so a reused answer needs no gh at all.
+mkdir -p "$TEST_HOME/fakebin" "$TEST_HOME/nogh" "$TEST_HOME/gh"
+cat >"$TEST_HOME/fakebin/gh" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$*" >>"$GH_LOG"
+[[ $1 == "auth" && $2 == "token" ]] && echo "gh-token"
+EOF
+chmod +x "$TEST_HOME/fakebin/gh"
+printf 'github.com:\n    users:\n        tester:\n    git_protocol: ssh\n    user: tester\n' >"$TEST_HOME/gh/hosts.yml"
+printf '{"monthlyCredits": 3000}' >"$TEST_HOME/.config/omarchy/agents/copilot.json"
+
+result=$(HOME="$TEST_HOME" COPILOT_HOME="$TEST_HOME/.copilot" XDG_CONFIG_HOME="$TEST_HOME/.config" \
+  XDG_CACHE_HOME="$TEST_HOME/.cache-limits" GH_CONFIG_DIR="$TEST_HOME/gh" GH_LOG="$TEST_HOME/gh.log" \
+  FAKEBIN="$TEST_HOME/fakebin" NOGH="$TEST_HOME/nogh" \
+  python3 - "$ROOT/bin/omarchy-agent-usage-copilot" <<'PY'
+import datetime as dt
+import hashlib
+import importlib.machinery
+import importlib.util
+import io
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+for var in ("COPILOT_QUOTA_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
+  os.environ.pop(var, None)
+os.environ["PATH"] = os.environ["FAKEBIN"] + ":" + os.environ["PATH"]
+
+loader = importlib.machinery.SourceFileLoader("collector", sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+collector = importlib.util.module_from_spec(spec)
+loader.exec_module(collector)
+
+reset = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=10)).replace(microsecond=0)
+payload = {
+  "copilot_plan": "individual",
+  "quota_reset_date_utc": reset.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+  "quota_snapshots": {"premium_interactions": {"unlimited": False, "entitlement": 300, "credits_used": 30}},
+}
+gh_log = Path(os.environ["GH_LOG"])
+asked = []
+
+
+def answer(request, timeout=None):
+  asked.append(request.get_header("Authorization"))
+  return io.BytesIO(json.dumps(payload).encode())
+
+
+def offline(request, timeout=None):
+  raise collector.urllib.error.URLError("offline")
+
+
+def status(code):
+  def urlopen(request, timeout=None):
+    raise collector.urllib.error.HTTPError(request.full_url, code, "", {}, None)
+  return urlopen
+
+
+def unasked(request, timeout=None):
+  raise AssertionError("the quota should not have been asked")
+
+
+def run(urlopen, *args):
+  collector.urllib.request.urlopen = urlopen
+  out = io.StringIO()
+  sys.argv = ["omarchy-agent-usage-copilot", *args]
+  sys.stdout, real_stdout = out, sys.stdout
+  collector.main()
+  sys.stdout = real_stdout
+  record = json.loads(out.getvalue())
+  return {
+    "limits": [[limit["label"], limit["percent"], limit["resetsAt"] != ""] for limit in record["limits"]],
+    "stale": record["limitsStale"],
+    "status": record["usageStatusText"],
+    "help": record["authHelpText"],
+    "retry": record.get("retryAdvised", False),
+    "tier": record["tierLabel"],
+    "gh": len(gh_log.read_text().splitlines()) if gh_log.exists() else 0,
+  }
+
+
+out = {}
+out["live"] = run(answer, "--force")
+out["reused"] = run(unasked)
+out["limitsOnly"] = run(unasked, "--limits-only")
+out["forced"] = run(answer, "--force")
+out["asked"] = sorted(set(asked))
+out["offline"] = run(offline, "--force")
+
+# A cache stamped in the future (the clock went back) is still the answer
+# kept past a failed check.
+cache = next(collector.cache_root().glob("copilot-limits-*.json"))
+future = time.time() + 86400
+os.utime(cache, (future, future))
+out["future"] = run(offline, "--force")
+out["status500"] = run(status(500), "--force")
+
+# Another gh account has nothing kept; how it failed decides what it says.
+(Path(os.environ["GH_CONFIG_DIR"]) / "hosts.yml").write_text("github.com:\n    user: someone-else\n")
+out["otherOffline"] = run(offline, "--force")
+out["other500"] = run(status(500), "--force")
+out["other401"] = run(status(401), "--force")
+
+# No token anywhere, with the CLI in use: waiting for a sign-in.
+os.environ["PATH"] = os.environ["NOGH"]
+out["noToken"] = run(unasked, "--force")
+
+# An answer under the old copilot-quota-* name is adopted once.
+os.environ["COPILOT_QUOTA_TOKEN"] = "legacy-token"
+legacy = collector.cache_root() / f"copilot-quota-{hashlib.sha256(b'legacy-token').hexdigest()[:16]}.json"
+legacy.write_text(json.dumps({"available": True, "entitlement": 100, "used": 40, "resetsAt": reset.isoformat(), "planLabel": "Pro", "fetchedAtMs": 1000}))
+out["legacy"] = run(offline, "--force")
+out["legacyMoved"] = [legacy.exists(), (collector.cache_root() / f"copilot-limits-{hashlib.sha256(b'legacy-token').hexdigest()[:16]}.json").exists()]
+print(json.dumps(out))
+PY
+)
+
+[[ $(jq -c '.live' <<<"$result") == '{"limits":[["Monthly allowance",0.1,true]],"stale":false,"status":"","help":"","retry":false,"tier":"Pro","gh":1}' ]] ||
+  fail "Copilot collector asks the quota as gh's account" "$result"
+pass "Copilot collector asks the quota as gh's account"
+
+[[ $(jq -c '[.reused, .limitsOnly] | map({limits, stale, help, gh})' <<<"$result") == '[{"limits":[["Monthly allowance",0.1,true]],"stale":false,"help":"","gh":1},{"limits":[["Monthly allowance",0.1,true]],"stale":false,"help":"","gh":1}]' ]] ||
+  fail "Copilot collector reuses a recent quota answer without running gh" "$result"
+[[ $(jq -c '{gh: .forced.gh, asked}' <<<"$result") == '{"gh":2,"asked":["Bearer gh-token"]}' ]] ||
+  fail "Copilot collector asks again on --force" "$result"
+pass "Copilot collector reuses a recent quota answer without running gh, and --force asks again"
+
+[[ $(jq -c '.offline | {stale, status, retry, kept: (.limits | length), help: (.help | test("Retrying"))}' <<<"$result") == '{"stale":true,"status":"","retry":true,"kept":1,"help":true}' ]] ||
+  fail "Copilot collector advises a retry when GitHub can't be reached" "$result"
+[[ $(jq -c '.status500 | {stale, retry, help: (.help | test("500"))}' <<<"$result") == '{"stale":true,"retry":false,"help":true}' ]] ||
+  fail "Copilot collector doesn't advise a retry for an error status" "$result"
+pass "Copilot collector advises a retry only when GitHub can't be reached"
+
+[[ $(jq -c '.future | {stale, kept: (.limits | length)}' <<<"$result") == '{"stale":true,"kept":1}' ]] ||
+  fail "Copilot collector keeps a cache whose file time is in the future" "$result"
+pass "Copilot collector keeps a cache whose file time is in the future"
+
+[[ $(jq -c '[.otherOffline, .other500, .other401] | map({status, retry, help: (.help != "")})' <<<"$result") == '[{"status":"Copilot limits unavailable","retry":true,"help":true},{"status":"Copilot limits unavailable","retry":false,"help":true},{"status":"Sign-in expired","retry":false,"help":true}]' ]] ||
+  fail "Copilot collector says what failed when nothing is kept" "$result"
+[[ $(jq -r '.other500.help' <<<"$result") == *"status 500"* && $(jq -r '.other500.help' <<<"$result") != *"gh auth login"* ]] ||
+  fail "Copilot collector gives an error status as the detail, not a sign-in hint" "$result"
+pass "Copilot collector says what failed when nothing is kept"
+
+[[ $(jq -c '.noToken | {status, help: (.help | test("gh auth login"))}' <<<"$result") == '{"status":"Waiting for auth","help":true}' ]] ||
+  fail "Copilot collector waits for a GitHub sign-in" "$result"
+pass "Copilot collector waits for a GitHub sign-in"
+
+[[ $(jq -c '{limits: .legacy.limits, stale: .legacy.stale, moved: .legacyMoved}' <<<"$result") == '{"limits":[["Monthly allowance",0.4,true]],"stale":true,"moved":[false,true]}' ]] ||
+  fail "Copilot collector adopts an answer cached under the old name" "$result"
+pass "Copilot collector adopts an answer cached under the old name"
