@@ -13,6 +13,7 @@ import http.client
 import json
 import math
 import os
+import stat
 import sys
 import tempfile
 import threading
@@ -244,7 +245,14 @@ def refresh_lock():
       lock.mkdir(mode=0o700)
       break
     except FileExistsError:
-      if not lock.is_dir() or time.monotonic() >= deadline:
+      # The CLI may let go between the mkdir and this look: a lock that is
+      # gone is free, so try again. Only something that isn't a directory
+      # blocks the lock for good.
+      try:
+        blocked = not stat.S_ISDIR(lock.lstat().st_mode)
+      except FileNotFoundError:
+        continue
+      if blocked or time.monotonic() >= deadline:
         raise KimiError("Kimi sign-in is busy; start Kimi and try again")
       time.sleep(0.1)
 
