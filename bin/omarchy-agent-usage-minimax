@@ -2,24 +2,30 @@
 # omarchy:summary=Print the MiniMax Token Plan usage record as JSON
 # omarchy:args=[--force] [--limits-only]
 # omarchy:hidden=true
-"""Collect MiniMax Token Plan limits into a display-ready JSON record.
+"""Collect MiniMax usage into a display-ready JSON record.
 
 The 5-hour session and weekly windows come from MiniMax's Token Plan API with
-the key MiniMax's own `mmx` CLI or opencode saved. Each credential's last
+the key MiniMax's own `mmx` CLI, opencode, or pi saved. Each credential's last
 good limits are cached, so a failed check keeps showing them, marked stale,
-rather than dropping the section. The agents panel only ever reads the JSON
-this prints.
+rather than dropping the section.
+
+Local stats come from MiniMax Code's own session files, and from pi/omp and
+opencode sessions that ran on a MiniMax provider. The agents panel only ever
+reads the JSON this prints.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import fcntl
 import hashlib
 import json
 import math
 import os
+import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -33,13 +39,27 @@ AGENT_ID = "minimax"
 AGENT_NAME = "MiniMax"
 DEFAULT_BASE_URL = "https://api.minimax.io"
 CN_BASE_URL = "https://api.minimaxi.com"
-AUTH_HELP = "Set MINIMAX_API_KEY, or sign in to MiniMax in opencode."
+AUTH_HELP = "Set MINIMAX_API_KEY, or sign in to MiniMax in opencode, to show Token Plan limits."
 AUTH_HELP_BAD_KEY = "MiniMax rejected the saved credentials. Set MINIMAX_API_KEY, or sign in to MiniMax again with `mmx` or opencode."
 # The plan the quota endpoint describes: only a Token Plan has these windows.
 TIER_LABEL = "Token Plan"
+# The pi/omp and opencode provider names MiniMax bills, by region. Exact
+# names: a custom gateway in front of MiniMax is not this account.
+PROVIDERS = ("minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan")
+# A scan this recent is only reused to dedup concurrent collector runs (the
+# update command backgrounds one per agent while the panel refreshes on its
+# own). --limits-only promises only fresh limits, so it may reuse a scan for
+# up to 15 minutes.
+SCAN_REUSE_SECONDS = 20
+LIMITS_ONLY_REUSE_SECONDS = 900
 # The panel opens and shuts fire a probe each; a recent probe result is reused
 # for this window rather than turning every flick into a request.
 PROBE_MIN_INTERVAL_SECONDS = 15
+# Bounds for numbers read from session files. A timestamp outside them, or a
+# token count above the cap, is corruption rather than usage.
+EARLIEST_SECONDS = 946_684_800  # 2000-01-01
+LATEST_SECONDS = 4_102_444_800  # 2100-01-01
+MAX_TOKENS = 10_000_000_000
 # base_resp codes MiniMax answers a bad key with: 1004 is an authentication
 # failure, 2049 an invalid API key.
 AUTH_STATUS_CODES = {1004, 2049}
@@ -83,8 +103,7 @@ def base_record(**overrides: Any) -> dict[str, Any]:
     "updatedAt": datetime.now(timezone.utc).isoformat(),
     "ready": False,
     "hasLocalStats": False,
-    "hasPromptStats": False,
-    "scope": "account",
+    "hasPromptStats": True,
     "tierLabel": "",
     "usageStatusText": "",
     "authHelpText": "",
@@ -184,25 +203,44 @@ def config_base_url(config: dict[str, Any]) -> str:
   return DEFAULT_BASE_URL
 
 
-def opencode_key() -> str:
-  data_home = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local/share"))
-  parsed = read_json(data_home / "opencode" / "auth.json")
+def opencode_data_dir() -> Path:
+  return Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local/share")) / "opencode"
+
+
+def pi_agent_dir() -> Path:
+  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
+  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
+
+
+def saved_key(path: Path, providers: tuple[str, ...]) -> tuple[str, str]:
+  """(key, provider) for the first provider `path` holds a literal key for."""
+  parsed = read_json(path)
   if not isinstance(parsed, dict):
-    return ""
-  for provider in ("minimax", "minimax-coding", "minimax-token-plan"):
+    return "", ""
+  for provider in providers:
     entry = parsed.get(provider)
     if isinstance(entry, dict):
       value = entry.get("key") or entry.get("apiKey") or entry.get("token")
-      if isinstance(value, str) and value.strip():
-        return value.strip()
-  return ""
+      # A pi `$VAR` or `!command` entry is resolved by pi alone.
+      if isinstance(value, str) and value.strip() and not value.strip().startswith(("!", "$")):
+        return value.strip(), provider
+  return "", ""
 
 
 def credentials() -> tuple[str, str]:
   config = mmx_config()
-  api_key = os.environ.get("MINIMAX_API_KEY", "").strip() or config_key(config) or opencode_key()
-  base_url = os.environ.get("MINIMAX_BASE_URL", "").strip() or config_base_url(config)
-  return api_key, base_url
+  api_key = os.environ.get("MINIMAX_API_KEY", "").strip() or config_key(config)
+  base_url = config_base_url(config)
+  if not api_key:
+    # The key opencode or pi signed in to MiniMax with; a China-region
+    # provider's key only answers on the China host.
+    for path in (opencode_data_dir() / "auth.json", pi_agent_dir() / "auth.json", Path.home() / ".omp" / "agent" / "auth.json"):
+      api_key, provider = saved_key(path, ("minimax", "minimax-coding", "minimax-token-plan") + PROVIDERS[1:])
+      if api_key:
+        if provider.startswith("minimax-cn"):
+          base_url = CN_BASE_URL
+        break
+  return api_key, os.environ.get("MINIMAX_BASE_URL", "").strip() or base_url
 
 
 def number(value: Any) -> float | None:
@@ -420,14 +458,396 @@ def collect_limits(api_key: str, base_url: str, force: bool) -> dict[str, Any]:
   return result
 
 
-# Nobody with a MiniMax key here: an empty record, which the panel skips.
-# With one, a failed check keeps the last good limits, marked stale.
-def collect(api_key: str, base_url: str, force: bool = False) -> dict[str, Any]:
+# --------------------------------------------------------------------------
+# Local session stats
+# --------------------------------------------------------------------------
+
+def token_count(value: Any) -> int:
+  # Booleans are ints to Python, and a NaN or negative count would poison
+  # every sum it reaches, so anything but a plain finite count reads as none.
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
+    return 0
+  if not math.isfinite(value) or value < 0 or value > MAX_TOKENS:
+    return 0
+  return int(value)
+
+
+def local_day(value: Any) -> str | None:
+  """The local date of an untrusted timestamp, or None when it isn't one."""
+  if isinstance(value, bool):
+    return None
+  if isinstance(value, (int, float)):
+    if not math.isfinite(value):
+      return None
+    # MiniMax Code, pi, and opencode timestamps are milliseconds.
+    seconds = value / 1000 if value > 10_000_000_000 else value
+    if not EARLIEST_SECONDS <= seconds < LATEST_SECONDS:
+      return None
+    return datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
+  if not isinstance(value, str) or not value.strip():
+    return None
+  try:
+    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+  except ValueError:
+    return None
+  if parsed.tzinfo is not None:
+    parsed = parsed.astimezone()
+  if not 2000 <= parsed.year < 2100:
+    return None
+  return parsed.strftime("%Y-%m-%d")
+
+
+def empty_bucket() -> dict[str, int]:
+  return {
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+  }
+
+
+class Stats:
+  """Token and activity totals shared by every local source.
+
+  Sessions and days are sets, so a day active in two sources counts once
+  toward activeDays.
+  """
+
+  def __init__(self) -> None:
+    self.today = datetime.now().strftime("%Y-%m-%d")
+    self.recent_dates = recent_dates()
+    self.recent = {day: 0 for day in self.recent_dates}
+    self.today_prompts = 0
+    self.today_tokens = 0
+    self.today_sessions: set[str] = set()
+    self.today_by_model: dict[str, int] = {}
+    self.total_prompts = 0
+    self.sessions: set[str] = set()
+    self.active_dates: set[str] = set()
+    self.model_usage: dict[str, dict[str, int]] = {}
+
+  def touch(self, session: str, day: str) -> None:
+    self.sessions.add(session)
+    self.active_dates.add(day)
+    if day == self.today:
+      self.today_sessions.add(session)
+
+  def prompt(self, session: str, day: str) -> None:
+    self.touch(session, day)
+    self.total_prompts += 1
+    if day == self.today:
+      self.today_prompts += 1
+
+  def tokens(self, session: str, day: str, model: str, inp: int, out: int, cread: int, cwrite: int) -> None:
+    self.touch(session, day)
+    total = inp + out + cread + cwrite
+    bucket = self.model_usage.setdefault(model, empty_bucket())
+    bucket["inputTokens"] += inp
+    bucket["outputTokens"] += out
+    bucket["cacheReadInputTokens"] += cread
+    bucket["cacheCreationInputTokens"] += cwrite
+    if day in self.recent:
+      self.recent[day] += total
+    if day == self.today:
+      self.today_tokens += total
+      self.today_by_model[model] = self.today_by_model.get(model, 0) + total
+
+  def record(self) -> dict[str, Any]:
+    return {
+      "todayPrompts": self.today_prompts,
+      "todaySessions": len(self.today_sessions),
+      "todayTotalTokens": self.today_tokens,
+      "todayTokensByModel": self.today_by_model,
+      "recentDays": [{"date": day, "messageCount": self.recent[day]} for day in self.recent_dates],
+      "totalPrompts": self.total_prompts,
+      "totalSessions": len(self.sessions),
+      "activeDays": len(self.active_dates),
+      "activeDates": sorted(self.active_dates),
+      "modelUsage": self.model_usage,
+    }
+
+
+def pi_style_tokens(usage: dict[str, Any]) -> tuple[int, int, int, int]:
+  inp = token_count(usage.get("input"))
+  out = token_count(usage.get("output"))
+  cread = token_count(usage.get("cacheRead"))
+  cwrite = token_count(usage.get("cacheWrite"))
+  if not (inp or out):
+    # Only a total: MiniMax's input excludes the cache tokens, which keep
+    # their own buckets.
+    inp = max(0, token_count(usage.get("totalTokens")) - cread - cwrite)
+  return inp, out, cread, cwrite
+
+
+def mcode_data_dir() -> Path:
+  for name in ("MINIMAX_DATA_DIR", "MAVIS_DATA_DIR"):
+    value = os.environ.get(name, "").strip()
+    if value:
+      return Path(os.path.abspath(os.path.expanduser(value)))
+  return Path.home() / ".minimax"
+
+
+def scan_mcode(stats: Stats) -> bool:
+  """Add MiniMax Code's own sessions: user messages are prompts, assistant usage is tokens."""
+  root = mcode_data_dir() / "v2" / "sessions"
+  if not root.is_dir():
+    return True
+  complete = True
+  for path in sorted(root.rglob("messages.jsonl")):
+    # One directory per session; its messages carry no session id of their own.
+    session = "mcode:" + str(path.parent)
+    try:
+      with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for raw in handle:
+          try:
+            entry = json.loads(raw)
+          except ValueError:
+            continue
+          message = entry.get("message") if isinstance(entry, dict) else None
+          if not isinstance(message, dict):
+            continue
+          day = local_day(message.get("timestamp")) or local_day(entry.get("timestamp"))
+          if day is None:
+            continue
+          if message.get("role") == "user":
+            stats.prompt(session, day)
+            continue
+          usage = message.get("usage")
+          if message.get("role") != "assistant" or not isinstance(usage, dict):
+            continue
+          inp, out, cread, cwrite = pi_style_tokens(usage)
+          if not (inp or out or cread or cwrite):
+            continue
+          model = str(message.get("model") or entry.get("model") or "minimax").strip() or "minimax"
+          stats.tokens(session, day, model, inp, out, cread, cwrite)
+    except OSError:
+      complete = False
+  return complete
+
+
+# `omp --profile=<name>` (and pi's equivalent) relocates the whole agent tree
+# under <base>/profiles/<name>/, and PI_CODING_AGENT_DIR moves pi's, so usage
+# driven through either would otherwise go uncounted.
+def pi_session_roots() -> list[Path]:
+  roots = [pi_agent_dir() / "sessions", Path.home() / ".omp" / "agent" / "sessions"]
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    try:
+      # Sorted so the scan order does not depend on directory order.
+      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      # No profiles directory, or it is unreadable: the default roots stand.
+      pass
+  unique: list[Path] = []
+  for root in roots:
+    if root not in unique:
+      unique.append(root)
+  return unique
+
+
+def matching_lines(root: Path, pattern: str) -> tuple[list[tuple[str, str]], bool]:
+  """(path, line) for each session line matching `pattern`, and whether every file was read."""
+  try:
+    proc = subprocess.run(
+      # --no-ignore: these are data files, not a source tree. When $HOME is
+      # itself a git checkout (a common dotfiles setup), its ignore rules
+      # would otherwise hide every session file and count zero usage.
+      ["rg", "--json", "--no-ignore", "--hidden", "--glob", "*.jsonl", "-e", pattern, str(root)],
+      stdout=subprocess.PIPE,
+      stderr=subprocess.DEVNULL,
+      text=True,
+      errors="replace",
+      check=False,
+    )
+  except OSError:
+    return [], False
+  lines = []
+  for raw in proc.stdout.splitlines():
+    try:
+      event = json.loads(raw)
+      if event.get("type") != "match":
+        continue
+      data = event["data"]
+      text = data["lines"].get("text")
+      if text is None:
+        # rg hands back lines that are not valid UTF-8 as base64.
+        text = base64.b64decode(data["lines"]["bytes"]).decode("utf-8", errors="replace")
+      lines.append((data["path"].get("text") or "", text))
+    except Exception:
+      continue
+  # 1 is "no match"; 2 means some file could not be read.
+  return lines, proc.returncode in (0, 1)
+
+
+def scan_pi(stats: Stats) -> bool:
+  """Add pi/omp assistant turns that ran on a MiniMax provider."""
+  complete = True
+  # A forked session copies its parent's messages, ids and timestamps alike,
+  # so (id, timestamp) counts each once across files. A line with an id but
+  # no timestamp dedups within its file only; a line with no id always counts.
+  seen: set[tuple[str, ...]] = set()
+  pattern = r'"provider"\s*:\s*"(' + "|".join(PROVIDERS) + r')"'
+  for root in pi_session_roots():
+    if not root.is_dir():
+      continue
+    lines, read_all = matching_lines(root, pattern)
+    complete = complete and read_all
+    for path, line in lines:
+      try:
+        entry = json.loads(line)
+      except ValueError:
+        continue
+      if not isinstance(entry, dict) or entry.get("type") != "message":
+        continue
+      message = entry.get("message")
+      if not isinstance(message, dict) or message.get("role") != "assistant":
+        continue
+      if str(message.get("provider") or "") not in PROVIDERS:
+        continue
+      usage = message.get("usage")
+      if not isinstance(usage, dict):
+        continue
+      inp, out, cread, cwrite = pi_style_tokens(usage)
+      if not (inp or out or cread or cwrite):
+        continue
+      day = local_day(entry.get("timestamp")) or local_day(message.get("timestamp"))
+      if day is None:
+        continue
+      message_id = entry.get("id")
+      timestamp = entry.get("timestamp")
+      if isinstance(message_id, str) and message_id:
+        key = ("entry", message_id, str(timestamp)) if timestamp else ("path", path, message_id)
+        if key in seen:
+          continue
+        seen.add(key)
+      # pi counts each assistant turn as the prompt that asked for it.
+      stats.prompt(path, day)
+      stats.tokens(path, day, str(message.get("model") or "minimax"), inp, out, cread, cwrite)
+  return complete
+
+
+def scan_opencode(stats: Stats) -> bool:
+  """Add opencode messages on a MiniMax provider.
+
+  Read-only: opencode may be writing right now.
+  """
+  db = opencode_data_dir() / "opencode.db"
+  if not db.is_file():
+    return True
+  placeholders = ",".join("?" for _ in PROVIDERS)
+  try:
+    conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+  except sqlite3.Error:
+    return False
+  try:
+    conn.execute("PRAGMA query_only = ON")
+    # The json_extract conditions are the authority; the LIKE gates are pure
+    # acceleration that skip rows whose JSON cannot name a MiniMax provider.
+    rows = conn.execute(
+      "SELECT session_id, data FROM message"
+      " WHERE data LIKE '%\"role\"%:%\"assistant\"%'"
+      " AND data LIKE '%\"providerID\"%:%\"minimax%'"
+      " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END = 'assistant'"
+      f" AND CASE WHEN json_valid(data) THEN json_extract(data, '$.providerID') END IN ({placeholders})",
+      PROVIDERS,
+    )
+    for session_id, raw in rows:
+      try:
+        entry = json.loads(raw)
+      except (TypeError, ValueError):
+        continue
+      if not isinstance(entry, dict) or str(entry.get("providerID") or "") not in PROVIDERS:
+        continue
+      tokens = entry.get("tokens") if isinstance(entry.get("tokens"), dict) else {}
+      cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+      inp = token_count(tokens.get("input"))
+      # opencode keeps thinking tokens out of output; both are generated.
+      out = token_count(tokens.get("output")) + token_count(tokens.get("reasoning"))
+      cread = token_count(cache.get("read"))
+      cwrite = token_count(cache.get("write"))
+      if not (inp or out or cread or cwrite):
+        continue
+      created = entry.get("time").get("created") if isinstance(entry.get("time"), dict) else None
+      day = local_day(created)
+      if day is None:
+        continue
+      session = "opencode:" + str(session_id)
+      model = str(entry.get("modelID") or "").rstrip("/").split("/")[-1] or "minimax"
+      stats.prompt(session, day)
+      stats.tokens(session, day, model, inp, out, cread, cwrite)
+  except sqlite3.Error:
+    return False
+  finally:
+    conn.close()
+  return True
+
+
+def scan_sessions() -> tuple[dict[str, Any], bool]:
+  stats = Stats()
+  # Every source runs, so one unreadable source still leaves the others.
+  complete = [scan_mcode(stats), scan_pi(stats), scan_opencode(stats)]
+  return stats.record(), all(complete)
+
+
+def cached_local_stats(max_age_seconds: float) -> dict[str, Any]:
+  """Local stats, with the cache as a pure optimization."""
+  sources = [mcode_data_dir(), opencode_data_dir(), *pi_session_roots()]
+  digest = hashlib.sha1("\0".join(str(path) for path in sources).encode("utf-8")).hexdigest()[:16]
+  try:
+    root = cache_root()
+  except OSError:
+    return scan_sessions()[0]
+  cache_file, lock_file = root / f"minimax-scan-{digest}.json", root / f"minimax-scan-{digest}.lock"
+
+  # A scan only answers for the day it ran on: its today* counts would be
+  # yesterday's after midnight.
+  def reusable() -> dict[str, Any] | None:
+    cached = read_json(cache_file)
+    if not isinstance(cached, dict) or cached.get("scanDate") != datetime.now().strftime("%Y-%m-%d"):
+      return None
+    scanned_ms = number(cached.get("scannedAtMs")) or 0
+    age = time.time() - scanned_ms / 1000
+    stats = cached.get("stats")
+    return stats if 0 <= age < max_age_seconds and isinstance(stats, dict) else None
+
+  stats = reusable()
+  if stats is not None:
+    return stats
+  with probe_lock(lock_file):
+    stats = reusable()
+    if stats is not None:
+      return stats
+    stats, complete = scan_sessions()
+    # A scan that missed a source would stand in for a real one until the
+    # next rescan; only a complete one is kept.
+    if complete:
+      try:
+        write_json(cache_file, {"scanDate": datetime.now().strftime("%Y-%m-%d"), "scannedAtMs": round(time.time() * 1000), "stats": stats})
+      except OSError as exc:
+        print(f"omarchy-agent-usage-minimax: could not write scan cache ({exc})", file=sys.stderr)
+    return stats
+
+
+# --------------------------------------------------------------------------
+# Record
+# --------------------------------------------------------------------------
+
+# Nobody using MiniMax here: an empty record, which the panel skips. With a
+# key, a failed check keeps the last good limits, marked stale; without one,
+# local usage still shows and the limits wait for a key.
+def collect(api_key: str, base_url: str, force: bool = False, stats: dict[str, Any] | None = None) -> dict[str, Any]:
+  record = base_record()
+  if stats:
+    record.update(stats)
+  has_stats = bool(record["modelUsage"]) or record["totalPrompts"] > 0
+  record["hasLocalStats"] = has_stats
+
   if not api_key:
-    return base_record()
+    if has_stats:
+      record.update(ready=True, usageStatusText="Waiting for auth", authHelpText=AUTH_HELP)
+    return record
 
   limits = collect_limits(api_key, base_url, force)
-  record = base_record(
+  record.update(
     ready=True,
     tierLabel=TIER_LABEL if limits["limits"] else "",
     limits=limits["limits"],
@@ -442,17 +862,26 @@ def collect(api_key: str, base_url: str, force: bool = False) -> dict[str, Any]:
 
 
 def main() -> int:
-  parser = argparse.ArgumentParser(description="Print the MiniMax Token Plan usage record as JSON")
-  # --force re-probes past the reuse window. --limits-only takes the same path
-  # as a normal run: there is no local scan for it to reuse.
+  parser = argparse.ArgumentParser(description="Print the MiniMax usage record as JSON")
+  # --force rescans and re-probes, ignoring both caches. --limits-only reuses
+  # a recent local scan (only the limits probe must be fresh); a bare run
+  # reuses a scan only long enough to dedup concurrent collector runs.
   parser.add_argument("--force", action="store_true")
   parser.add_argument("--limits-only", action="store_true")
   parser.add_argument("--base-url")
   args = parser.parse_args()
 
   try:
+    scan_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
+    stats = cached_local_stats(scan_age)
+  except Exception as error:
+    # Local stats are an addition; their failure must not cost the limits.
+    print(f"omarchy-agent-usage-minimax: local scan failed ({type(error).__name__})", file=sys.stderr)
+    stats = None
+
+  try:
     api_key, saved_base_url = credentials()
-    record = collect(api_key, args.base_url or saved_base_url, args.force)
+    record = collect(api_key, args.base_url or saved_base_url, args.force, stats)
   except Exception as error:
     record = base_record(usageStatusText="MiniMax limits unavailable", authHelpText="MiniMax usage scan failed.")
     print(f"omarchy-agent-usage-minimax: {type(error).__name__}", file=sys.stderr)

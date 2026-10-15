@@ -91,6 +91,14 @@ opencode.parent.mkdir(parents=True)
 opencode.write_text(json.dumps({"minimax": {"type": "api", "key": "mmx_opencode"}}))
 opencode_key, opencode_base_url = scanner.credentials()
 
+# A China-region key pi saved answers on the China host.
+opencode.unlink()
+pi_auth = home / ".pi/agent/auth.json"
+pi_auth.parent.mkdir(parents=True)
+pi_auth.write_text(json.dumps({"minimax-cn": {"type": "api_key", "key": "mmx_pi_cn"}}))
+pi_key, pi_base_url = scanner.credentials()
+pi_auth.unlink()
+
 import copy, time
 from datetime import datetime, timedelta, timezone
 
@@ -117,7 +125,8 @@ def run(fetch, key="mmx_test", force=False):
   return dict(record, probes=len(probes))
 
 out = {"limits": limits, "mediaFirst": media_first, "savedKey": saved_key, "savedBaseUrl": saved_base_url,
-       "oauthKey": oauth_key, "oauthBaseUrl": oauth_base_url, "opencodeKey": opencode_key}
+       "oauthKey": oauth_key, "oauthBaseUrl": oauth_base_url, "opencodeKey": opencode_key,
+       "piKey": pi_key, "piBaseUrl": pi_base_url}
 
 out["record"] = run(answer, force=True)
 # Within the probe interval a repeat run reuses the answer; --force doesn't.
@@ -192,6 +201,10 @@ pass "MiniMax collector skips media quota rows when choosing the plan's row"
 [[ $(jq -r '.savedKey + ":" + .opencodeKey' <<<"$result") == "mmx_saved:mmx_opencode" ]] ||
   fail "MiniMax credentials use mmx and opencode logins" "$result"
 pass "MiniMax credentials use mmx and opencode logins"
+
+[[ $(jq -r '.piKey + ":" + .piBaseUrl' <<<"$result") == "mmx_pi_cn:https://api.minimaxi.com" ]] ||
+  fail "MiniMax credentials use a China-region key pi saved, on the China host" "$result"
+pass "MiniMax credentials use a China-region key pi saved, on the China host"
 
 [[ $(jq -r '.oauthKey + ":" + .oauthBaseUrl' <<<"$result") == "mmx_oauth:https://api.minimaxi.com" ]] ||
   fail "MiniMax credentials use the OAuth session and region saved by mmx" "$result"
