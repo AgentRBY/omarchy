@@ -14,16 +14,32 @@ user record. Qwen Code reads no quota of its own, so the record carries no
 meters. The agents panel only ever reads the JSON this prints.
 """
 
+from __future__ import annotations
+
 import argparse
-import fcntl
 import hashlib
 import json
 import os
 import sys
-import tempfile
-import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# The shared collector plumbing ships with the agents panel.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
+from collectors import (  # noqa: E402
+  Stats,
+  base_record,
+  cached_scan,
+  emit,
+  local_day,
+  obj,
+  read_json,
+  scan_cache_paths,
+  scan_max_age,
+  token_count,
+  warn,
+  write_json,
+)
 
 AGENT_ID = "qwen"
 AGENT_NAME = "Qwen Code"
@@ -39,62 +55,12 @@ THOUGHTS_IN_OUTPUT_AUTH_TYPES = ("openai", "qwen-oauth")
 # carry a subtype of their own.
 PROMPT_SUBTYPES = (None, "mid_turn_user_message")
 
-# A scan this recent is only reused to dedup concurrent collector runs (the
-# update command backgrounds one per agent while the panel refreshes on its
-# own). --limits-only promises only fresh limits, and Qwen Code has none, so
-# it may reuse a scan for 15 minutes.
-SCAN_REUSE_SECONDS = 20
-LIMITS_ONLY_REUSE_SECONDS = 900
-
-CACHE_SCHEMA_VERSION = 1
-INDEX_VERSION = 1
+# Rows keep each record's time as written, so the index outlives the day and
+# zone it was built in; version 1 kept parsed seconds.
+INDEX_VERSION = 2
 INDEX_HEAD_BYTES = 4096
 
-# Counts and times read from disk are untrusted. Anything past these bounds is
-# a corrupt or crafted field, not usage.
-MAX_TOKENS = 10**12
-MIN_EPOCH_SECONDS = 946_684_800  # 2000-01-01
 MAX_MODEL_NAME_LEN = 120
-
-
-def token_count(value):
-  """A token field as a whole number, or 0 when it isn't a plausible count.
-
-  bool is an int subclass, and a string, NaN, negative, or absurd value is a
-  bad field: it counts as nothing rather than skewing the totals.
-  """
-  if isinstance(value, bool) or not isinstance(value, (int, float)):
-    return 0
-  if value != value or value <= 0 or value > MAX_TOKENS:
-    return 0
-  return int(value)
-
-
-def epoch_seconds(value):
-  """Seconds since the epoch for an ISO string, or None when the value can't
-  be a real moment of use."""
-  if not isinstance(value, str) or not value.strip():
-    return None
-  text = value.strip()
-  try:
-    parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
-  except ValueError:
-    return None
-  if parsed.tzinfo is None:
-    parsed = parsed.astimezone()
-  seconds = parsed.timestamp()
-  # A day of slack past now covers a clock a little behind the writer's.
-  if seconds < MIN_EPOCH_SECONDS or seconds > time.time() + 86_400:
-    return None
-  return seconds
-
-
-def local_day(seconds):
-  return datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
-
-
-def obj(value):
-  return value if isinstance(value, dict) else {}
 
 
 def model_label(raw):
@@ -104,15 +70,6 @@ def model_label(raw):
   if len(value) > MAX_MODEL_NAME_LEN:
     return None
   return value or "qwen"
-
-
-def empty_bucket():
-  return {
-    "inputTokens": 0,
-    "outputTokens": 0,
-    "cacheReadInputTokens": 0,
-    "cacheCreationInputTokens": 0,
-  }
 
 
 # ------------------------------------------------------------- locations
@@ -133,11 +90,7 @@ def qwen_home():
 
 
 def runtime_output_dir(home):
-  try:
-    settings = json.loads((home / "settings.json").read_text(encoding="utf-8"))
-  except (OSError, ValueError):
-    return None
-  return resolve_dir(obj(obj(settings).get("advanced")).get("runtimeOutputDir"))
+  return resolve_dir(obj(read_json(home / "settings.json").get("advanced")).get("runtimeOutputDir"))
 
 
 def runtime_dirs():
@@ -167,11 +120,22 @@ def chat_files():
 # ------------------------------------------------------------- transcripts
 
 
+def trusted_time(*values):
+  """(time, ok): the first of `values` that is present and names a day. None
+  of them present is a record of today, and only present but untrusted
+  times are not ok, skipping the record."""
+  present = [value for value in values if value is not None]
+  for value in present:
+    if local_day(value) is not None:
+      return value, True
+  return None, not present
+
+
 def parse_line(raw, session):
   """One transcript line as an index row, or None.
 
-  A prompt is ["p", key, seconds, session]; a billed response is
-  ["r", key, seconds, session, model, input, output, cacheRead]. The key
+  A prompt is ["p", key, time, session]; a billed response is
+  ["r", key, time, session, model, input, output, cacheRead]. The key
   dedups a record a resumed or branched session carries again.
   """
   if b'"user"' not in raw and API_RESPONSE_EVENT.encode() not in raw:
@@ -188,19 +152,19 @@ def parse_line(raw, session):
   if record.get("type") == "user":
     if record.get("subtype") not in PROMPT_SUBTYPES:
       return None
-    seconds = epoch_seconds(record.get("timestamp"))
-    if seconds is None or not uuid:
+    stamp, ok = trusted_time(record.get("timestamp"))
+    if not ok or not uuid:
       return None
-    return ["p", uuid, seconds, session]
+    return ["p", uuid, stamp, session]
 
   if record.get("type") != "system" or record.get("subtype") != "ui_telemetry":
     return None
   event = obj(obj(record.get("systemPayload")).get("uiEvent"))
   if event.get("event.name") != API_RESPONSE_EVENT:
     return None
-  seconds = epoch_seconds(event.get("event.timestamp")) or epoch_seconds(record.get("timestamp"))
+  stamp, ok = trusted_time(event.get("event.timestamp"), record.get("timestamp"))
   model = model_label(event.get("model"))
-  if seconds is None or model is None:
+  if not ok or model is None:
     return None
   # The prompt count includes its cached part; a provider that reports only
   # the cached part reports a fully cached prompt, as Qwen Code reads it.
@@ -215,7 +179,7 @@ def parse_line(raw, session):
   key = str(event.get("response_id") or "") or uuid
   if not key:
     return None
-  return ["r", key, seconds, session, model, prompt - cached, output, cached]
+  return ["r", key, stamp, session, model, prompt - cached, output, cached]
 
 
 def read_digest(path, length):
@@ -263,34 +227,23 @@ def parse_file(path, entry):
 
 
 def load_index(path):
-  try:
-    data = json.loads(path.read_text(encoding="utf-8"))
-  except Exception:
-    return {}
-  if isinstance(data, dict) and data.get("version") == INDEX_VERSION and isinstance(data.get("files"), dict):
+  data = read_json(path)
+  if data.get("version") == INDEX_VERSION and isinstance(data.get("files"), dict):
     return data["files"]
   return {}
 
 
 def summarize(rows):
-  now = datetime.now()
-  today = now.strftime("%Y-%m-%d")
-  recent_dates = [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
-  recent = {day: 0 for day in recent_dates}
-  today_prompts = 0
-  today_total_tokens = 0
-  today_sessions = set()
-  today_tokens_by_model = {}
-  total_prompts = 0
-  total_sessions = set()
-  active_days = set()
-  model_usage = {}
+  # Qwen Code's prompts are its user records, not its replies: a reply adds
+  # its tokens, and a prompt only its session and day.
+  stats = Stats()
+  prompts = today_prompts = 0
   seen = set()
 
   for row in rows:
     try:
-      kind, key, seconds, session = row[:4]
-      day = local_day(float(seconds))
+      kind, key, stamp, session = row[:4]
+      day = local_day(stamp)
       if kind == "r":
         model = str(row[4])
         input_tokens, output_tokens, cache_read = (int(value) for value in row[5:8])
@@ -298,50 +251,39 @@ def summarize(rows):
         continue
     except (TypeError, ValueError, IndexError, OverflowError, OSError):
       continue
-    if (kind, key) in seen:
+    if day is None or (kind, key) in seen:
       continue
     seen.add((kind, key))
     session = str(session)
-    total_sessions.add(session)
-    active_days.add(day)
-    if day == today:
-      today_sessions.add(session)
-    if kind == "p":
-      total_prompts += 1
-      if day == today:
-        today_prompts += 1
+    if kind == "r":
+      stats.add(day, session, model, input_tokens, output_tokens, cache_read, 0)
       continue
-    total = input_tokens + output_tokens + cache_read
-    bucket = model_usage.setdefault(model, empty_bucket())
-    bucket["inputTokens"] += input_tokens
-    bucket["outputTokens"] += output_tokens
-    bucket["cacheReadInputTokens"] += cache_read
-    if day in recent:
-      # recentDays.messageCount holds tokens, despite the shared legacy name.
-      recent[day] += total
-    if day == today:
-      today_total_tokens += total
-      today_tokens_by_model[model] = today_tokens_by_model.get(model, 0) + total
+    prompts += 1
+    stats.sessions.add(session)
+    stats.active_dates.add(day)
+    if day == stats.today:
+      today_prompts += 1
+      stats.today_sessions.add(session)
 
-  return {
-    "todayPrompts": today_prompts,
-    "todaySessions": len(today_sessions),
-    "todayTotalTokens": today_total_tokens,
-    "todayTokensByModel": today_tokens_by_model,
-    "recentDays": [{"date": day, "messageCount": recent[day]} for day in recent_dates],
-    "totalPrompts": total_prompts,
-    "totalSessions": len(total_sessions),
-    # The dates travel too: merging snapshots from several machines needs
-    # their union, which a count alone cannot give.
-    "activeDays": len(active_days),
-    "activeDates": sorted(active_days),
-    "modelUsage": model_usage,
-  }
+  stats.total_prompts = prompts
+  stats.today_prompts = today_prompts
+  return stats.snapshot()
 
 
-def scan(index_file):
+def index_path():
+  # Beside the scan cache, under its digest of every directory the scan
+  # reads, so another home or runtime directory never reuses this index.
+  cache_file, _ = scan_cache_paths(AGENT_ID, runtime_dirs())
+  return cache_file.with_name(cache_file.name.replace("-scan-", "-index-", 1))
+
+
+def scan():
   """Every transcript's rows, summarized. Returns (stats, complete); a scan
   that couldn't read a transcript is not cached."""
+  try:
+    index_file = index_path()
+  except Exception:
+    index_file = None
   previous = load_index(index_file) if index_file else {}
   current = {}
   complete = True
@@ -351,7 +293,7 @@ def scan(index_file):
     try:
       current[key] = parse_file(path, previous.get(key))
     except OSError as exc:
-      print(f"omarchy-agent-usage-qwen: skipping {path}: {type(exc).__name__}", file=sys.stderr)
+      warn(f"skipping {path}: {type(exc).__name__}")
       complete = False
       continue
     rows.extend(current[key].get("rows") or [])
@@ -359,99 +301,8 @@ def scan(index_file):
     try:
       write_json(index_file, {"version": INDEX_VERSION, "files": current})
     except Exception as exc:
-      print(f"omarchy-agent-usage-qwen: could not write transcript index ({exc})", file=sys.stderr)
+      warn(f"could not write transcript index ({exc})")
   return summarize(rows), complete
-
-
-# ---------------------------------------------------------------- cache
-
-
-def cache_root():
-  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
-  root.mkdir(parents=True, exist_ok=True)
-  return root
-
-
-def cache_paths():
-  # The digest covers every directory the scan reads, so another home or
-  # runtime directory never reuses this one's numbers.
-  digest = hashlib.sha1("\n".join(str(path) for path in runtime_dirs()).encode("utf-8")).hexdigest()[:16]
-  root = cache_root()
-  return root / f"qwen-scan-{digest}.json", root / f"qwen-scan-{digest}.lock", root / f"qwen-index-{digest}.json"
-
-
-def read_fresh_json(path, max_age_seconds):
-  if max_age_seconds <= 0:
-    return None
-  try:
-    # A negative age means the mtime is in the future: the clock moved
-    # backwards since the write, so the cache's freshness cannot be trusted.
-    age = time.time() - path.stat().st_mtime
-    if 0 <= age < max_age_seconds:
-      return json.loads(path.read_text(encoding="utf-8"))
-  except Exception:
-    return None
-  return None
-
-
-def write_json(path, payload):
-  # A temp name unique to this writer: several collectors can run at once, and
-  # a shared temp path means the second replace finds the first one's file
-  # already moved away.
-  handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-  tmp = Path(tmp_name)
-  try:
-    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
-      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
-    tmp.chmod(0o644)
-    tmp.replace(path)
-  except BaseException:
-    tmp.unlink(missing_ok=True)
-    raise
-
-
-STATS_KEYS = ("todayPrompts", "todaySessions", "todayTotalTokens", "todayTokensByModel", "recentDays", "totalPrompts", "totalSessions", "activeDays", "activeDates", "modelUsage")
-
-
-def read_cached_stats(cache_file, max_age_seconds):
-  cached = read_fresh_json(cache_file, max_age_seconds)
-  if not isinstance(cached, dict) or cached.get("schemaVersion") != CACHE_SCHEMA_VERSION:
-    return None
-  # today* fields only mean "today" on the day they were scanned.
-  if cached.get("scanDate") != datetime.now().strftime("%Y-%m-%d"):
-    return None
-  stats = cached.get("stats")
-  if not isinstance(stats, dict) or not all(key in stats for key in STATS_KEYS):
-    return None
-  return stats
-
-
-def cached_local_stats(max_age):
-  """Local stats, with the cache as a pure optimization: any cache failure
-  degrades to a direct scan and a warning on stderr."""
-  try:
-    cache_file, lock_file, index_file = cache_paths()
-    cached = read_cached_stats(cache_file, max_age)
-    if cached is not None:
-      return cached
-    with lock_file.open("w") as lock:
-      fcntl.flock(lock, fcntl.LOCK_EX)
-      cached = read_cached_stats(cache_file, max_age)
-      if cached is not None:
-        return cached
-      stats, complete = scan(index_file)
-      # An interrupted scan still serves this run, but caching it would hide
-      # the missing usage from every reader until the cache expires.
-      if complete:
-        try:
-          write_json(cache_file, {"schemaVersion": CACHE_SCHEMA_VERSION, "scanDate": datetime.now().strftime("%Y-%m-%d"), "stats": stats})
-        except Exception as exc:
-          print(f"omarchy-agent-usage-qwen: could not write usage cache ({exc})", file=sys.stderr)
-      return stats
-  except Exception as exc:
-    print(f"omarchy-agent-usage-qwen: cache unavailable ({exc}); scanning directly", file=sys.stderr)
-    stats, _ = scan(None)
-    return stats
 
 
 def main():
@@ -462,29 +313,16 @@ def main():
   parser.add_argument("--limits-only", action="store_true")
   args = parser.parse_args()
 
-  max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
-  stats = cached_local_stats(max_age)
+  # The digest covers every directory the scan reads, so another home or
+  # runtime directory never reuses this one's numbers.
+  stats = cached_scan(AGENT_ID, runtime_dirs(), scan_max_age(args.force, args.limits_only), scan)
 
   # There is no quota to read, so nothing waits on a sign-in: the status stays
   # empty and local stats show alone. A machine that never ran Qwen Code
   # prints a record the panel skips.
-  record = {
-    "schemaVersion": 1,
-    "id": AGENT_ID,
-    "name": AGENT_NAME,
-    "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": stats["totalSessions"] > 0,
-    "hasLocalStats": True,
-    "hasPromptStats": True,
-    "tierLabel": "",
-    "usageStatusText": "",
-    "authHelpText": "",
-    "limits": [],
-    "limitsStale": False,
-    "limitsFetchedAt": 0,
-  }
+  record = base_record(AGENT_ID, AGENT_NAME, ready=stats["totalSessions"] > 0, hasLocalStats=True)
   record.update(stats)
-  print(json.dumps(record, separators=(",", ":")))
+  emit(record)
   return 0
 
 
