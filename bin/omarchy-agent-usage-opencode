@@ -857,13 +857,15 @@ def collect_limits(force):
 
     probe = probe_limits(candidate)
     if probe.get("ok"):
-      fetched_at = round(time.time() * 1000)
+      # Rounded down: rounded up, a run in the same millisecond would find the
+      # answer in the future and ask again.
+      fetched_at = int(time.time() * 1000)
       remember(cache, {"fetchedAtMs": fetched_at, "limits": probe["limits"]})
       return answer(probe["limits"], fetched_at, False)
 
     if probe.get("noPlan"):
       # The windows of a plan that's gone mean nothing now, so they go too.
-      remember(cache, {"fetchedAtMs": round(time.time() * 1000), "limits": [], "noPlan": True})
+      remember(cache, {"fetchedAtMs": int(time.time() * 1000), "limits": [], "noPlan": True})
       no_plan = True
       continue
 
