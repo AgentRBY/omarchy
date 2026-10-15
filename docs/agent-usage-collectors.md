@@ -45,6 +45,7 @@ The panel acts on a small vocabulary in `usageStatusText`, so the same situation
 | `"Sign-in expired"` | The credential was refused, or a refresh token lapsed; signing in again is needed |
 | `"Limits paused"` | An access token lapsed that the agent's own CLI renews the next time it runs; signing in again is not needed |
 | `"<Name> limits unavailable"` | A check failed with nothing kept to show |
+| `"<Name> unavailable"` | The agent's stats source failed (an unreadable database, a billing API that answered nothing) with nothing kept to show |
 | `"Balance unavailable"` | A prepaid balance couldn't be read and none was kept |
 
 The detail goes in `authHelpText`: what failed and the one thing to do about it. It is `""` when healthy. A plan the service doesn't offer limits for (pay-as-you-go, no Go plan, a free tier) isn't trouble: the status stays `""` and local stats show alone. Any other status shows under the name in the urgent color, so collectors don't invent new ones.
