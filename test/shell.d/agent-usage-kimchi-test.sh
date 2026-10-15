@@ -303,8 +303,8 @@ record=$(collect)
 pass "local sessions without a key wait for auth"
 
 # A forked session repeats its parent's replies with the same id and time, and
-# counts them once; a reply without an id always counts. Untrusted stamps and
-# token fields skip the field, never the record.
+# counts them once; a reply without an id always counts. An untrusted token
+# field skips the field, and an untrusted stamp the reply, never the record.
 fork="$HOME/.config/kimchi/harness/sessions/--fork--"
 mkdir -p "$fork"
 {
@@ -316,7 +316,7 @@ mkdir -p "$fork"
   jq -nc '{type: "message", id: "z-3", timestamp: 99999999999999999, message: {role: "assistant", model: "glm-5.3", usage: {input: 1}}}'
 } >"$fork/fork.jsonl"
 record=$(KIMCHI_API_KEY=key-coder collect)
-[[ $(jq -c '{totalPrompts, totalSessions, today: .todayTokensByModel["glm-5.3"], glm: .modelUsage["glm-5.3"].inputTokens, out: .modelUsage["glm-5.3"].outputTokens}' <<<"$record") == '{"totalPrompts":10,"totalSessions":4,"today":98,"glm":102,"out":5}' ]] ||
+[[ $(jq -c '{totalPrompts, totalSessions, today: .todayTokensByModel["glm-5.3"], glm: .modelUsage["glm-5.3"].inputTokens, out: .modelUsage["glm-5.3"].outputTokens}' <<<"$record") == '{"totalPrompts":7,"totalSessions":4,"today":98,"glm":93,"out":5}' ]] ||
   fail "forks count once, unidentified replies always count, and bad fields are skipped" "$record"
 pass "forks count once and untrusted fields are skipped"
 

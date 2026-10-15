@@ -11,20 +11,43 @@ session files: one line per message, each assistant reply carrying its model
 and token usage. The agents panel only ever reads the JSON this prints.
 """
 
+from __future__ import annotations
+
 import argparse
-import fcntl
-import hashlib
-import http.client
 import json
 import math
 import os
 import subprocess
-import tempfile
-import time
-import urllib.error
+import sys
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
+
+# The shared collector plumbing ships with the agents panel.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
+from collectors import (  # noqa: E402
+  PROBE_MIN_INTERVAL_SECONDS,
+  HttpError,
+  Stats,
+  age_below,
+  base_record,
+  cached_scan,
+  emit,
+  find_command,
+  limits_cache_path,
+  local_day,
+  now_ms,
+  obj,
+  open_json,
+  open_limits,
+  read_json,
+  runtime_env,
+  scan_max_age,
+  stamp,
+  token_count,
+  write_json,
+)
 
 AGENT_ID = "kimchi"
 AGENT_NAME = "Kimchi"
@@ -41,63 +64,6 @@ BUDGET_LABELS = {
   "ORGANIZATION_HARD": "Org budget",
 }
 CREDITS_FIELDS = ("serverless", "remaining", "has_credits", "hasCredits", "tier", "tier_name", "tierName")
-SCAN_REUSE_SECONDS = 20
-# A limits-only refresh needs fresh credits, not a fresh history scan.
-LIMITS_ONLY_REUSE_SECONDS = 900
-# A panel opened and shut repeatedly reuses answers this recent instead of
-# asking the gateway again; --force skips it.
-PROBE_MIN_INTERVAL_SECONDS = 15
-# A token count past this is a corrupt field, not a reply.
-MAX_TOKENS = 1_000_000_000_000
-
-
-def read_json(path):
-  try:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-  except Exception:
-    return None
-
-
-# A temporary file of its own per write, so overlapping runs can't rename
-# each other's away.
-def write_json(path, payload):
-  path = Path(path)
-  path.parent.mkdir(parents=True, exist_ok=True)
-  fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
-  try:
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-      json.dump(payload, handle)
-    os.replace(tmp, path)
-  except Exception:
-    Path(tmp).unlink(missing_ok=True)
-    raise
-
-
-def cache_root():
-  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
-  root.mkdir(parents=True, exist_ok=True)
-  return root
-
-
-# A finite, positive number, or 0: cache stamps are read as found.
-def number(value):
-  if isinstance(value, bool):
-    return 0
-  try:
-    parsed = float(value or 0)
-  except (TypeError, ValueError):
-    return 0
-  return int(parsed) if math.isfinite(parsed) and parsed > 0 else 0
-
-
-# Token counts from session files are untrusted: anything but a plain,
-# plausible count skips the field.
-def tokens(value):
-  if isinstance(value, bool) or not isinstance(value, (int, float)):
-    return 0
-  if not math.isfinite(value) or value <= 0 or value >= MAX_TOKENS:
-    return 0
-  return int(value)
 
 
 # Kimchi sends dollar amounts as strings, sometimes with a sign or unit.
@@ -125,30 +91,6 @@ def parse_time(value):
   return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-# pi stamps entries with ISO strings and messages with epoch milliseconds.
-# A stamp that isn't a plausible moment (zero, negative, NaN, far future,
-# not a time at all) leaves the reply undated rather than counted as today.
-def local_day(value):
-  if isinstance(value, bool):
-    return None
-  if isinstance(value, (int, float)):
-    if not math.isfinite(value) or value <= 0:
-      return None
-    seconds = value / 1000 if value > 10_000_000_000 else value
-  else:
-    parsed = parse_time(value)
-    if parsed is None:
-      return None
-    seconds = parsed.timestamp()
-  # Nothing wrote a Kimchi session before 2000, or from the future.
-  if not 946_684_800 <= seconds <= time.time() + 2 * 86_400:
-    return None
-  try:
-    return datetime.fromtimestamp(seconds).astimezone().date().isoformat()
-  except (OverflowError, OSError, ValueError):
-    return None
-
-
 # The harness directory Kimchi keeps its sessions under: KIMCHI_CODING_AGENT_DIR
 # when set, as the CLI itself reads it, else ~/.config/kimchi/harness. Kimchi
 # has no profiles that move it.
@@ -163,10 +105,13 @@ def session_files(sessions_root):
   root = Path(sessions_root)
   if not root.is_dir():
     return [], True
+  rg = find_command("rg")
+  if not rg:
+    return [], False
   try:
     listed = subprocess.run(
-      ["rg", "--files", "--no-ignore", "--hidden", "--glob", "*.jsonl", str(root)],
-      capture_output=True, text=True, timeout=60,
+      [rg, "--files", "--no-ignore", "--hidden", "--glob", "*.jsonl", str(root)],
+      capture_output=True, text=True, timeout=60, env=runtime_env(),
     )
   except (OSError, subprocess.TimeoutExpired):
     return [], False
@@ -175,23 +120,14 @@ def session_files(sessions_root):
   return sorted(Path(line) for line in listed.stdout.splitlines() if line), listed.returncode in (0, 1)
 
 
-def empty_bucket():
-  return {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
-
-
-# Every session file under <harness>/sessions. Only assistant messages carry
-# usage. A forked or resumed session repeats its parent's entries, so a reply
-# with both an id and a timestamp counts once across every file; one without
-# an id always counts. Returns the stats and whether every source was read.
+# Every session file under <harness>/sessions. The shared pi reader only
+# reads pi's and omp's own session roots, so Kimchi's pi-format sessions are
+# read here. Only assistant messages carry usage. A forked or resumed session
+# repeats its parent's entries, so a reply with both an id and a timestamp
+# counts once across every file; one without an id always counts. Returns
+# the stats and whether every source was read.
 def local_stats(sessions_root):
-  now = datetime.now().astimezone()
-  today = now.date().isoformat()
-  week = [(now.date() - timedelta(days=offset)).isoformat() for offset in range(6, -1, -1)]
-  prompts = today_prompts = today_tokens = 0
-  sessions, today_sessions, days = set(), set(), set()
-  by_day = {day: 0 for day in week}
-  today_by_model = {}
-  models = {}
+  stats = Stats()
   seen = set()
   files, complete = session_files(sessions_root)
   for path in files:
@@ -210,89 +146,32 @@ def local_stats(sessions_root):
       message = entry.get("message") if isinstance(entry, dict) and entry.get("type") == "message" else None
       if not isinstance(message, dict) or message.get("role") != "assistant":
         continue
-      stamp = entry.get("timestamp") or message.get("timestamp")
+      # pi stamps entries with ISO strings and messages with epoch
+      # milliseconds.
+      when = entry.get("timestamp") or message.get("timestamp")
       entry_id = entry.get("id")
-      if entry_id and stamp:
-        identity = (str(entry_id), str(stamp))
+      if entry_id and when:
+        identity = (str(entry_id), str(when))
         if identity in seen:
           continue
         seen.add(identity)
 
-      usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
-      uncached = tokens(usage.get("input"))
-      output = tokens(usage.get("output"))
-      cached = tokens(usage.get("cacheRead"))
-      created = tokens(usage.get("cacheWrite"))
+      usage = obj(message.get("usage"))
+      uncached = token_count(usage.get("input"))
+      output = token_count(usage.get("output"))
+      cached = token_count(usage.get("cacheRead"))
+      created = token_count(usage.get("cacheWrite"))
       if not (uncached or output or cached or created):
-        uncached = tokens(usage.get("totalTokens"))
-      total = uncached + output + cached + created
-      if not total:
+        uncached = token_count(usage.get("totalTokens"))
+      if not (uncached or output or cached or created):
         continue
-
-      model = str(message.get("model") or AGENT_ID)
-      prompts += 1
-      sessions.add(str(path))
-      totals = models.setdefault(model, empty_bucket())
-      totals["inputTokens"] += uncached
-      totals["outputTokens"] += output
-      totals["cacheReadInputTokens"] += cached
-      totals["cacheCreationInputTokens"] += created
-      # An undated reply still counts in the totals, just on no day.
-      day = local_day(stamp)
+      # No time at all is today's; one that can't be trusted counts nowhere.
+      day = local_day(when)
       if day is None:
         continue
-      days.add(day)
-      if day in by_day:
-        by_day[day] += total
-      if day == today:
-        today_prompts += 1
-        today_sessions.add(str(path))
-        today_tokens += total
-        today_by_model[model] = today_by_model.get(model, 0) + total
+      stats.add(day, str(path), str(message.get("model") or AGENT_ID), uncached, output, cached, created)
 
-  return {
-    "hasLocalStats": bool(sessions),
-    "todayPrompts": today_prompts,
-    "todaySessions": len(today_sessions),
-    "todayTotalTokens": today_tokens,
-    "todayTokensByModel": today_by_model,
-    "recentDays": [{"date": day, "messageCount": by_day[day]} for day in week],
-    "totalPrompts": prompts,
-    "totalSessions": len(sessions),
-    "activeDays": len(days),
-    "activeDates": sorted(days),
-    "modelUsage": models,
-  }, complete
-
-
-# A scan is reused on the day it was made only, since one from before
-# midnight would count yesterday's sessions as today's. It's rebuilt under a
-# lock so overlapping refreshes scan once, and a scan that couldn't read
-# every source isn't kept.
-def cached_local_stats(sessions_root, max_age):
-  digest = hashlib.sha256(str(sessions_root).encode()).hexdigest()[:16]
-  cache = cache_root() / f"kimchi-scan-{digest}.json"
-  today = datetime.now().astimezone().date().isoformat()
-
-  def fresh():
-    cached = read_json(cache)
-    if not isinstance(cached, dict) or cached.get("scanDate") != today or not isinstance(cached.get("stats"), dict):
-      return None
-    age = time.time() - number(cached.get("scannedAt"))
-    return cached["stats"] if 0 <= age < max_age else None
-
-  stats = fresh()
-  if stats is not None:
-    return stats
-  with (cache_root() / f"kimchi-scan-{digest}.lock").open("w") as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX)
-    stats = fresh()
-    if stats is not None:
-      return stats
-    stats, complete = local_stats(sessions_root)
-    if complete:
-      write_json(cache, {"scanDate": today, "scannedAt": time.time(), "stats": stats})
-    return stats
+  return {"hasLocalStats": bool(stats.sessions), **stats.snapshot()}, complete
 
 
 # The key and gateway Kimchi itself would use: KIMCHI_API_KEY, KIMCHI_BASE_URL,
@@ -300,7 +179,6 @@ def cached_local_stats(sessions_root, max_age):
 # when nothing names one.
 def gateway():
   config = read_json(Path.home() / ".config" / "kimchi" / "config.json")
-  config = config if isinstance(config, dict) else {}
   key = os.environ.get("KIMCHI_API_KEY") or config.get("apiKey") or config.get("api_key") or ""
   base = os.environ.get("KIMCHI_BASE_URL") or config.get("llmEndpoint") or ""
   if not base:
@@ -314,8 +192,7 @@ def gateway():
 
 def get_json(url, key):
   request = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}", "Accept": "application/json", "User-Agent": "omarchy-agent-usage-kimchi"})
-  with urllib.request.urlopen(request, timeout=8) as response:
-    return json.loads(response.read())
+  return open_json(request, timeout=8)
 
 
 def plan_label(raw):
@@ -425,48 +302,28 @@ def budget_part(data):
 # Keyed by the API key and the gateway it was asked of, so a machine signed
 # in to someone else, or pointed at another region, never shows the last
 # one's numbers. One file per endpoint, so a run only ever writes the answer
-# it actually got: the budget's limits, and the credits' plan and balance.
-CACHE_NAMES = {"budget": "limits", "credits": "credits"}
-
-
+# it actually got: the budget's limits under the limits cache name every
+# collector shares, and the credits' plan and balance beside them. Neither is
+# a LimitsCache: an answer without limits (no budget, or the credits) must
+# still stand in for a probe, and an overlapping run must not roll it back.
 def billing_cache(key, base, resource):
-  digest = hashlib.sha256((base + "\n" + key).encode()).hexdigest()[:16]
-  return cache_root() / f"kimchi-{CACHE_NAMES[resource]}-{digest}.json"
+  path = limits_cache_path(AGENT_ID, base, key)
+  return path if resource == "budget" else path.with_name(path.name.replace("kimchi-limits-", "kimchi-credits-", 1))
 
 
 def read_part(path, resource):
   cached = read_json(path)
-  if not isinstance(cached, dict) and resource == "budget":
+  if not cached and resource == "budget":
     # Budgets were cached as kimchi-budget-<key>.json before they joined the
     # limits cache name every collector shares.
     cached = read_json(path.with_name(path.name.replace("kimchi-limits-", "kimchi-budget-", 1)))
-  return cached if isinstance(cached, dict) and number(cached.get("fetchedAtMs")) else None
-
-
-# A kept budget whose period ended is an untouched allowance, not an unknown
-# one: it comes back at zero, with no reset time until the gateway names the
-# next period.
-def limit_window_open(entry, now):
-  resets_at = parse_time(entry.get("resetsAt"))
-  return resets_at is None or resets_at > now
-
-
-def usable_cached_limits(part):
-  entries = part.get("limits")
-  if not isinstance(entries, list):
-    return []
-  now = datetime.now(timezone.utc)
-  return [
-    entry if limit_window_open(entry, now) else dict(entry, percent=0.0, resetsAt="")
-    for entry in entries if isinstance(entry, dict)
-  ]
+  return cached if stamp(cached.get("fetchedAtMs")) else None
 
 
 # Refreshes can overlap (the panel's own and a limits retry), so an answer
 # only replaces one fetched after it.
 def remember(path, part):
-  current = read_json(path)
-  if not isinstance(current, dict) or number(current.get("fetchedAtMs")) <= part["fetchedAtMs"]:
+  if stamp(read_json(path).get("fetchedAtMs")) <= part["fetchedAtMs"]:
     write_json(path, part)
 
 
@@ -488,21 +345,22 @@ def collect_billing(force):
     cache = billing_cache(key, base, resource)
     cached = read_part(cache, resource)
     if cached is not None:
-      cached = dict(cached, limits=usable_cached_limits(cached)) if resource == "budget" else cached
-      age = time.time() - number(cached.get("fetchedAtMs")) / 1000
-      if not force and 0 <= age < PROBE_MIN_INTERVAL_SECONDS:
+      # A kept budget whose period ended is an untouched allowance, not an
+      # unknown one: it comes back at zero, with no reset time until the
+      # gateway names the next period.
+      cached = dict(cached, limits=open_limits(cached.get("limits"))) if resource == "budget" else cached
+      if not force and age_below(stamp(cached.get("fetchedAtMs")) / 1000, PROBE_MIN_INTERVAL_SECONDS):
         parts[resource] = cached
         continue
     try:
       data = get_json(f"{base}/v1/{resource}", key)
-      parts[resource] = dict(parse(data), fetchedAtMs=int(time.time() * 1000))
+      parts[resource] = dict(parse(data), fetchedAtMs=now_ms())
       remember(cache, parts[resource])
       continue
-    except urllib.error.HTTPError as error:
-      rejected = rejected or error.code in (401, 403)
-    except (urllib.error.URLError, OSError, http.client.HTTPException):
+    except HttpError as error:
+      rejected = rejected or error.status in (401, 403)
       # No answer at all: no route, no DNS, a timeout, or a reply cut off.
-      unreachable = True
+      unreachable = unreachable or error.transport
     except Exception:
       pass
     failed.add(resource)
@@ -516,7 +374,7 @@ def collect_billing(force):
   result["limits"] = (parts.get("budget") or {}).get("limits") or []
   result["limitsStale"] = bool(failed)
   if parts:
-    result["limitsFetchedAt"] = min(number(part.get("fetchedAtMs")) for part in parts.values())
+    result["limitsFetchedAt"] = min(stamp(part.get("fetchedAtMs")) for part in parts.values())
 
   if rejected:
     result["usageStatusText"] = "Sign-in expired"
@@ -542,8 +400,11 @@ def main():
   parser.add_argument("--limits-only", action="store_true")
   args = parser.parse_args()
 
-  scan_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
-  stats = cached_local_stats(harness_dir() / "sessions", scan_age)
+  # A scan is reused on the day it was made only, since one from before
+  # midnight would count yesterday's sessions as today's. A limits-only
+  # refresh needs fresh credits, not a fresh history scan.
+  sessions_root = harness_dir() / "sessions"
+  stats = cached_scan(AGENT_ID, [sessions_root], scan_max_age(args.force, args.limits_only), lambda: local_stats(sessions_root))
   billing = collect_billing(args.force)
   signed_in = billing.pop("signedIn")
   # Sessions on disk with no key to ask the gateway with: Kimchi is in use
@@ -551,16 +412,10 @@ def main():
   if not signed_in and stats.get("hasLocalStats"):
     billing["usageStatusText"] = "Waiting for auth"
     billing["authHelpText"] = AUTH_HELP
-  record = {
-    "schemaVersion": 1,
-    "id": AGENT_ID,
-    "name": AGENT_NAME,
-    "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": signed_in or bool(stats.get("hasLocalStats")),
-  }
+  record = base_record(AGENT_ID, AGENT_NAME, ready=signed_in or bool(stats.get("hasLocalStats")))
   record.update(billing)
   record.update(stats)
-  print(json.dumps(record, separators=(",", ":")))
+  emit(record)
 
 
 if __name__ == "__main__":
