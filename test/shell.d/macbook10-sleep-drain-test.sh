@@ -98,7 +98,6 @@ pass "status reports the applied wakeup disable"
 udev="$test_tmp/99-omarchy-macbook10-wifi-wakeup.rules"
 unit="$test_tmp/omarchy-macbook10-sleep-drain.service"
 hook="$test_tmp/sleep-hook"
-resume="$test_tmp/omarchy_resume.conf"
 
 run_leaf() {
   : >"$calls"
@@ -109,17 +108,16 @@ run_leaf() {
     OMARCHY_MACBOOK10_SLEEP_UDEV="$udev" \
     OMARCHY_MACBOOK10_SLEEP_UNIT="$unit" \
     OMARCHY_MACBOOK10_SLEEP_HOOK="$hook" \
-    OMARCHY_MACBOOK10_RESUME_CONF="$2" \
     bash -eE -o pipefail -c 'source "$1"' bash "$leaf"
 }
 
 rm -f "$udev" "$unit" "$hook"
-run_leaf "MacBookPro14,1" "$resume"
+run_leaf "MacBookPro14,1"
 [[ ! -f $udev ]] || fail "setup skips unrelated hardware"
 [[ ! -s $calls ]] || fail "setup escalates nothing on unrelated hardware" "$(cat "$calls")"
 pass "setup skips unrelated hardware"
 
-run_leaf "MacBook10,1" "$test_tmp/missing-resume.conf"
+run_leaf "MacBook10,1"
 [[ -f $udev ]] || fail "setup writes the udev rule"
 grep -Fq 'ATTR{device}=="0x43a3"' "$udev" || fail "the udev rule matches BCM4350" "$(cat "$udev")"
 [[ -f $unit ]] || fail "setup writes the systemd unit"
@@ -144,7 +142,6 @@ PATH="$stub_bin:$ROOT/bin:$PATH" \
   OMARCHY_MACBOOK10_SLEEP_UDEV="$udev" \
   OMARCHY_MACBOOK10_SLEEP_UNIT="$unit" \
   OMARCHY_MACBOOK10_SLEEP_HOOK="$hook" \
-  OMARCHY_MACBOOK10_RESUME_CONF="$resume" \
   bash -euo pipefail "$migration"
 grep -Fq $'systemctl\tenable\t--now\tomarchy-macbook10-sleep-drain.service' "$calls" ||
   fail "the migration runs hardware setup" "$(cat "$calls")"
