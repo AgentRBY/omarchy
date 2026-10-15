@@ -16,20 +16,36 @@ the JSON this prints.
 """
 
 import argparse
-import fcntl
-import hashlib
 import json
 import os
-import shutil
-import sqlite3
-import subprocess
 import sys
-import tempfile
 import time
 import tomllib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
+
+# The shared collector plumbing ships with the agents panel.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
+from collectors import (  # noqa: E402
+  Stats,
+  base_record,
+  cached_scan,
+  emit,
+  empty_bucket,
+  obj,
+  opencode_db,
+  pi_session_roots,
+  read_json,
+  scan_cache_paths,
+  scan_max_age,
+  scan_opencode,
+  scan_pi_sessions,
+  token_count,
+  warn,
+  write_json,
+)
 
 AGENT_ID = "vibe"
 AGENT_NAME = "Mistral Vibe"
@@ -42,34 +58,12 @@ PROVIDER = "mistral"
 # Vibe's own resolve_default_model_alias does.
 DEFAULT_MODEL_ALIAS = "mistral-medium-3.5"
 
-# A scan this recent is only reused to dedup concurrent collector runs (the
-# update command backgrounds one per agent while the panel refreshes on its
-# own). --limits-only promises only fresh limits, and Vibe has none, so it may
-# reuse a scan for 15 minutes.
-SCAN_REUSE_SECONDS = 20
-LIMITS_ONLY_REUSE_SECONDS = 900
-
-CACHE_SCHEMA_VERSION = 1
 INDEX_VERSION = 1
 
-# Counts and times read from disk are untrusted. Anything past these bounds is
-# a corrupt or crafted field, not usage.
-MAX_TOKENS = 10**12
+# Times read from Vibe's meta.json are untrusted. Anything past these bounds
+# is a corrupt or crafted field, not usage.
 MIN_EPOCH_SECONDS = 946_684_800  # 2000-01-01
 MAX_MODEL_NAME_LEN = 120
-
-
-def token_count(value):
-  """A token field as a whole number, or 0 when it isn't a plausible count.
-
-  bool is an int subclass, and a string, NaN, negative, or absurd value is a
-  bad field: it counts as nothing rather than skewing the totals.
-  """
-  if isinstance(value, bool) or not isinstance(value, (int, float)):
-    return 0
-  if value != value or value <= 0 or value > MAX_TOKENS:
-    return 0
-  return int(value)
 
 
 def epoch_seconds(value):
@@ -103,27 +97,8 @@ def epoch_seconds(value):
   return seconds
 
 
-def local_day(seconds):
+def start_day(seconds):
   return datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
-
-
-# A pi or opencode row's day, read as every collector reading those sources
-# reads it: a row with no time at all is today's, and an untrusted time is
-# None, so the caller skips that row alone.
-def source_day(value):
-  if value is None:
-    return datetime.now().strftime("%Y-%m-%d")
-  started = epoch_seconds(value)
-  return None if started is None else local_day(started)
-
-
-# pi, omp, and the harnesses that copy their format spell usage camelCase or
-# snake_case; the first spelling present wins.
-def usage_tokens(usage, *keys):
-  for key in keys:
-    if key in usage:
-      return token_count(usage.get(key))
-  return 0
 
 
 def model_label(raw):
@@ -135,62 +110,17 @@ def model_label(raw):
   return value or "mistral"
 
 
-def obj(value):
-  return value if isinstance(value, dict) else {}
+class SessionStats(Stats):
+  """Stats where a Vibe session books its running totals and its typed
+  prompts at once, rather than one prompt per reply."""
 
-
-def runtime_env():
-  home = str(Path.home())
-  path_parts = [
-    os.environ.get("PATH", ""),
-    f"{home}/.local/bin",
-    f"{home}/.local/share/mise/shims",
-  ]
-  env = os.environ.copy()
-  env["PATH"] = os.pathsep.join(part for part in path_parts if part)
-  return env
-
-
-ENV = runtime_env()
-
-
-def empty_bucket():
-  return {
-    "inputTokens": 0,
-    "outputTokens": 0,
-    "cacheReadInputTokens": 0,
-    "cacheCreationInputTokens": 0,
-  }
-
-
-class Stats:
-  """Token and activity totals shared by every local source.
-
-  Sessions and days are sets, so a day active in both Vibe and pi counts once
-  toward activeDays.
-  """
-
-  def __init__(self):
-    now = datetime.now()
-    self.today = now.strftime("%Y-%m-%d")
-    self.recent_dates = [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
-    self.recent = {day: 0 for day in self.recent_dates}
-    self.today_prompts = 0
-    self.today_total_tokens = 0
-    self.today_sessions = set()
-    self.today_tokens_by_model = {}
-    self.total_prompts = 0
-    self.total_sessions = set()
-    self.active_days = set()
-    self.model_usage = {}
-
-  def add(self, session, day, model, input_tokens, output_tokens, cache_read, cache_write, prompts):
+  def add(self, day, session, model, input_tokens, output_tokens, cache_read, cache_write, prompts=1):
     total = input_tokens + output_tokens + cache_read + cache_write
     if total <= 0 and prompts <= 0:
       return
     self.total_prompts += prompts
-    self.total_sessions.add(session)
-    self.active_days.add(day)
+    self.sessions.add(session)
+    self.active_dates.add(day)
     if total > 0:
       bucket = self.model_usage.setdefault(model, empty_bucket())
       bucket["inputTokens"] += input_tokens
@@ -198,30 +128,13 @@ class Stats:
       bucket["cacheReadInputTokens"] += cache_read
       bucket["cacheCreationInputTokens"] += cache_write
     if day in self.recent:
-      # recentDays.messageCount holds tokens, despite the shared legacy name.
       self.recent[day] += total
     if day == self.today:
       self.today_prompts += prompts
       self.today_sessions.add(session)
-      self.today_total_tokens += total
+      self.today_tokens += total
       if total > 0:
-        self.today_tokens_by_model[model] = self.today_tokens_by_model.get(model, 0) + total
-
-  def record(self):
-    return {
-      "todayPrompts": self.today_prompts,
-      "todaySessions": len(self.today_sessions),
-      "todayTotalTokens": self.today_total_tokens,
-      "todayTokensByModel": self.today_tokens_by_model,
-      "recentDays": [{"date": day, "messageCount": self.recent[day]} for day in self.recent_dates],
-      "totalPrompts": self.total_prompts,
-      "totalSessions": len(self.total_sessions),
-      # The dates travel too: merging snapshots from several machines needs
-      # their union, which a count alone cannot give.
-      "activeDays": len(self.active_days),
-      "activeDates": sorted(self.active_days),
-      "modelUsage": self.model_usage,
-    }
+        self.today_by_model[model] = self.today_by_model.get(model, 0) + total
 
 
 # ------------------------------------------------------------------ Vibe
@@ -367,11 +280,8 @@ def parse_meta(meta_path, count_session_prompts):
 
 
 def load_index(path):
-  try:
-    data = json.loads(path.read_text(encoding="utf-8"))
-  except Exception:
-    return {}
-  if isinstance(data, dict) and data.get("version") == INDEX_VERSION and isinstance(data.get("files"), dict):
+  data = read_json(path)
+  if data.get("version") == INDEX_VERSION and isinstance(data.get("files"), dict):
     return data["files"]
   return {}
 
@@ -412,7 +322,7 @@ def scan_vibe_sessions(stats, index_file):
           entry = {"sig": signature, "row": parse_meta(meta_path, top_level)}
       except (OSError, ValueError, UnicodeDecodeError) as exc:
         # Mid-write or unreadable: skip it this run, uncached.
-        print(f"omarchy-agent-usage-vibe: skipping {meta_path}: {type(exc).__name__}", file=sys.stderr)
+        warn(f"skipping {meta_path}: {type(exc).__name__}")
         complete = False
         continue
       current[key] = entry
@@ -421,29 +331,26 @@ def scan_vibe_sessions(stats, index_file):
         continue
       try:
         started, model, input_tokens, output_tokens, cache_read, prompts = row
-        day = local_day(float(started))
+        day = start_day(float(started))
         counts = [int(input_tokens), int(output_tokens), int(cache_read), int(prompts)]
       except (TypeError, ValueError, OverflowError, OSError):
         continue
-      stats.add(str(session_dir), day, str(model), counts[0], counts[1], counts[2], 0, counts[3])
+      stats.add(day, str(session_dir), str(model), counts[0], counts[1], counts[2], 0, prompts=counts[3])
 
   if index_file and current != previous:
     try:
       write_json(index_file, {"version": INDEX_VERSION, "files": current})
     except Exception as exc:
-      print(f"omarchy-agent-usage-vibe: could not write session index ({exc})", file=sys.stderr)
+      warn(f"could not write session index ({exc})")
   return complete
 
 
 def tier_label():
   """The plan from the newest whoami answer Vibe cached, named as Vibe's own
   resolve_user_plan names it. A plan Vibe has no name for stays unnamed."""
-  try:
-    entries = json.loads((vibe_home() / "whoami_cache.json").read_text(encoding="utf-8"))
-  except Exception:
-    return ""
+  entries = read_json(vibe_home() / "whoami_cache.json")
   newest = None
-  for entry in entries.values() if isinstance(entries, dict) else []:
+  for entry in entries.values():
     entry = obj(entry)
     stored = entry.get("stored_at_timestamp")
     payload = obj(entry.get("payload"))
@@ -464,341 +371,60 @@ def tier_label():
   return ""
 
 
-# ----------------------------------------------------------- pi and omp
+# ---------------------------------------------------- pi, omp, and opencode
 
 
-def find_command(name):
-  return shutil.which(name, path=ENV.get("PATH"))
+# pi, omp, and opencode name the provider alike. Exact match: opencode
+# provider ids are free-form, and a custom gateway named like Mistral is not
+# Mistral's API.
+def billed_here(provider, model, entry):
+  return provider == PROVIDER
 
 
-# pi's and omp's session trees, each profile's too: `--profile=<name>` moves
-# the whole agent tree under <base>/profiles/<name>/. pi moves its agent tree
-# with PI_CODING_AGENT_DIR and its sessions alone with
-# PI_CODING_AGENT_SESSION_DIR, both expanding a leading ~; either is read as
-# well as the default trees, which keep whatever was written before the move.
-def pi_session_roots():
-  roots = []
-  for base in (Path.home() / ".pi", Path.home() / ".omp"):
-    roots.append(base / "agent" / "sessions")
-    try:
-      # Sorted so the scan order does not depend on directory order.
-      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
-    except OSError:
-      # No profiles directory, or it is unreadable: the default root stands.
-      pass
-  if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
-    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
-  if os.environ.get("PI_CODING_AGENT_SESSION_DIR", "").strip():
-    roots.append(Path(os.environ["PI_CODING_AGENT_SESSION_DIR"].strip()).expanduser())
-  # Canonical roots, so an override that aliases a default root through a
-  # symlink is scanned under one spelling. A root inside another is already
-  # read with it, so it is dropped rather than counted twice.
-  canonical = list(dict.fromkeys(root.resolve() for root in roots))
-  return [root for root in canonical if not any(other != root and root.is_relative_to(other) for other in canonical)]
-
-
-def scan_pi_sessions(stats):
-  """Add pi/omp assistant messages that ran on the mistral provider. Returns
-  whether every root was read in full, so a partial scan is never cached as
-  the whole story."""
-  roots = [root for root in pi_session_roots() if root.is_dir()]
-  if not roots:
-    return True
-  rg = find_command("rg")
-  if not rg:
-    print("omarchy-agent-usage-vibe: rg is missing; pi sessions not counted", file=sys.stderr)
-    return False
-  seen = set()
-  complete = True
-  for root in roots:
-    try:
-      proc = subprocess.Popen(
-        # --no-ignore: these are data files, not a source tree. When $HOME is
-        # itself a git checkout, its ignore rules would otherwise hide every
-        # session file.
-        [rg, "--json", "--no-ignore", "-e", r'"provider"\s*:\s*"mistral"', str(root)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        errors="replace",
-        env=ENV,
-      )
-    except OSError:
-      return False
-
-    assert proc.stdout is not None
-    for raw in proc.stdout:
-      try:
-        event = json.loads(raw)
-        if event.get("type") != "match":
-          continue
-        data = obj(event.get("data"))
-        line = obj(data.get("lines")).get("text", "")
-        path = os.path.abspath(str(obj(data.get("path")).get("text") or "pi-session"))
-        entry = json.loads(line)
-      except Exception:
-        continue
-      if not isinstance(entry, dict) or entry.get("type") != "message":
-        continue
-      message = obj(entry.get("message"))
-      if message.get("role") != "assistant" or str(message.get("provider") or "") != PROVIDER:
-        continue
-      # A fork copies its parent's messages with their ids and times, so the
-      # pair names a message across files; an id alone only within its file.
-      # A line without an id always counts.
-      message_id = str(entry.get("id") or "")
-      stamp = str(entry.get("timestamp") or "")
-      if message_id:
-        key = (message_id, stamp) if stamp else (path, message_id)
-        if key in seen:
-          continue
-        seen.add(key)
-      # The first time present decides: none at all is today's, and an
-      # untrusted one, zero included, skips only this line.
-      timestamp = entry.get("timestamp")
-      day = source_day(message.get("timestamp") if timestamp is None else timestamp)
-      model = model_label(message.get("model"))
-      if day is None or model is None:
-        continue
-      usage = obj(message.get("usage"))
-      input_tokens = usage_tokens(usage, "input", "inputTokens", "input_tokens")
-      # pi folds thinking into its own field; both are generated.
-      output_tokens = usage_tokens(usage, "output", "outputTokens", "output_tokens") + usage_tokens(usage, "reasoning", "reasoningTokens", "reasoning_tokens")
-      cache_read = usage_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens")
-      cache_write = usage_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens")
-      if not (input_tokens or output_tokens or cache_read or cache_write):
-        # Some writers keep only the total; it was still spent.
-        input_tokens = usage_tokens(usage, "totalTokens", "total_tokens")
-      if not (input_tokens or output_tokens or cache_read or cache_write):
-        continue
-      stats.add(path, day, model, input_tokens, output_tokens, cache_read, cache_write, 1)
-
-    try:
-      # rg exits 1 for no match and 2 when it couldn't read something.
-      if proc.wait(timeout=1) not in (0, 1):
-        complete = False
-    except Exception:
-      proc.kill()
-      complete = False
-  return complete
-
-
-# ------------------------------------------------------------- opencode
-
-
-def opencode_db():
-  # OPENCODE_DB points opencode at another database, as the CLI itself reads
-  # it; a relative name lives beside the default one. Only a build whose
-  # channel was literally "v2" wrote opencode-v2.db.
-  root = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode"
-  configured = os.environ.get("OPENCODE_DB", "").strip()
-  if configured:
-    path = Path(configured).expanduser()
-    return path if path.is_absolute() else root / path
-  normal = root / "opencode.db"
-  legacy = root / "opencode-v2.db"
-  return legacy if not normal.is_file() and legacy.is_file() else normal
-
-
-def table_columns(conn, table):
-  try:
-    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-  except sqlite3.Error:
-    return set()
-
-
-def add_opencode_row(stats, message_id, session_id, entry, row_type, created, seen):
-  # The original `message` table keeps the provider and model at the top
-  # level; the V2 `session_message` table nests them under `model` and keeps
-  # the role in its `type` column, with a compaction's tokens spent like any
-  # reply's.
-  if not isinstance(entry, dict):
-    return
-  if (entry.get("role") or row_type) not in ("assistant", "compaction"):
-    return
-  nested = obj(entry.get("model"))
-  # Exact match: opencode provider ids are free-form, and a custom gateway
-  # named like Mistral is not Mistral's API.
-  if str(entry.get("providerID") or nested.get("providerID") or "") != PROVIDER:
-    return
-  tokens = obj(entry.get("tokens"))
-  cache = obj(tokens.get("cache"))
-  input_tokens = token_count(tokens.get("input"))
-  # opencode keeps thinking tokens out of output; both are generated.
-  output_tokens = token_count(tokens.get("output")) + token_count(tokens.get("reasoning"))
-  cache_read = token_count(cache.get("read"))
-  cache_write = token_count(cache.get("write"))
-  if not (input_tokens or output_tokens or cache_read or cache_write):
-    return
-  # A migrated message can sit in both stores under the same id.
-  if message_id in seen:
-    return
-  # The message's own time, else the row's: none at all is today's, and an
-  # untrusted one, zero included, skips only this row.
-  stamp = obj(entry.get("time")).get("created")
-  day = source_day(created if stamp is None else stamp)
-  model = model_label(entry.get("modelID") or nested.get("id") or nested.get("modelID"))
-  if day is None or model is None:
-    return
-  seen.add(message_id)
-  stats.add("opencode:" + str(session_id), day, model, input_tokens, output_tokens, cache_read, cache_write, 1)
-
-
-def scan_opencode_db(stats):
-  """Add opencode messages on the mistral provider. Read-only: opencode may be
-  writing right now. Returns whether the scan ran to completion; a scan cut
-  short still contributes what it read, but isn't cached."""
-  db = opencode_db()
-  if not db.is_file():
-    return True
-  try:
-    conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
-  except sqlite3.Error:
-    return False
-  try:
-    conn.execute("PRAGMA query_only = ON")
-    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    seen = set()
-    # The LIKE gates only skip rows whose JSON cannot name the provider; each
-    # row is still checked after parsing.
-    columns = table_columns(conn, "session_message")
-    if "session_message" in tables and {"id", "session_id", "type", "data"} <= columns:
-      created = "m.time_created" if "time_created" in columns else "NULL"
-      source = "session_message m"
-      fork_filter = ""
-      if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= table_columns(conn, "session_v2"):
-        # A fork copies its source session's messages under new ids; only
-        # what came after the fork was spent in it.
-        source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
-        fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
-      for message_id, session_id, row_type, time_created, raw in conn.execute(
-        f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
-        " WHERE m.type IN ('assistant', 'compaction')"
-        " AND m.data LIKE '%\"providerID\"%:%\"mistral\"%'" + fork_filter
-      ):
-        try:
-          add_opencode_row(stats, str(message_id), session_id, json.loads(raw), str(row_type or ""), time_created, seen)
-        except Exception:
-          continue
-    columns = table_columns(conn, "message")
-    if "message" in tables and {"session_id", "data"} <= columns:
-      row_id = "id" if "id" in columns else "rowid"
-      for message_id, session_id, raw in conn.execute(
-        f"SELECT {row_id}, session_id, data FROM message"
-        " WHERE data LIKE '%\"providerID\"%:%\"mistral\"%'"
-      ):
-        try:
-          add_opencode_row(stats, str(message_id), session_id, json.loads(raw), "", None, seen)
-        except Exception:
-          continue
-  except sqlite3.Error:
-    # Transient lock, schema migration, corruption: the numbers stop here,
-    # incomplete.
-    return False
-  finally:
-    conn.close()
-  return True
+def add_harness_rows(stats):
+  """Add pi/omp and opencode messages on the mistral provider. Returns
+  whether every source was read in full."""
+  pi_rows, pi_complete = scan_pi_sessions(r'"provider"\s*:\s*"mistral"', billed_here)
+  # The closing quote makes the database's prefilter match the whole id.
+  db_rows, db_complete = scan_opencode([PROVIDER + '"'], billed_here)
+  for row in pi_rows + db_rows:
+    model = model_label(row.model)
+    if model is not None:
+      stats.add_row(row, model)
+  return pi_complete and db_complete
 
 
 # ---------------------------------------------------------------- cache
 
 
-def cache_root():
-  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
-  root.mkdir(parents=True, exist_ok=True)
-  return root
-
-
-def cache_paths():
-  # The digest covers every data path the scan reads, so another home or
-  # Vibe directory never reuses this one's numbers.
+def scan_sources():
+  # Every data path the scan reads, so another home or Vibe directory never
+  # reuses this one's numbers.
   save_dir, prefix = session_logging()
-  sources = [str(Path.home()), str(save_dir), prefix, str(opencode_db()), *map(str, pi_session_roots())]
-  digest = hashlib.sha1("\n".join(sources).encode("utf-8")).hexdigest()[:16]
-  root = cache_root()
-  return root / f"vibe-scan-{digest}.json", root / f"vibe-scan-{digest}.lock", root / f"vibe-index-{digest}.json"
+  return [Path.home(), save_dir, prefix, opencode_db(), *pi_session_roots()]
 
 
-def read_fresh_json(path, max_age_seconds):
-  if max_age_seconds <= 0:
-    return None
-  try:
-    # A negative age means the mtime is in the future: the clock moved
-    # backwards since the write, so the cache's freshness cannot be trusted.
-    age = time.time() - path.stat().st_mtime
-    if 0 <= age < max_age_seconds:
-      return json.loads(path.read_text(encoding="utf-8"))
-  except Exception:
-    return None
-  return None
-
-
-def write_json(path, payload):
-  # A temp name unique to this writer: several collectors can run at once, and
-  # a shared temp path means the second replace finds the first one's file
-  # already moved away.
-  handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-  tmp = Path(tmp_name)
-  try:
-    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
-      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
-    tmp.chmod(0o644)
-    tmp.replace(path)
-  except BaseException:
-    tmp.unlink(missing_ok=True)
-    raise
-
-
-STATS_KEYS = ("todayPrompts", "todaySessions", "todayTotalTokens", "todayTokensByModel", "recentDays", "totalPrompts", "totalSessions", "activeDays", "activeDates", "modelUsage")
-
-
-def read_cached_stats(cache_file, max_age_seconds):
-  cached = read_fresh_json(cache_file, max_age_seconds)
-  if not isinstance(cached, dict) or cached.get("schemaVersion") != CACHE_SCHEMA_VERSION:
-    return None
-  # today* fields only mean "today" on the day they were scanned.
-  if cached.get("scanDate") != datetime.now().strftime("%Y-%m-%d"):
-    return None
-  stats = cached.get("stats")
-  if not isinstance(stats, dict) or not all(key in stats for key in STATS_KEYS):
-    return None
-  return stats
+def index_path(sources):
+  # The per-session index lives beside the scan cache, under the same key.
+  cache_file, _ = scan_cache_paths(AGENT_ID, sources)
+  return cache_file.with_name(cache_file.name.replace(f"{AGENT_ID}-scan-", f"{AGENT_ID}-index-", 1))
 
 
 def run_scans(index_file):
-  stats = Stats()
+  stats = SessionStats()
   complete = scan_vibe_sessions(stats, index_file)
-  complete = scan_pi_sessions(stats) and complete
-  complete = scan_opencode_db(stats) and complete
-  return stats.record(), complete
+  complete = add_harness_rows(stats) and complete
+  return stats.snapshot(), complete
 
 
 def cached_local_stats(max_age):
-  """Local stats, with the cache as a pure optimization: any cache failure
-  degrades to a direct scan and a warning on stderr."""
+  sources = scan_sources()
   try:
-    cache_file, lock_file, index_file = cache_paths()
-    cached = read_cached_stats(cache_file, max_age)
-    if cached is not None:
-      return cached
-    with lock_file.open("w") as lock:
-      fcntl.flock(lock, fcntl.LOCK_EX)
-      cached = read_cached_stats(cache_file, max_age)
-      if cached is not None:
-        return cached
-      stats, complete = run_scans(index_file)
-      # An interrupted scan still serves this run, but caching it would hide
-      # the missing usage from every reader until the cache expires.
-      if complete:
-        try:
-          write_json(cache_file, {"schemaVersion": CACHE_SCHEMA_VERSION, "scanDate": datetime.now().strftime("%Y-%m-%d"), "stats": stats})
-        except Exception as exc:
-          print(f"omarchy-agent-usage-vibe: could not write usage cache ({exc})", file=sys.stderr)
-      return stats
+    index_file = index_path(sources)
   except Exception as exc:
-    print(f"omarchy-agent-usage-vibe: cache unavailable ({exc}); scanning directly", file=sys.stderr)
-    stats, _ = run_scans(None)
-    return stats
+    warn(f"session index unavailable ({exc})")
+    index_file = None
+  return cached_scan(AGENT_ID, sources, max_age, lambda: run_scans(index_file))
 
 
 def main():
@@ -809,31 +435,16 @@ def main():
   parser.add_argument("--limits-only", action="store_true")
   args = parser.parse_args()
 
-  max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
-  stats = cached_local_stats(max_age)
+  stats = cached_local_stats(scan_max_age(args.force, args.limits_only))
   tier = tier_label()
 
   # Mistral publishes no usage limits, so there is nothing to wait for or
   # fail at: the status stays empty and local stats show alone. A machine
   # with neither Mistral usage nor a cached plan prints a record the panel
   # skips.
-  record = {
-    "schemaVersion": 1,
-    "id": AGENT_ID,
-    "name": AGENT_NAME,
-    "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": stats["totalSessions"] > 0 or bool(tier),
-    "hasLocalStats": True,
-    "hasPromptStats": True,
-    "tierLabel": tier,
-    "usageStatusText": "",
-    "authHelpText": "",
-    "limits": [],
-    "limitsStale": False,
-    "limitsFetchedAt": 0,
-  }
+  record = base_record(AGENT_ID, AGENT_NAME, ready=stats["totalSessions"] > 0 or bool(tier), hasLocalStats=True, tierLabel=tier)
   record.update(stats)
-  print(json.dumps(record, separators=(",", ":")))
+  emit(record)
   return 0
 
 
