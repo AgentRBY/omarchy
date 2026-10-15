@@ -80,25 +80,50 @@ pass "weekly chart has two non-zero days"
 [[ $(printf '%s' "$record" | jq -r '.authHelpText') == "Start Freebuff, or run \`freebuff login\`, to sign in." ]] || fail "authHelpText"
 pass "unsigned-in record points at sign-in"
 
-mkdir -p "$HOME/.config/manicode"
-printf '{}' >"$HOME/.config/manicode/credentials.json"
-record=$("$collector")
+credentials="$HOME/.config/manicode/credentials.json"
+mkdir -p "$(dirname "$credentials")"
+
+for invalid in '{}' '{"default":{}}' '{"default":{"authToken":""}}' 'not-json'; do
+  printf '%s' "$invalid" >"$credentials"
+  record=$("$collector" --force)
+  [[ $(printf '%s' "$record" | jq '.ready') == "false" ]] || fail "invalid credentials not ready: $invalid"
+done
+pass "empty, unusable, and malformed credentials are not signed in"
+
+printf '{"default":{"authToken":"test-token"}}' >"$credentials"
+record=$("$collector" --force)
 [[ $(printf '%s' "$record" | jq '.ready') == "true" ]] || fail "ready signed-in"
 [[ $(printf '%s' "$record" | jq -r '.tierLabel') == "Free" ]] || fail "tierLabel"
 [[ $(printf '%s' "$record" | jq -r '.usageStatusText') == "" ]] || fail "usageStatusText"
-pass "signed-in record reports the Free tier"
+pass "usable token credentials report the Free tier"
 
-# A chat caught mid-write (invalid JSON) must not take the scan down: its
-# prompts are still counted, from the escaped user-variant fallback.
+# A keychain pointer contains no token for this standalone collector.
+printf '{"default":{"tokenStore":"keychain"}}' >"$credentials"
+record=$("$collector" --force)
+[[ $(printf '%s' "$record" | jq '.ready') == "false" ]] || fail "keychain pointer is not verified"
+[[ $(printf '%s' "$record" | jq -r '.usageStatusText') == "Freebuff sign-in status unknown" ]] || fail "keychain status"
+[[ $(printf '%s' "$record" | jq -r '.authHelpText') == *"cannot be verified"* ]] || fail "keychain help"
+pass "keychain-backed sign-in is reported as unverifiable"
+
+# A chat caught mid-write (invalid JSON) must not take the scan down or be
+# counted as a complete prompt until it can be read successfully.
 mkdir -p "$projects/2026-10-01T16-00-00.000Z"
 printf '[{"id": "user-%s", "variant": "user", "content": "half written' "$now_ms" \
   >"$projects/2026-10-01T16-00-00.000Z/chat-messages.json"
 # --force: the collector dedups concurrent runs through a recent-scan cache,
 # so a normal rerun inside the test would legitimately reuse the scan above.
 record=$("$collector" --force)
-[[ $(printf '%s' "$record" | jq '.totalPrompts') == 4 ]] || fail "midwrite prompts"
-[[ $(printf '%s' "$record" | jq '.totalSessions') == 3 ]] || fail "midwrite sessions"
-pass "mid-write chat still counts its prompts"
+[[ $(printf '%s' "$record" | jq '.totalPrompts') == 3 ]] || fail "partial prompt omitted"
+[[ $(printf '%s' "$record" | jq '.totalSessions') == 2 ]] || fail "partial session omitted"
+pass "incomplete chat is omitted from displayed usage"
+
+cat >"$projects/2026-10-01T16-00-00.000Z/chat-messages.json" <<EOF
+[{"id":"user-$now_ms","variant":"user","content":"repaired prompt"}]
+EOF
+record=$("$collector" --limits-only)
+[[ $(printf '%s' "$record" | jq '.totalPrompts') == 4 ]] || fail "repaired prompt not rescanned"
+[[ $(printf '%s' "$record" | jq '.totalSessions') == 3 ]] || fail "repaired session not rescanned"
+pass "incomplete scan does not poison cache after chat repair"
 
 # The update wrapper writes the record where the panel reads it. It scans for
 # collectors under OMARCHY_PATH, which the running shell points at the

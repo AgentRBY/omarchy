@@ -45,10 +45,6 @@ CHARS_PER_TOKEN = 4
 # the number after the variant is the creation time in epoch milliseconds
 # (10-digit values would be seconds; accept both).
 MESSAGE_ID_TS = re.compile(r"^(?:user|ai)-(\d{10,})")
-# Escape-safe fallback for a chat-messages.json that fails to parse (a file
-# caught mid-write): user messages in the real objects are never string-escaped,
-# so this only ever undercounts transiently.
-RAW_USER_VARIANT = re.compile(r'"variant"\s*:\s*"user"')
 
 now = datetime.now()
 today = now.strftime("%Y-%m-%d")
@@ -57,9 +53,15 @@ recent = {day: {"date": day, "messageCount": 0} for day in recent_dates}
 
 
 def manicode_dir():
-  # No official override env var is known for Freebuff's config dir; honor
-  # MANICODE_CONFIG_DIR so the path stays overridable for testing.
-  return Path(os.environ.get("MANICODE_CONFIG_DIR") or (Path.home() / ".config" / "manicode"))
+  # Freebuff's supported override; it must be absolute. The compatibility
+  # variable remains useful for isolated collector tests.
+  configured = os.environ.get("FREEBUFF_CONFIG_DIR") or os.environ.get("MANICODE_CONFIG_DIR")
+  if configured:
+    path = Path(configured).expanduser()
+    if path.is_absolute():
+      return path
+    print("omarchy-agent-usage-freebuff: ignoring relative config directory", file=sys.stderr)
+  return Path.home() / ".config" / "manicode"
 
 
 def local_day_from_epoch(value):
@@ -102,48 +104,47 @@ def chat_fallback_day(path):
 
 
 def scan_chat_file(path):
-  """Return {day: {"prompts": n, "inChars": n, "outChars": n}} for one chat.
+  """Return (per-day usage, complete) for one chat.
 
-  Returns {} for a chat with no datable messages; the caller decides whether
-  that still counts as a session. A parse failure falls back to a raw prompt
-  count on the file's last-write day so a session never vanishes from the
-  totals while Freebuff is rewriting it.
+  A malformed, unreadable, or concurrently modified file is omitted from this
+  run and marks the scan incomplete, so a partial snapshot never enters cache.
   """
+  try:
+    before = path.stat()
+    raw = path.read_text(encoding="utf-8")
+    after = path.stat()
+  except (OSError, UnicodeError):
+    return {}, False
+
+  if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
+    return {}, False
+
+  try:
+    data = json.loads(raw)
+  except (json.JSONDecodeError, UnicodeError):
+    return {}, False
+  if not isinstance(data, list):
+    return {}, False
+
   fallback_day = chat_fallback_day(path)
   per_day = {}
-  try:
-    data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-  except Exception:
-    data = None
-
-  if isinstance(data, list):
-    for message in data:
-      if not isinstance(message, dict):
-        continue
-      variant = message.get("variant")
-      if variant not in ("user", "ai"):
-        continue
-      text = message_text(message)
-      if not text:
-        continue
-      day = message_day(message) or fallback_day
-      bucket = per_day.setdefault(day, {"prompts": 0, "inChars": 0, "outChars": 0})
-      if variant == "user":
-        bucket["prompts"] += 1
-        bucket["inChars"] += len(text)
-      else:
-        bucket["outChars"] += len(text)
-    return per_day
-
-  # Mid-write or foreign file: prompts only, no token estimates.
-  try:
-    raw = path.read_text(encoding="utf-8", errors="replace")
-    prompts = len(RAW_USER_VARIANT.findall(raw))
-  except OSError:
-    return {}
-  if prompts:
-    return {fallback_day: {"prompts": prompts, "inChars": 0, "outChars": 0}}
-  return {}
+  for message in data:
+    if not isinstance(message, dict):
+      continue
+    variant = message.get("variant")
+    if variant not in ("user", "ai"):
+      continue
+    text = message_text(message)
+    if not text:
+      continue
+    day = message_day(message) or fallback_day
+    bucket = per_day.setdefault(day, {"prompts": 0, "inChars": 0, "outChars": 0})
+    if variant == "user":
+      bucket["prompts"] += 1
+      bucket["inChars"] += len(text)
+    else:
+      bucket["outChars"] += len(text)
+  return per_day, True
 
 
 def chat_roots():
@@ -230,29 +231,62 @@ def collect_entries(max_age):
       old_entries = {}
 
     entries = {}
+    complete = True
     for path in chat_roots():
       key = str(path)
       try:
         stat = path.stat()
       except OSError:
+        complete = False
         continue
       old = old_entries.get(key)
       if isinstance(old, dict) and old.get("size") == stat.st_size and abs(float(old.get("mtime") or -1) - stat.st_mtime) < 1e-6:
         entries[key] = old
         continue
-      per_day = scan_chat_file(path)
+      per_day, file_complete = scan_chat_file(path)
+      complete = complete and file_complete
       if per_day:
         entries[key] = {"mtime": stat.st_mtime, "size": stat.st_size, "perDay": per_day}
 
-    try:
-      write_cache(cache_file, entries)
-    except Exception as exc:
-      print(f"omarchy-agent-usage-freebuff: could not write usage cache ({exc})", file=sys.stderr)
+    if complete:
+      try:
+        write_cache(cache_file, entries)
+      except Exception as exc:
+        print(f"omarchy-agent-usage-freebuff: could not write usage cache ({exc})", file=sys.stderr)
+    else:
+      # The old snapshot predates this incomplete observation and can be
+      # reused by --limits-only; discard it so the next request must rescan.
+      try:
+        cache_file.unlink(missing_ok=True)
+      except OSError as exc:
+        print(f"omarchy-agent-usage-freebuff: could not invalidate usage cache ({exc})", file=sys.stderr)
+      print("omarchy-agent-usage-freebuff: incomplete scan; not caching partial usage", file=sys.stderr)
     return entries
 
 
-def signed_in():
-  return (manicode_dir() / "credentials.json").is_file()
+def authentication_status():
+  """Return (status, help text) without treating a keychain pointer as a token.
+
+  Freebuff may move authToken into the OS keychain, which this collector cannot
+  query. Report that state as unverifiable rather than claiming sign-in.
+  """
+  path = manicode_dir() / "credentials.json"
+  try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+  except FileNotFoundError:
+    return "signed-out", AUTH_HELP
+  except (OSError, UnicodeError, json.JSONDecodeError):
+    return "unverified", "Could not read Freebuff credentials; sign-in status is unknown."
+
+  profile = data.get("default") if isinstance(data, dict) else None
+  if not isinstance(profile, dict):
+    return "signed-out", AUTH_HELP
+  token = profile.get("authToken")
+  if isinstance(token, str) and token.strip():
+    return "signed-in", ""
+  if profile.get("tokenStore") == "keychain":
+    return "unverified", "Freebuff credentials are stored in the system keychain; sign-in status cannot be verified here."
+  return "signed-out", AUTH_HELP
 
 
 def build_record(entries):
@@ -293,7 +327,8 @@ def build_record(entries):
         today_sessions.add(key)
         today_tokens_by_model[AGENT_ID] = today_tokens_by_model.get(AGENT_ID, 0) + total
 
-  authenticated = signed_in()
+  auth_status, auth_help = authentication_status()
+  authenticated = auth_status == "signed-in"
   has_tokens = (total_input_tokens + total_output_tokens) > 0
   record = {
     "schemaVersion": 1,
@@ -304,8 +339,8 @@ def build_record(entries):
     "hasLocalStats": True,
     "hasPromptStats": True,
     "tierLabel": "Free" if authenticated else "",
-    "usageStatusText": "" if authenticated else "Freebuff not signed in",
-    "authHelpText": "" if authenticated else AUTH_HELP,
+    "usageStatusText": "" if authenticated else ("Freebuff not signed in" if auth_status == "signed-out" else "Freebuff sign-in status unknown"),
+    "authHelpText": auth_help,
     "limits": [],
     "todayPrompts": today_prompts,
     "todaySessions": len(today_sessions),
