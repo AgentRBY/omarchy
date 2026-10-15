@@ -212,3 +212,49 @@ record=$(PI_DIR="$test_tmp/pi-elsewhere" collect moved-token)
   fail "Antigravity collector reads pi's sign-in where PI_CODING_AGENT_DIR puts it" "$record"
 [[ $(stores) == "$before" ]] || fail "Antigravity collector never writes pi's store"
 pass "Antigravity collector reads pi's sign-in where PI_CODING_AGENT_DIR puts it"
+
+# Antigravity used through pi, omp (and its profiles), OpenClaw, and
+# opencode's plugin counts in the local stats; Gemini through any other
+# provider does not, and a forked session's copy of an answer counts once.
+if command -v rg >/dev/null; then
+  rm -rf "$test_tmp/.pi" "$test_tmp/.omp" "$test_tmp/pi-elsewhere" "$test_tmp/cache"
+  now=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+  # The home is a git checkout that ignores everything, as dotfiles setups do.
+  printf '*\n' >"$test_tmp/.gitignore"
+  mkdir -p "$test_tmp/.git" "$test_tmp/.omp/agent/sessions/project" "$test_tmp/.omp/profiles/work/agent/sessions" \
+    "$test_tmp/.openclaw/agents/main/sessions" "$test_tmp/pi-elsewhere/sessions" "$test_tmp/.local/share/opencode"
+  answer='{"type":"message","id":"a1","timestamp":"'$now'","message":{"role":"assistant","provider":"google-antigravity","model":"gemini-3-pro","usage":{"input":100,"output":20,"cacheRead":5,"cacheWrite":0}}}'
+  printf '%s\n%s\n' "$answer" \
+    '{"type":"message","id":"a2","timestamp":"'$now'","message":{"role":"assistant","provider":"google-gemini-cli","model":"gemini-3-pro","usage":{"input":999,"output":999}}}' \
+    >"$test_tmp/.omp/agent/sessions/project/one.jsonl"
+  printf '%s\n' "$answer" >"$test_tmp/.omp/agent/sessions/project/fork.jsonl"
+  # A profile's sessions count; an answer with an unreadable time and a
+  # total alone still counts toward the lifetime totals.
+  printf '%s\n' '{"type":"message","id":"p1","timestamp":"0001-01-01T00:00:00Z","message":{"role":"assistant","provider":"google-antigravity","model":"gemini-3-pro","usage":{"input":"many","totalTokens":30}}}' \
+    >"$test_tmp/.omp/profiles/work/agent/sessions/s.jsonl"
+  printf '%s\n' '{"type":"message","id":"m1","timestamp":"'$now'","message":{"role":"assistant","provider":"google-antigravity","model":"gemini-3-pro","usage":{"input":3,"output":1}}}' \
+    >"$test_tmp/pi-elsewhere/sessions/s.jsonl"
+  # OpenClaw's entries carry no id; two alike answers are two answers.
+  openclaw='{"type":"message","timestamp":"'$now'","message":{"role":"assistant","provider":"google-antigravity","model":"gemini-3-pro","usage":{"input":1,"output":1}}}'
+  printf '%s\n%s\n' "$openclaw" "$openclaw" >"$test_tmp/.openclaw/agents/main/sessions/s.jsonl"
+  sqlite "$test_tmp/.local/share/opencode/opencode.db" \
+    "CREATE TABLE message (session_id TEXT, data TEXT);
+     CREATE TABLE session_message (session_id TEXT, data TEXT, type TEXT);
+     INSERT INTO message VALUES
+       ('s1', '{\"role\":\"assistant\",\"providerID\":\"google\",\"modelID\":\"antigravity-gemini-3-pro\",\"time\":{\"created\":$(in_ms 0)},\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":1,\"cache\":{\"read\":2,\"write\":0}}}'),
+       ('s2', '{\"role\":\"assistant\",\"providerID\":\"google\",\"modelID\":\"gemini-3-pro\",\"time\":{\"created\":$(in_ms 0)},\"tokens\":{\"input\":999,\"output\":999}}'),
+       ('s3', '{\"role\":\"user\",\"providerID\":\"google\",\"modelID\":\"antigravity-gemini-3-pro\",\"tokens\":{\"input\":999}}');
+     INSERT INTO session_message VALUES
+       ('s4', '{\"model\":{\"providerID\":\"google\",\"id\":\"antigravity-gemini-3-pro\"},\"time\":{\"created\":$(in_ms 0)},\"tokens\":{\"input\":4,\"output\":\"x\"}}', 'assistant');"
+  record=$(PI_DIR="$test_tmp/pi-elsewhere" collect "")
+  asked >/dev/null
+  [[ $(jq -c '{ready, hasLocalStats, totalPrompts, totalSessions, todayPrompts, todayTotalTokens, models: (.modelUsage | keys)}' <<<"$record") == '{"ready":true,"hasLocalStats":true,"totalPrompts":7,"totalSessions":6,"todayPrompts":6,"todayTotalTokens":155,"models":["antigravity-gemini-3-pro","gemini-3-pro"]}' ]] ||
+    fail "Antigravity collector counts usage from pi, omp, OpenClaw, and opencode's plugin" "$record"
+  [[ $(jq -c '.modelUsage["gemini-3-pro"]' <<<"$record") == '{"inputTokens":135,"outputTokens":23,"cacheReadInputTokens":5,"cacheCreationInputTokens":0}' ]] ||
+    fail "Antigravity collector counts each harness answer's tokens once" "$record"
+  [[ $(jq -r '.usageStatusText' <<<"$record") == "Waiting for auth" ]] ||
+    fail "Antigravity collector in use only through local stats waits for a sign-in" "$record"
+  pass "Antigravity collector counts usage from pi, omp, OpenClaw, and opencode's plugin"
+else
+  skip "Antigravity collector counts usage from pi, omp, OpenClaw, and opencode's plugin (no rg)"
+fi

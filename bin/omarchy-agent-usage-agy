@@ -8,7 +8,9 @@ The id is agy, the name omarchy-default-agent and omarchy-agent know the CLI
 by, so the record and the default agent agree on which agent this is.
 
 Local stats come from Antigravity's history log, conversation summaries, and
-conversation transcripts under ~/.gemini/antigravity-cli/. The plan and
+conversation transcripts under ~/.gemini/antigravity-cli/, and from the
+Antigravity answers pi, omp, OpenClaw, and opencode's Antigravity plugin
+recorded; no other collector counts those. The plan and
 limits come from the Google Cloud Code API (v1internal:loadCodeAssist and
 v1internal:retrieveUserQuotaSummary), asked with the sign-in agy keeps in the
 Secret Service keyring (or its antigravity-oauth-token file), or with the
@@ -617,10 +619,146 @@ def conversation_summaries(root, problems):
     return []
 
 
+# pi and omp keep sessions under <home>/agent/sessions, and `--profile=<name>`
+# moves the whole agent tree under <home>/profiles/<name>/; PI_CODING_AGENT_DIR
+# moves pi's. OpenClaw keeps the same transcript format, one directory per
+# agent. Sorted, so the scan order doesn't depend on directory order.
+def session_roots():
+  roots = [pi_agent_dir() / "sessions", Path.home() / ".omp" / "agent" / "sessions"]
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    try:
+      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      pass
+  openclaw = Path(os.environ.get("OPENCLAW_STATE_DIR") or (Path.home() / ".openclaw"))
+  try:
+    roots.extend(sorted(child / "sessions" for child in (openclaw / "agents").iterdir() if child.is_dir()))
+  except OSError:
+    pass
+  return list(dict.fromkeys(roots))
+
+
+def opencode_database():
+  return Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode" / "opencode.db"
+
+
+# Each answer pi, omp, or OpenClaw got through its google-antigravity
+# provider: the session it belongs to, its day, its model, and its input,
+# output, cache read, and cache write tokens.
+def session_messages(problems):
+  roots = [root for root in session_roots() if root.is_dir()]
+  rg = shutil.which("rg") if roots else None
+  if roots and not rg:
+    problems.append("rg")
+    return
+  seen = set()
+  for root in roots:
+    try:
+      proc = subprocess.Popen(
+        # --no-ignore: these are data files, not a source tree. A home that
+        # is itself a git checkout would otherwise hide every session file
+        # behind its ignore rules.
+        [rg, "--json", "--no-ignore", "-e", r'"provider"\s*:\s*"google-antigravity"', str(root)],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace",
+      )
+    except OSError:
+      problems.append(str(root))
+      continue
+    for raw in proc.stdout:
+      try:
+        event = json.loads(raw)
+        if event.get("type") != "match":
+          continue
+        path = event["data"]["path"]["text"]
+        entry = json.loads(event["data"]["lines"]["text"])
+      except (ValueError, KeyError, TypeError, AttributeError):
+        continue
+      if not isinstance(entry, dict) or entry.get("type") != "message":
+        continue
+      message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
+      if message.get("role") != "assistant" or message.get("provider") != "google-antigravity":
+        continue
+      # A fork copies its parent's entries, and they keep their id and time,
+      # so each answer counts once. An entry without an id always counts.
+      if entry.get("id"):
+        key = (str(entry["id"]), str(entry["timestamp"])) if entry.get("timestamp") else (path, str(entry["id"]))
+        if key in seen:
+          continue
+        seen.add(key)
+      usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
+      tokens = (number(usage.get("input")), number(usage.get("output")), number(usage.get("cacheRead")), number(usage.get("cacheWrite")))
+      if not any(tokens):
+        tokens = (number(usage.get("totalTokens")), 0, 0, 0)
+      model = message.get("model") if isinstance(message.get("model"), str) else ""
+      if any(tokens):
+        yield path, local_day(entry.get("timestamp") or message.get("timestamp")), model_key(model) or "unknown", tokens
+    try:
+      proc.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+      proc.kill()
+
+
+# opencode's Antigravity plugin runs under a "google" provider, with model
+# ids it prefixes with antigravity- to keep them apart from Gemini API ones.
+# opencode v1 keeps messages in `message`, with the role, provider and model
+# in each row's data; v2 writes `session_message`, with the role in its type
+# column and the provider and model under data.model. Read-only: opencode
+# may be writing right now.
+def opencode_messages(problems):
+  database = opencode_database()
+  if not database.is_file():
+    return
+  try:
+    conn = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+  except sqlite3.Error:
+    problems.append("opencode")
+    return
+  try:
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    rows = []
+    if "message" in tables:
+      rows += [("opencode:", session, raw, None) for session, raw in conn.execute("SELECT session_id, data FROM message WHERE data LIKE '%antigravity-%'")]
+    if "session_message" in tables:
+      rows += [("opencode-v2:", session, raw, kind) for session, raw, kind in conn.execute("SELECT session_id, data, type FROM session_message WHERE data LIKE '%antigravity-%'")]
+  except sqlite3.Error:
+    problems.append("opencode")
+    return
+  finally:
+    conn.close()
+  for prefix, session, raw, kind in rows:
+    try:
+      entry = json.loads(raw)
+      if kind is None:
+        role, provider, model = entry.get("role"), entry.get("providerID"), entry.get("modelID")
+      else:
+        info = entry.get("model") if isinstance(entry.get("model"), dict) else {}
+        role, provider, model = kind, info.get("providerID"), info.get("id")
+      tokens = entry.get("tokens") if isinstance(entry.get("tokens"), dict) else {}
+      cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+      created = (entry.get("time") or {}).get("created")
+    except (ValueError, TypeError, AttributeError):
+      continue
+    if role != "assistant" or not str(provider or "").startswith("google") or not str(model or "").startswith("antigravity-"):
+      continue
+    # opencode keeps thinking tokens out of output; both are generated.
+    counts = (number(tokens.get("input")), number(tokens.get("output")) + number(tokens.get("reasoning")), number(cache.get("read")), number(cache.get("write")))
+    if any(counts):
+      yield prefix + str(session), local_day(created), model_key(str(model)), counts
+
+
+# Hermes reaches Antigravity only through plugins that run agy itself, so its
+# sign-in and transcripts are agy's own, which local_stats reads already.
+def harness_messages(problems):
+  yield from session_messages(problems)
+  yield from opencode_messages(problems)
+
+
 # Every prompt from history.jsonl, every conversation from it and from the
 # conversation summaries, and the tokens each model step in a transcript
 # reports. Steps that report no usage add no tokens; steps without a usable
-# date still count toward the lifetime totals.
+# date still count toward the lifetime totals. Antigravity driven from
+# another harness adds each answer it recorded as a prompt, the way the
+# Codex collector counts them, with every token it reports.
 def local_stats(root, problems=None):
   problems = [] if problems is None else problems
   today = datetime.now().astimezone().date()
@@ -699,6 +837,25 @@ def local_stats(root, problems=None):
         today_tokens += total
         today_by_model[model] = today_by_model.get(model, 0) + total
 
+  for session, day, model, counts in harness_messages(problems):
+    total = sum(counts)
+    prompts += 1
+    sessions.add(session)
+    bucket = model_bucket(models, model)
+    bucket["inputTokens"] += counts[0]
+    bucket["outputTokens"] += counts[1]
+    bucket["cacheReadInputTokens"] += counts[2]
+    bucket["cacheCreationInputTokens"] += counts[3]
+    if day:
+      days.add(day)
+    if day in by_day:
+      by_day[day] += total
+    if day == today:
+      today_prompts += 1
+      today_sessions.add(session)
+      today_tokens += total
+      today_by_model[model] = today_by_model.get(model, 0) + total
+
   return {
     "hasLocalStats": prompts > 0 or bool(sessions) or bool(models),
     "todayPrompts": today_prompts,
@@ -719,7 +876,8 @@ def local_stats(root, problems=None):
 # is rebuilt under a lock so overlapping runs don't each walk the history,
 # and one that couldn't read every source isn't kept.
 def cached_local_stats(root, max_age):
-  digest = hashlib.sha256(str(root).encode()).hexdigest()[:16]
+  sources = [str(root), str(opencode_database())] + [str(path) for path in session_roots()]
+  digest = hashlib.sha256("\n".join(sources).encode()).hexdigest()[:16]
   cache = cache_root() / f"agy-scan-{digest}.json"
   today = datetime.now().astimezone().date().isoformat()
 
