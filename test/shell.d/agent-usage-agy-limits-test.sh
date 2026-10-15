@@ -145,7 +145,8 @@ pass "Antigravity collector finds the Gemini group wherever it is listed"
 
 snake=$(test_limits '{"buckets": [
   {"window": "5h", "remaining_fraction": 0.4, "reset_time": "2026-09-15T19:31:46Z"},
-  {"window": "weekly", "remainingFraction": "plenty"}
+  {"window": "weekly", "remainingFraction": "plenty"},
+  {"bucketId": "gemini-weekly", "remainingFraction": Infinity}
 ]}')
 [[ $(jq -c 'map({label, percent, resetsAt})' <<<"$snake") == '[{"label":"Session (5-hour)","percent":0.6,"resetsAt":"2026-09-15T19:31:46+00:00"}]' ]] ||
   fail "Antigravity collector reads snake_case buckets listed without groups and skips unreadable fractions" "$snake"
