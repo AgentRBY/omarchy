@@ -68,7 +68,10 @@ PY
 }
 
 record=$(ANSWER='{}' collect)
-[[ $(jq -c '{id, ready, limits, usageStatusText, authHelpText, hasLocalStats, hasPromptStats, todayPrompts, todayTotalTokens, recentDays, modelUsage, activeDates}' <<<"$record") == '{"id":"grokbot","ready":false,"limits":[],"usageStatusText":"","authHelpText":"","hasLocalStats":false,"hasPromptStats":false,"todayPrompts":0,"todayTotalTokens":0,"recentDays":[],"modelUsage":{},"activeDates":[]}' ]] ||
+# The last seven local days ending today, none with messages: an unused
+# record still carries the full week, zeroed.
+empty_week=$(for offset in 6 5 4 3 2 1 0; do date -d "$(date +%F) 12:00 $offset days ago" +%F; done | jq -Rsc 'split("\n")[:-1] | map({date: ., messageCount: 0})')
+[[ $(jq -c '{id, ready, limits, usageStatusText, authHelpText, hasLocalStats, hasPromptStats, todayPrompts, todayTotalTokens, recentDays, modelUsage, activeDates}' <<<"$record") == '{"id":"grokbot","ready":false,"limits":[],"usageStatusText":"","authHelpText":"","hasLocalStats":false,"hasPromptStats":false,"todayPrompts":0,"todayTotalTokens":0,"recentDays":'"$empty_week"',"modelUsage":{},"activeDates":[]}' ]] ||
   fail "a machine signed in to Cursor nowhere gives an unused record" "$record"
 pass "a machine signed in to Cursor nowhere gives an unused record"
 
