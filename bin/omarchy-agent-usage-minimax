@@ -37,7 +37,6 @@ from collectors import (  # noqa: E402
   cached_scan,
   data_home,
   emit,
-  empty_bucket,
   local_day,
   open_json,
   opencode_db,
@@ -338,31 +337,6 @@ def collect_limits(api_key: str, base_url: str, force: bool) -> dict[str, Any]:
 # Local session stats
 # --------------------------------------------------------------------------
 
-class SessionStats(Stats):
-  """Stats where a line need not be one prompt with tokens: MiniMax Code
-  books a typed prompt and the assistant's usage on lines of their own."""
-
-  def add(self, day: str, session: str, model: str, input_tokens: int, output_tokens: int, cache_read: int, cache_write: int, prompts: int = 1) -> None:
-    total = input_tokens + output_tokens + cache_read + cache_write
-    self.total_prompts += prompts
-    self.sessions.add(session)
-    self.active_dates.add(day)
-    if total:
-      bucket = self.model_usage.setdefault(model, empty_bucket())
-      bucket["inputTokens"] += input_tokens
-      bucket["outputTokens"] += output_tokens
-      bucket["cacheReadInputTokens"] += cache_read
-      bucket["cacheCreationInputTokens"] += cache_write
-    if day in self.recent:
-      self.recent[day] += total
-    if day == self.today:
-      self.today_prompts += prompts
-      self.today_sessions.add(session)
-      self.today_tokens += total
-      if total:
-        self.today_by_model[model] = self.today_by_model.get(model, 0) + total
-
-
 def pi_style_tokens(usage: dict[str, Any]) -> tuple[int, int, int, int]:
   inp = token_count(usage.get("input"))
   out = token_count(usage.get("output"))
@@ -392,7 +366,7 @@ def mcode_data_dir() -> Path:
   return Path.home() / ".minimax"
 
 
-def scan_mcode(stats: SessionStats) -> bool:
+def scan_mcode(stats: Stats) -> bool:
   """Add MiniMax Code's own sessions: user messages are prompts, assistant usage is tokens."""
   root = mcode_data_dir() / "v2" / "sessions"
   if not root.is_dir():
@@ -414,8 +388,10 @@ def scan_mcode(stats: SessionStats) -> bool:
           day = mcode_day(message, entry)
           if day is None:
             continue
+          # MiniMax Code books a typed prompt and the assistant's usage on
+          # lines of their own.
           if message.get("role") == "user":
-            stats.add(day, session, "", 0, 0, 0, 0)
+            stats.add_prompts(day, session)
             continue
           usage = message.get("usage")
           if message.get("role") != "assistant" or not isinstance(usage, dict):
@@ -437,7 +413,7 @@ def billed_here(provider: str, model: str, entry: dict) -> bool:
 
 
 def scan_sessions() -> tuple[dict[str, Any], bool]:
-  stats = SessionStats()
+  stats = Stats()
   # Every source runs, so one unreadable source still leaves the others.
   mcode_complete = scan_mcode(stats)
   pattern = r'"provider"\s*:\s*"(' + "|".join(PROVIDERS) + r')"'
