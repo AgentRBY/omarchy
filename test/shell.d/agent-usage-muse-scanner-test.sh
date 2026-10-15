@@ -404,6 +404,18 @@ result_index=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
   fail "Muse collector takes prompt and session counts from the session index" "$result_index"
 pass "Muse collector takes prompt and session counts from the session index"
 
+# A native session the index has no row for yet counts its completions as
+# prompts, as it would with no index.
+mkdir -p "$index_home/muse-data/sessions/2026/10/12/fresh"
+cat >"$index_home/muse-data/sessions/2026/10/12/fresh/session.jsonl" <<EOF
+{"schema_version": 1, "recorded_at": $now_us, "record_type": "event", "payload_type": "runtime.session", "payload": {"event": {"kind": "model_completed", "model": "muse-wonder-1.0", "usage": {"input_tokens": 10, "output_tokens": 1}}}}
+EOF
+result_unindexed=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
+rm -rf "$index_home/muse-data/sessions/2026/10/12/fresh"
+[[ $(jq -c '{totalPrompts, totalSessions, todayPrompts, todaySessions, todayTotalTokens}' <<<"$result_unindexed") == '{"totalPrompts":9,"totalSessions":4,"todayPrompts":3,"todaySessions":2,"todayTotalTokens":81789}' ]] ||
+  fail "Muse collector counts a native session the index hasn't seen yet" "$result_unindexed"
+pass "Muse collector counts a native session the index hasn't seen yet"
+
 # An index that's there but unreadable falls back on completions, and that
 # scan isn't cached.
 printf 'not a database' >"$index_home/muse-data/session-index.db"
