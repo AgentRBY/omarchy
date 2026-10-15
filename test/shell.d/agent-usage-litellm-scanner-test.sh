@@ -160,11 +160,59 @@ serve 200 '{"info": {"spend": 1, "max_budget": 2}}'
 printf 'http://localhost:%s/key/info' "$PORT" >"$STATE/redirect"
 result=$("$collector" --force)
 rm "$STATE/redirect"
-[[ $(jq -r '.authHelpText' <<<"$result") == *"redirected off the configured host"* ]] ||
+[[ $(jq -r '.authHelpText' <<<"$result") == *"redirected away from the configured proxy"* ]] ||
   fail "LiteLLM collector refuses a redirect to another host" "$result"
 ! grep -q "^localhost" "$STATE/log" ||
   fail "LiteLLM collector never sends the key to another host" "$(cat "$STATE/log")"
 pass "LiteLLM collector refuses a redirect to another host"
+
+# Another port on the same host is another service, so it doesn't get the key
+# either. A second listener notes anything that reaches it.
+OTHER="$TEST_HOME/other"
+mkdir -p "$OTHER"
+python3 - "$OTHER" <<'PY' &
+import http.server, pathlib, sys
+state = pathlib.Path(sys.argv[1])
+
+class Handler(http.server.BaseHTTPRequestHandler):
+  def do_GET(self):
+    with (state / "log").open("a") as log:
+      log.write(f"{self.path} {self.headers.get('Authorization', '')}\n")
+    self.send_response(200)
+    self.send_header("Content-Type", "application/json")
+    self.end_headers()
+    self.wfile.write(b'{"info": {"spend": 0, "max_budget": 999}}')
+
+  def log_message(self, *args):
+    pass
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+(state / "port").write_text(str(server.server_address[1]))
+server.serve_forever()
+PY
+OTHER_PID=$!
+for _ in $(seq 50); do
+  [[ -s $OTHER/port ]] && break
+  sleep 0.1
+done
+[[ -s $OTHER/port ]] || fail "second LiteLLM test server starts"
+printf 'http://127.0.0.1:%s/key/info' "$(cat "$OTHER/port")" >"$STATE/redirect"
+result=$("$collector" --force)
+rm "$STATE/redirect"
+kill "$OTHER_PID" 2>/dev/null
+[[ $(jq -r '.authHelpText' <<<"$result") == *"redirected away from the configured proxy"* ]] ||
+  fail "LiteLLM collector refuses a redirect to another port" "$result"
+[[ ! -s $OTHER/log ]] ||
+  fail "LiteLLM collector never sends the key to another port" "$(cat "$OTHER/log")"
+pass "LiteLLM collector refuses a redirect to another port on the same host"
+
+# Nor does a change of scheme on the same host and port.
+printf 'https://127.0.0.1:%s/key/info' "$PORT" >"$STATE/redirect"
+result=$("$collector" --force)
+rm "$STATE/redirect"
+[[ $(jq -r '.authHelpText' <<<"$result") == *"redirected away from the configured proxy"* ]] ||
+  fail "LiteLLM collector refuses a redirect to another scheme" "$result"
+pass "LiteLLM collector refuses a redirect to another scheme"
 
 # A base URL carrying credentials is refused before any request.
 printf '{"baseUrl": "http://user:pass@127.0.0.1:%s", "apiKey": "config-key"}\n' "$PORT" >"$XDG_CONFIG_HOME/omarchy/agents/litellm.json"

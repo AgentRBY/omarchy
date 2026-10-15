@@ -581,7 +581,7 @@ def normalize_base_url(raw):
   if url.endswith("/v1"):
     url = url[: -len("/v1")]
   parsed = urllib.parse.urlparse(url)
-  if parsed.scheme not in ("http", "https") or not parsed.hostname:
+  if origin(url) is None:
     raise LiteLLMError("The LiteLLM base URL must be http or https.")
   if parsed.username or parsed.password:
     raise LiteLLMError("The LiteLLM base URL must not carry credentials.")
@@ -589,16 +589,35 @@ def normalize_base_url(raw):
 
 
 # The key travels in every request, so a proxy that redirects elsewhere must
-# not take it along.
-class SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
-  def __init__(self, host):
+# not take it along. "Elsewhere" is any other origin: another host, another
+# port on the same host (a different service), or plain http, which would
+# carry the key in cleartext.
+def origin(url):
+  parsed = urllib.parse.urlparse(url)
+  try:
+    port = parsed.port
+  except ValueError:
+    return None
+  if parsed.scheme not in ("http", "https") or not parsed.hostname:
+    return None
+  if port is None:
+    port = 443 if parsed.scheme == "https" else 80
+  return (parsed.scheme, parsed.hostname, port)
+
+
+def same_origin(url, expected):
+  found = origin(url)
+  return found is not None and found == expected
+
+
+class SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
+  def __init__(self, expected):
     super().__init__()
-    self.host = host
+    self.expected = expected
 
   def redirect_request(self, req, fp, code, msg, headers, newurl):
-    parsed = urllib.parse.urlparse(newurl)
-    if parsed.scheme not in ("http", "https") or parsed.hostname != self.host:
-      raise LiteLLMError("LiteLLM redirected off the configured host, so the key wasn't sent there.")
+    if not same_origin(urllib.parse.urljoin(req.full_url, newurl), self.expected):
+      raise LiteLLMError("LiteLLM redirected away from the configured proxy, so the key wasn't sent there.")
     return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -610,13 +629,13 @@ def money(value):
 def fetch_budget(base_url, key):
   """The key's budget from /key/info as a balance, or None when it has none."""
   base = normalize_base_url(base_url)
-  host = urllib.parse.urlparse(base).hostname
+  expected = origin(base)
   request = urllib.request.Request(base + "/key/info", headers={"Authorization": "Bearer " + key, "Accept": "application/json"})
-  opener = urllib.request.build_opener(SameHostRedirectHandler(host))
+  opener = urllib.request.build_opener(SameOriginRedirectHandler(expected))
   try:
     with opener.open(request, timeout=10) as response:
-      if urllib.parse.urlparse(response.geturl()).hostname != host:
-        raise LiteLLMError("LiteLLM redirected off the configured host, so the key wasn't sent there.")
+      if not same_origin(response.geturl(), expected):
+        raise LiteLLMError("LiteLLM redirected away from the configured proxy, so the key wasn't sent there.")
       payload = json.loads(response.read().decode("utf-8", errors="replace"))
   except LiteLLMError:
     raise
