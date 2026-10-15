@@ -138,6 +138,11 @@ kimi)
     command=(kimi --yolo)
   fi
   ;;
+qwen)
+  # Bind the value so a prompt starting with a dash stays literal.
+  command=(qwen --yolo)
+  [[ -n ${prompt:-} ]] && command+=("--prompt-interactive=$prompt")
+  ;;
 *)
   echo "Unsupported default agent: $agent" >&2
   exit 1

@@ -14,6 +14,7 @@ omarchy-mise-install pi
 omarchy-mise-install github:can1357/oh-my-pi omp
 omarchy-mise-install grok
 omarchy-mise-install npm:@moonshot-ai/kimi-code kimi
+omarchy-mise-install npm:@qwen-code/qwen-code qwen
 omarchy-mise-install cursor-agent
 omarchy-mise-install npm:@kitlangton/ghui ghui
 omarchy-mise-install aqua:modem-dev/hunk hunk

@@ -527,6 +527,9 @@
   "setup.default.agent.pi": {
     "label": "Pi"
   },
+  "setup.default.agent.qwen": {
+    "label": "Qwen Code"
+  },
   "setup.default.browser": {
     "label": "Browser",
     "title": "Default Browser"
