@@ -273,7 +273,9 @@ def collect_limits(home, key, force):
     # allowance, so the last numbers still stand, an elapsed window at zero.
     if entry.get("refresh_token") and time.time() - expires.timestamp() < REFRESH_LIFETIME_SECONDS:
       result["live"] = True
-      if not result["limits"]:
+      if result["limits"]:
+        result["authHelpText"] = ""
+      else:
         result["usageStatusText"] = "Limits paused"
         result["authHelpText"] = "Start Grok to see its limits; signing in again is not needed."
     else:

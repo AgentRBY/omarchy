@@ -113,7 +113,7 @@ pass "a lapsed sign-in keeps the last credits and says so"
 jq '.[].refresh_token = "r"' "$HOME/.grok/auth.json" >"$test_tmp/auth.json"
 mv "$test_tmp/auth.json" "$HOME/.grok/auth.json"
 record=$(collect)
-[[ $(jq -c '{usageStatusText, first: .limits[0].percent, stale: .limitsStale}' <<<"$record") == '{"usageStatusText":"","first":0.42,"stale":false}' ]] ||
+[[ $(jq -c '{usageStatusText, authHelpText, first: .limits[0].percent, stale: .limitsStale}' <<<"$record") == '{"usageStatusText":"","authHelpText":"","first":0.42,"stale":false}' ]] ||
   fail "a lapsed access token with a refresh token keeps showing the last numbers" "$record"
 pass "a lapsed access token with a refresh token keeps showing the last numbers"
 
