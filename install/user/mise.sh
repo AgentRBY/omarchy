@@ -18,6 +18,7 @@ omarchy-mise-install npm:@qwen-code/qwen-code qwen
 # Pinned: every DSH release so far is a prerelease, which mise's npm backend skips.
 omarchy-mise-install npm:@deepseek-ai/dsh@0.2.0-rc.2 dsh
 omarchy-mise-install "npm:@minimax-ai/code[allow_builds=better-sqlite3]" mcode
+omarchy-mise-install aqua:aaif-goose/goose goose
 omarchy-mise-install cursor-agent
 omarchy-mise-install npm:@kitlangton/ghui ghui
 omarchy-mise-install aqua:modem-dev/hunk hunk
