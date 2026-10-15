@@ -174,6 +174,7 @@ kept.path.write_text(json.dumps(data))
 future_stamped = collectors.LimitsCache("demo", "who@example.com")
 check("a future-stamped answer is kept but never trusted as fresh", future_stamped.limits and not future_stamped.fresh(False))
 check("no answer at all has nothing to fall back on", collectors.LimitsCache("demo", "nobody").kept() == ([], 0))
+check("an identity holding a lone surrogate still gets its own limits cache", collectors.LimitsCache("demo", "who\udc80").path != cache.path)
 
 # ------------------------------------------------------------------- http
 

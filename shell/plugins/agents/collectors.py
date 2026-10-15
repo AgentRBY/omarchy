@@ -852,7 +852,9 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
 def limits_cache_path(agent_id: str, *identity: str) -> Path:
   """`<id>-limits-<hash>.json`, keyed by who the credential signs in as (or
   the credential itself), so another sign-in never shows this one's numbers."""
-  digest = hashlib.sha256("\0".join(identity).encode("utf-8")).hexdigest()[:16]
+  # surrogatepass: an identity read from JSON can hold a lone surrogate, and
+  # that must not cost the record.
+  digest = hashlib.sha256("\0".join(identity).encode("utf-8", "surrogatepass")).hexdigest()[:16]
   return cache_root() / f"{agent_id}-limits-{digest}.json"
 
 
