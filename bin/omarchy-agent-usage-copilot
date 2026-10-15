@@ -889,13 +889,17 @@ def fetch_remote_quota(force: bool = False) -> dict[str, Any]:
   if not force and cached.get("available") and number(cached.get("fetchedAtMs")) > 0 and 0 <= age < PROBE_MIN_INTERVAL_SECONDS:
     return open_quota(dict(cached, stale=False))
 
+  # hosts.yml still naming the account while `gh auth token` fails is gh or
+  # its credential store having a bad moment, not a sign-out (signing out
+  # drops the account from hosts.yml), so that account's last allowance
+  # stands, stale, like any other failed check.
   token = token or gh_token()
   if not token:
-    return {"available": False, "reason": "no-token"}
-  if not cached:
-    cached = adopt_legacy_cache(cache, token)
-
-  quota = ask_quota(token)
+    quota = {"available": False, "reason": "no-token"}
+  else:
+    if not cached:
+      cached = adopt_legacy_cache(cache, token)
+    quota = ask_quota(token)
   if quota.get("available"):
     quota.update(stale=False, fetchedAtMs=int(time.time() * 1000))
     try:
@@ -924,6 +928,8 @@ def open_quota(cached: dict[str, Any]) -> dict[str, Any]:
 def quota_trouble(reason: str) -> str:
   if reason == "unreachable":
     return "Couldn't reach GitHub's Copilot quota endpoint. Retrying shortly."
+  if reason == "no-token":
+    return "The gh CLI didn't hand over its GitHub token; check `gh auth status`."
   if reason in ("http-401", "http-403"):
     return "GitHub refused the token for Copilot's quota. " + AUTH_HELP
   if reason.startswith("http-"):

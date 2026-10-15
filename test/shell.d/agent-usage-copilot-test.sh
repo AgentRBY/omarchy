@@ -358,12 +358,15 @@ printf '%s\n' "$*" >>"$GH_LOG"
 [[ $1 == "auth" && $2 == "token" ]] && echo "gh-token"
 EOF
 chmod +x "$TEST_HOME/fakebin/gh"
+mkdir -p "$TEST_HOME/brokengh"
+printf '#!/bin/bash\nexit 1\n' >"$TEST_HOME/brokengh/gh"
+chmod +x "$TEST_HOME/brokengh/gh"
 printf 'github.com:\n    users:\n        tester:\n    git_protocol: ssh\n    user: tester\n' >"$TEST_HOME/gh/hosts.yml"
 printf '{"monthlyCredits": 3000}' >"$TEST_HOME/.config/omarchy/agents/copilot.json"
 
 result=$(HOME="$TEST_HOME" COPILOT_HOME="$TEST_HOME/.copilot" XDG_CONFIG_HOME="$TEST_HOME/.config" \
   XDG_CACHE_HOME="$TEST_HOME/.cache-limits" GH_CONFIG_DIR="$TEST_HOME/gh" GH_LOG="$TEST_HOME/gh.log" \
-  FAKEBIN="$TEST_HOME/fakebin" NOGH="$TEST_HOME/nogh" \
+  FAKEBIN="$TEST_HOME/fakebin" NOGH="$TEST_HOME/nogh" BROKENGH="$TEST_HOME/brokengh" \
   python3 - "$ROOT/bin/omarchy-agent-usage-copilot" <<'PY'
 import datetime as dt
 import hashlib
@@ -455,6 +458,14 @@ out["otherOffline"] = run(offline, "--force")
 out["other500"] = run(status(500), "--force")
 out["other401"] = run(status(401), "--force")
 
+# gh still signed in to the first account but failing to hand over its token
+# keeps that account's last allowance, stale.
+(Path(os.environ["GH_CONFIG_DIR"]) / "hosts.yml").write_text("github.com:\n    user: tester\n")
+fake_path = os.environ["PATH"]
+os.environ["PATH"] = os.environ["BROKENGH"] + ":" + fake_path
+out["ghFailed"] = run(unasked, "--force")
+os.environ["PATH"] = fake_path
+
 # No token anywhere, with the CLI in use: waiting for a sign-in.
 os.environ["PATH"] = os.environ["NOGH"]
 out["noToken"] = run(unasked, "--force")
@@ -494,6 +505,10 @@ pass "Copilot collector keeps a cache whose file time is in the future"
 [[ $(jq -r '.other500.help' <<<"$result") == *"status 500"* && $(jq -r '.other500.help' <<<"$result") != *"gh auth login"* ]] ||
   fail "Copilot collector gives an error status as the detail, not a sign-in hint" "$result"
 pass "Copilot collector says what failed when nothing is kept"
+
+[[ $(jq -c '.ghFailed | {limits, stale, status, retry, help: (.help | test("gh auth status"))}' <<<"$result") == '{"limits":[["Monthly allowance",0.1,true]],"stale":true,"status":"","retry":false,"help":true}' ]] ||
+  fail "Copilot collector keeps the last allowance when gh can't hand over its token" "$result"
+pass "Copilot collector keeps the last allowance when gh can't hand over its token"
 
 [[ $(jq -c '.noToken | {status, help: (.help | test("gh auth login"))}' <<<"$result") == '{"status":"Waiting for auth","help":true}' ]] ||
   fail "Copilot collector waits for a GitHub sign-in" "$result"
