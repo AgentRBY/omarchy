@@ -905,8 +905,8 @@ chmod +x "$LAUNCH_HOME/bin/mise"
 result=$(HOME="$LAUNCH_HOME" CODEX_HOME="$LAUNCH_HOME/.codex" MISE_CALLS_FILE="$LAUNCH_HOME/mise-calls" XDG_DATA_HOME="$LAUNCH_HOME/.local/share" \
   PATH="$LAUNCH_HOME/bin:$SAFE_PATH" "$collector" --limits-only)
 
-[[ $(jq -r '.usageStatusText' <<<"$result") == "Codex unavailable" ]] ||
-  fail "Codex collector reports Codex unavailable when only the launcher exists" "$result"
+[[ $(jq -r '.usageStatusText' <<<"$result") == "Codex limits unavailable" ]] ||
+  fail "Codex collector reports its limits unavailable when only the launcher exists" "$result"
 # The launcher would log `use -g ...` through the mise stub if it ever ran;
 # `which codex` is the only permitted call.
 [[ ! -s $LAUNCH_HOME/mise-calls || $(cat "$LAUNCH_HOME/mise-calls") == "which codex" ]] ||
@@ -966,8 +966,8 @@ ln -s "$SHIM_HOME/bin/mise" "$SHIM_HOME/.local/share/mise/shims/codex"
 result=$(HOME="$SHIM_HOME" CODEX_HOME="$SHIM_HOME/.codex" MISE_CALLS_FILE="$SHIM_HOME/mise-calls" XDG_DATA_HOME="$SHIM_HOME/.local/share" \
   PATH="$SHIM_HOME/bin:$SAFE_PATH" "$collector" --limits-only)
 
-[[ $(jq -r '.usageStatusText' <<<"$result") == "Codex unavailable" ]] ||
-  fail "Codex collector reports Codex unavailable when only a mise shim exists" "$result"
+[[ $(jq -r '.usageStatusText' <<<"$result") == "Codex limits unavailable" ]] ||
+  fail "Codex collector reports its limits unavailable when only a mise shim exists" "$result"
 [[ ! -s $SHIM_HOME/mise-calls || $(cat "$SHIM_HOME/mise-calls") == "which codex" ]] ||
   fail "Codex collector must not execute a mise shim" "$(cat "$SHIM_HOME/mise-calls" 2>/dev/null)"
 pass "Codex collector treats a shim symlink to mise as lazy"

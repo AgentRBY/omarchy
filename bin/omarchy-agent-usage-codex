@@ -11,6 +11,7 @@ panel only ever reads the JSON this prints.
 """
 
 import argparse
+import base64
 import fcntl
 import hashlib
 import json
@@ -43,6 +44,22 @@ NATIVE_PROVIDER = "openai"
 # may reuse a scan for up to 15 minutes.
 SCAN_REUSE_SECONDS = 20
 LIMITS_ONLY_REUSE_SECONDS = 900
+
+# Each probe starts an app-server, which syncs the plugin list on the way up.
+# A panel opened and shut repeatedly reuses an answer this recent instead.
+PROBE_MIN_INTERVAL_SECONDS = 15
+
+# What a dead app-server's stderr says when it never reached OpenAI at all,
+# rather than being turned away by it.
+TRANSPORT_ERRORS = (
+  "error sending request",
+  "dns error",
+  "failed to lookup address",
+  "connection refused",
+  "connection reset",
+  "network is unreachable",
+  "timed out",
+)
 
 # Per-file totals of native Codex sessions survive between runs, so a rescan
 # only reads the session files that changed. Bumping the schema retires every
@@ -1031,7 +1048,7 @@ def fetch_codex_rpc(home=None):
   env = dict(ENV, CODEX_HOME=str(home)) if home else ENV
   codex = find_codex_binary()
   if not codex:
-    result["usageStatusText"] = "Codex unavailable"
+    result["usageStatusText"] = "Codex limits unavailable"
     result["authHelpText"] = "codex not found in PATH"
     return result
 
@@ -1065,8 +1082,8 @@ def fetch_codex_rpc(home=None):
   except Exception as exc:
     if stderr_file:
       stderr_file.close()
-    result["usageStatusText"] = "Codex unavailable"
-    result["authHelpText"] = str(exc)
+    result["usageStatusText"] = "Codex limits unavailable"
+    result["authHelpText"] = str(exc)[:300]
     return result
 
   try:
@@ -1113,9 +1130,19 @@ def fetch_codex_rpc(home=None):
     credits = reset_credits(rpc_result)
     if credits:
       result["resetCredits"] = credits
+    result["ok"] = True
   except Exception as exc:
     result["usageStatusText"] = "Codex limits unavailable"
     result["authHelpText"] = codex_rpc_help(proc, stderr_file, exc)
+    # A live app-server that never answered, or one that died saying it
+    # couldn't reach OpenAI, is a network that isn't up yet (the first probe
+    # after login often beats DHCP), so the panel asks again soon. One that
+    # was turned away, or died for its own reasons, would only fail again.
+    help_text = result["authHelpText"].lower()
+    if isinstance(exc, TimeoutError) or (
+      help_text.startswith("codex app-server exited:") and any(error in help_text for error in TRANSPORT_ERRORS)
+    ):
+      result["transport"] = True
   finally:
     try:
       proc.terminate()
@@ -1128,6 +1155,141 @@ def fetch_codex_rpc(home=None):
     if stderr_file:
       stderr_file.close()
   return result
+
+
+# Who a home's probe answers for, or "" when only Codex could say: keyring and
+# auto stores keep the login out of auth.json.
+def signed_in_identity(codex_home):
+  token = ENV.get("CODEX_ACCESS_TOKEN")
+  if token:
+    return "token:" + hashlib.sha1(token.encode("utf-8", "surrogatepass")).hexdigest()
+  try:
+    with (codex_home / "config.toml").open("rb") as handle:
+      config = tomllib.load(handle)
+  except FileNotFoundError:
+    config = {}
+  except Exception:
+    return ""
+  if str(config.get("cli_auth_credentials_store") or "file") != "file":
+    return ""
+  # account_id names the workspace, whose members each have their own limits,
+  # so the user comes from the ID token's claims, read as Codex reads them.
+  try:
+    tokens = json.loads((codex_home / "auth.json").read_text(encoding="utf-8"))["tokens"]
+    payload = tokens["id_token"].split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["https://api.openai.com/auth"]
+    workspace = str(tokens["account_id"] or "")
+    user = str(claims.get("chatgpt_user_id") or claims.get("user_id") or "")
+  except Exception:
+    return ""
+  return f"{workspace}\n{user}" if workspace and user else ""
+
+
+# Keyed by the home and the account it is signed in to, so a home signed in to
+# someone else never falls back on the last one's numbers. None when the
+# account can't be told, since then no numbers can be vouched for.
+def limits_cache_path(home):
+  codex_home = Path(home or ENV.get("CODEX_HOME") or (Path.home() / ".codex"))
+  identity = signed_in_identity(codex_home)
+  if not identity:
+    return None
+  # surrogatepass: a lone surrogate from JSON or the environment must not stop the record.
+  digest = hashlib.sha1(f"{codex_home}\n{identity}".encode("utf-8", "surrogatepass")).hexdigest()[:16]
+  try:
+    return cache_root() / f"codex-limits-{digest}.json"
+  except Exception as exc:
+    print(f"omarchy-agent-usage-codex: limits cache unavailable ({exc})", file=sys.stderr)
+    return None
+
+
+def read_json(path):
+  try:
+    value = json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    return {}
+  return value if isinstance(value, dict) else {}
+
+
+# Cached windows reset to zero when their measured period ends. Without a
+# fresh probe, the next window has no known reset time yet.
+def usable_cached_limits(cached):
+  entries = cached.get("limits")
+  if not isinstance(entries, list):
+    return []
+  now = datetime.now(timezone.utc)
+  usable = []
+  for entry in entries:
+    if not isinstance(entry, dict):
+      continue
+    try:
+      resets = datetime.fromisoformat(str(entry.get("resetsAt") or "").replace("Z", "+00:00"))
+    except ValueError:
+      resets = None
+    if resets and resets.tzinfo is None:
+      resets = resets.replace(tzinfo=timezone.utc)
+    usable.append(dict(entry, percent=0.0, resetsAt="") if resets and resets <= now else entry)
+  return usable
+
+
+# The app-server's answer, with the last limits it gave kept as the answer of
+# record when a later probe fails: one slow or dropped call is no reason to
+# blank limits that were right a refresh ago. `live` says the limits came from
+# this probe, or one recent enough to stand in for it.
+def collect_limits(home=None, force=False):
+  cache = limits_cache_path(home)
+  cached = read_json(cache) if cache else {}
+  fallback = usable_cached_limits(cached)
+  fetched_at_ms = number(cached.get("fetchedAtMs"))
+
+  # --force is a person asking for fresh numbers, so it skips the reuse
+  # window; the interval is there to absorb repeated panel opens.
+  fetched_age = time.time() - fetched_at_ms / 1000
+  if fallback and not force and 0 <= fetched_age < PROBE_MIN_INTERVAL_SECONDS:
+    result = {
+      "limits": fallback,
+      "tierLabel": str(cached.get("tierLabel") or ""),
+      "usageStatusText": "",
+      "authHelpText": "",
+      "live": True,
+      "fetchedAtMs": fetched_at_ms,
+    }
+    if isinstance(cached.get("resetCredits"), dict):
+      result["resetCredits"] = cached["resetCredits"]
+    return result
+
+  rpc = fetch_codex_rpc(home)
+  ok = rpc.pop("ok", False)
+  transport = rpc.pop("transport", False)
+  # A login that changed while the probe ran leaves no telling whose these are.
+  same_login = cache is not None and cache == limits_cache_path(home)
+
+  if ok:
+    rpc["live"] = True
+    rpc["fetchedAtMs"] = round(time.time() * 1000)
+    if same_login and rpc["limits"]:
+      try:
+        write_json(cache, {
+          "fetchedAtMs": rpc["fetchedAtMs"],
+          "limits": rpc["limits"],
+          "tierLabel": rpc["tierLabel"],
+          "resetCredits": rpc.get("resetCredits"),
+        })
+      except Exception as exc:
+        print(f"omarchy-agent-usage-codex: could not write limits cache ({exc})", file=sys.stderr)
+    return rpc
+
+  rpc["live"] = False
+  rpc["fetchedAtMs"] = 0
+  if transport:
+    rpc["retryAdvised"] = True
+  if fallback and same_login:
+    # A sign-in to restore still says so; any other failure leaves the kept
+    # numbers to speak for themselves, with their age, and the detail of what
+    # went wrong in the help text.
+    rpc.update(limits=fallback, fetchedAtMs=fetched_at_ms, tierLabel=rpc["tierLabel"] or str(cached.get("tierLabel") or ""))
+    if rpc["usageStatusText"] == "Codex limits unavailable":
+      rpc["usageStatusText"] = ""
+  return rpc
 
 
 # The accounts `omarchy agent account` registered, read straight from its
@@ -1156,10 +1318,10 @@ def registered_accounts():
 
 # Each account's app-server runs in that account's home, so it answers for that
 # login and refreshes that login's tokens there.
-def account_limits(account):
+def account_limits(account, force):
   # The primary is ~/.codex by definition, not whatever CODEX_HOME this run
   # happened to inherit — that would report another account's limits as Main's.
-  rpc = fetch_codex_rpc(account.get("home") or (Path.home() / ".codex"))
+  rpc = collect_limits(account.get("home") or (Path.home() / ".codex"), force)
   return {
     "id": account["id"],
     "label": str(account.get("label") or account["id"]),
@@ -1168,9 +1330,11 @@ def account_limits(account):
     "active": account["active"],
     "primary": bool(account.get("primary")),
     "limits": rpc["limits"],
-    "stale": not rpc["limits"],
+    "stale": not rpc["live"],
+    "fetchedAt": rpc["fetchedAtMs"],
     "usageStatusText": rpc["usageStatusText"],
     "authHelpText": rpc["authHelpText"],
+    "retryAdvised": bool(rpc.get("retryAdvised")),
     "resetCredits": rpc.get("resetCredits"),
   }
 
@@ -1189,7 +1353,7 @@ def main():
   max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
   stats = cached_local_stats(max_age)
   registered = registered_accounts()
-  accounts = [account_limits(account) for account in registered]
+  accounts = [account_limits(account, args.force) for account in registered]
   current = next((a for a in accounts if a["active"]), None)
   if current:
     # The top-level fields keep describing the account new sessions use.
@@ -1201,8 +1365,10 @@ def main():
     }
     if current.get("resetCredits"):
       rpc["resetCredits"] = current["resetCredits"]
+    stale, fetched_at, retry = current["stale"], current["fetchedAt"], current["retryAdvised"]
   else:
-    rpc = fetch_codex_rpc()
+    rpc = collect_limits(force=args.force)
+    stale, fetched_at, retry = not rpc.pop("live"), rpc.pop("fetchedAtMs"), rpc.pop("retryAdvised", False)
 
   record = {
     "schemaVersion": 1,
@@ -1214,6 +1380,12 @@ def main():
   }
   record.update(stats)
   record.update(rpc)
+  # Numbers kept past a failed probe, and when they were measured, so the
+  # panel can tell them apart from ones checked just now.
+  record["limitsStale"] = stale
+  record["limitsFetchedAt"] = fetched_at
+  if retry:
+    record["retryAdvised"] = True
   if accounts:
     record["accountSwitch"] = registered[0]["switch"]
     record["accounts"] = accounts
