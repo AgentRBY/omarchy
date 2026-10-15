@@ -18,7 +18,9 @@ base_url is on a loopback, private, link-local or LAN address:
     {"providers": ["homelab", "my-gateway"]}
 
 Ollama's cloud models (a `:cloud` or `-cloud` tag) run on Ollama's servers
-even when the local daemon fronts them, so they are never counted here. There
+even when the local daemon fronts them, so they are never counted here, and
+nor are opencode's google rows on antigravity- models, which the agy
+collector counts. There
 are no limits and no balance: the meter on self-hosted work is the
 electricity bill. The agents panel only ever reads the JSON this prints.
 """
@@ -54,13 +56,27 @@ KNOWN_LOCAL_PROVIDERS = {
   "openai-local", "oss", "sglang", "tabby", "text-generation-webui", "vllm",
 }
 
-# Provider ids the provider collectors count, from pi, omp and opencode. A
-# local.json naming one of them would count its tokens twice, so they are
-# never local, whatever the configuration says.
+# Provider ids the provider collectors count whole, from pi, omp and opencode,
+# each the exact id that collector's filter matches. A local.json naming one
+# of them would count its tokens twice, so they are never local, whatever the
+# configuration says. Two more are claimed only for some models, and only
+# those rows are left out: Ollama's cloud-tagged models (is_cloud_model) and
+# opencode's Antigravity plugin (antigravity_row).
 CLAIMED_PROVIDERS = {
-  "anthropic", "deepseek", "devin", "litellm", "meta", "minimax", "minimax-coding",
-  "minimax-token-plan", "ollama-cloud", "openai", "openai-codex", "opencode",
-  "opencode-go", "openrouter", "synthetic", "zai", "zhipu",
+  "anthropic",  # claude
+  "deepseek",  # deepseek
+  "devin",  # devin
+  "google-antigravity",  # agy, pi's Antigravity sign-in
+  "litellm",  # litellm
+  "meta",  # muse
+  "minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan",  # minimax
+  "mistral",  # vibe
+  "ollama-cloud",  # ollama
+  "openai", "openai-codex",  # codex
+  "opencode", "opencode-go",  # opencode
+  "openrouter",  # openrouter
+  "synthetic",  # synthetic
+  "zai", "zhipu",  # zai
 }
 
 # The Codex collector counts rollouts on the built-in provider, and ones too
@@ -467,6 +483,14 @@ def is_cloud_model(model):
   return tag == "cloud" or tag.endswith("-cloud")
 
 
+def antigravity_row(provider, model):
+  # opencode's Antigravity plugin runs under a "google" provider with model
+  # ids it prefixes with antigravity-; the agy collector counts exactly
+  # those opencode rows, and every other google model stays local's to count
+  # when local.json names it.
+  return str(provider or "").strip().lower().startswith("google") and str(model or "").startswith("antigravity-")
+
+
 class Classifier:
   def __init__(self):
     self.configured = configured_providers()
@@ -697,7 +721,7 @@ def opencode_row(stats, seen, message_id, session_id, entry, row_type, created):
   model = entry.get("model")
   provider = entry.get("providerID") or (model.get("providerID") if isinstance(model, dict) else "")
   model_id = entry.get("modelID") or (model.get("id") or model.get("modelID") if isinstance(model, dict) else model)
-  if not classifier().accepts(provider, model_id):
+  if not classifier().accepts(provider, model_id) or antigravity_row(provider, model_id):
     return
   tokens = obj(entry.get("tokens"))
   cache = obj(tokens.get("cache"))

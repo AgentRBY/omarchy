@@ -251,3 +251,52 @@ echo "not a database" >"$XDG_DATA_HOME/opencode/opencode.db"
 [[ -z $(ls "$XDG_CACHE_HOME"/omarchy/agent-usage/local-scan-*.json 2>/dev/null) ]] ||
   fail "Local collector does not cache an interrupted opencode scan" "broken-db"
 pass "Local collector does not cache an interrupted opencode scan"
+
+# ------------------------------------------------------- claimed providers
+
+# A local.json naming the ids the provider collectors claim leaves exactly
+# their rows out: every MiniMax and Mistral id, pi's google-antigravity, and
+# opencode's google provider only on its antigravity- models, which the agy
+# collector counts. An id no collector matches, like minimax-coding, and pi's
+# google rows, which agy never reads, stay local's.
+use_home "$SCRATCH/claimed"
+echo '{"providers":["google","google-antigravity","google-vertex","mistral","minimax-cn","minimax-coding-plan","minimax-cn-coding-plan","minimax-coding"]}' >"$XDG_CONFIG_HOME/omarchy/agents/local.json"
+python3 - "$XDG_DATA_HOME/opencode/opencode.db" <<'PY'
+import json, sqlite3, sys, time
+conn = sqlite3.connect(sys.argv[1]); now = int(time.time() * 1000)
+conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL)")
+conn.execute("CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, time_created INTEGER, data TEXT)")
+
+def message(mid, provider, model, inp):
+  return (mid, "ses_1", now, now, json.dumps({
+    "role": "assistant", "providerID": provider, "modelID": model,
+    "tokens": {"input": inp, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+    "time": {"created": now},
+  }))
+
+conn.executemany("INSERT INTO message VALUES (?, ?, ?, ?, ?)", [
+  message("m1", "google", "gemini-oc", 10),
+  message("m2", "google", "antigravity-claude", 999),
+  message("m3", "google-vertex", "antigravity-gemini", 999),
+  message("m4", "mistral", "devstral", 999),
+  message("m5", "minimax-cn", "MiniMax-M3", 999),
+  message("m6", "minimax-coding-plan", "MiniMax-M3", 999),
+  message("m7", "minimax-cn-coding-plan", "MiniMax-M3", 999),
+  message("m8", "minimax-coding", "minimax-gateway", 20),
+])
+conn.execute("INSERT INTO session_message VALUES ('s1', 'ses_2', 'assistant', ?, ?)", (now, json.dumps({
+  "model": {"providerID": "google", "id": "antigravity-gemini"}, "tokens": {"input": 999, "output": 0, "cache": {"read": 0, "write": 0}}, "time": {"created": now}})))
+conn.execute("INSERT INTO session_message VALUES ('s2', 'ses_2', 'assistant', ?, ?)", (now, json.dumps({
+  "model": {"providerID": "google-vertex", "id": "gemini-vertex"}, "tokens": {"input": 30, "output": 0, "cache": {"read": 0, "write": 0}}, "time": {"created": now}})))
+conn.commit(); conn.close()
+PY
+mkdir -p "$HOME/.pi/agent/sessions/--claimed--"
+{
+  line p1 google-antigravity antigravity-pi 999
+  line p2 mistral devstral 999
+  line p3 google antigravity-pi-gemini 40
+} >"$HOME/.pi/agent/sessions/--claimed--/one.jsonl"
+claimed=$("$collector")
+[[ $(jq -c '[.todayTotalTokens, ([.modelUsage | keys[]])]' <<<"$claimed") == '[110,["antigravity-pi-gemini","gemini-oc","gemini-vertex","minimax-gateway"]]' ]] ||
+  fail "Local collector leaves out exactly the rows another collector claims" "$claimed"
+pass "Local collector leaves out exactly the rows another collector claims"
