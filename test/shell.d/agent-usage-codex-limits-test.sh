@@ -148,11 +148,17 @@ mkdir -p "$test_tmp/bin" "$test_tmp/empty-bin"
 
 # A machine that never ran Codex prints an empty record the panel skips.
 unused=$(PATH="$test_tmp/empty-bin:/usr/bin:/bin" "$collector" --force)
-[[ $(jq -c '{ready, limits, limitsStale, limitsFetchedAt, totalPrompts, todayTotalTokens, recentDays: (.recentDays | length), modelUsage, retry: (.retryAdvised // false)}' <<<"$unused") == '{"ready":false,"limits":[],"limitsStale":true,"limitsFetchedAt":0,"totalPrompts":0,"todayTotalTokens":0,"recentDays":7,"modelUsage":{},"retry":false}' ]] ||
+[[ $(jq -c '{ready, limits, limitsStale, limitsFetchedAt, totalPrompts, todayTotalTokens, recentDays: (.recentDays | length), modelUsage, retry: (.retryAdvised // false), status: .usageStatusText, help: .authHelpText}' <<<"$unused") == '{"ready":false,"limits":[],"limitsStale":false,"limitsFetchedAt":0,"totalPrompts":0,"todayTotalTokens":0,"recentDays":7,"modelUsage":{},"retry":false,"status":"","help":""}' ]] ||
   fail "a machine that never ran Codex prints an empty record" "$unused"
 pass "a machine that never ran Codex prints an empty record"
 
 mkdir -p "$HOME/.codex/sessions"
+
+# A Codex home puts Codex in use, so a missing CLI is then worth saying.
+missing=$(PATH="$test_tmp/empty-bin:/usr/bin:/bin" "$collector" --force)
+[[ $(jq -c '{status: .usageStatusText, help: .authHelpText}' <<<"$missing") == '{"status":"Codex limits unavailable","help":"codex not found in PATH"}' ]] ||
+  fail "a Codex home without the CLI says the CLI is missing" "$missing"
+pass "a Codex home without the CLI says the CLI is missing"
 
 # Signs ~/.codex in as a user of a workspace, the way Codex writes it: the
 # workspace as account_id, the user in the ID token's claims.

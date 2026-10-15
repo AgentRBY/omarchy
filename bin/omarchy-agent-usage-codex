@@ -1349,6 +1349,21 @@ def account_limits(account, force):
   }
 
 
+# Codex is in use here once its CLI or a launcher for it is on PATH, its home
+# exists, a token is handed to it, or something has local usage to show.
+# Only then is a missing sign-in or binary worth saying.
+def codex_in_use(stats):
+  codex_home = Path(ENV.get("CODEX_HOME") or (Path.home() / ".codex"))
+  return (
+    bool(find_command("codex"))
+    or bool(find_codex_binary())
+    or codex_home.exists()
+    or bool(ENV.get("CODEX_ACCESS_TOKEN"))
+    or number(stats.get("totalPrompts")) > 0
+    or number(stats.get("todayPrompts")) > 0
+  )
+
+
 def main():
   parser = argparse.ArgumentParser()
   # --force rescans everything and rewrites the cache. --limits-only is kept
@@ -1376,9 +1391,14 @@ def main():
     if current.get("resetCredits"):
       rpc["resetCredits"] = current["resetCredits"]
     stale, fetched_at, retry = current["stale"], current["fetchedAt"], current["retryAdvised"]
-  else:
+  elif codex_in_use(stats):
     rpc = collect_limits(force=args.force)
     stale, fetched_at, retry = not rpc.pop("live"), rpc.pop("fetchedAtMs"), rpc.pop("retryAdvised", False)
+  else:
+    # Nothing here has ever run Codex, so there is no sign-in to ask for and
+    # no binary to miss: the unused record, which the panel skips.
+    rpc = {"limits": [], "tierLabel": "", "usageStatusText": "", "authHelpText": ""}
+    stale, fetched_at, retry = False, 0, False
 
   record = {
     "schemaVersion": 1,
