@@ -42,6 +42,7 @@ credits = {
   "key-budget": {"serverless": True, "tier": "TEAMS", "remaining": 30, "has_credits": True},
   "key-empty": {"serverless": True, "tier": "free", "remaining": "0", "has_credits": False},
   "key-sprint": {"serverless": True, "tier": "teams", "remaining": 12, "has_credits": True},
+  "key-pair": {"serverless": True, "tier": "teams", "remaining": 5, "has_credits": True},
 }
 budgets = {
   "key-sprint": {"period": {"startTime": "2026-10-01T00:00:00Z", "endTime": "2026-10-15T00:00:00Z"}, "budgets": [
@@ -53,6 +54,14 @@ budgets = {
     {"scope": "USER", "scopeId": "u-1", "budgetLimitUsd": "50", "totalSpendUsd": "20", "providerBudgets": [
       {"provider": "anthropic", "limitType": "PROVIDER_LIMIT_TYPE_CAPPED", "budgetLimitUsd": "10", "usageUsd": "2.5"},
       {"provider": "openai", "limitType": "UNLIMITED", "usageUsd": "4"},
+    ]},
+  ]},
+  "key-pair": {"period": {"startTime": os.environ["PERIOD_START"], "endTime": os.environ["PERIOD_END"]}, "budgets": [
+    {"scope": "USER", "scopeId": "u-1", "budgetLimitUsd": "50", "totalSpendUsd": "10", "providerBudgets": [
+      {"provider": "anthropic", "limitType": "CAPPED", "budgetLimitUsd": "10", "usageUsd": "9"},
+    ]},
+    {"scope": "TEAM_POOLED", "scopeId": "t-1", "budgetLimitUsd": "200", "totalSpendUsd": "50", "providerBudgets": [
+      {"provider": "openai", "limitType": "CAPPED", "budgetLimitUsd": "40", "usageUsd": "4"},
     ]},
   ]},
 }
@@ -114,6 +123,14 @@ record=$(KIMCHI_API_KEY=key-sprint collect)
 [[ $(jq -c '[.limits[] | {title, percent}]' <<<"$record") == '[{"title":null,"percent":0.1},{"title":"Openai budget","percent":0.25}]' ]] ||
   fail "a period with no clock name still shows its capped providers" "$record"
 pass "a monthly spend budget becomes a Monthly limit with its provider caps"
+
+# Two budgets on one clock: the panel hangs a cap on the meter its title
+# names, so each budget is titled by its scope and its caps name the budget
+# they belong to, instead of both caps landing on the last Monthly meter.
+record=$(KIMCHI_API_KEY=key-pair collect)
+[[ $(jq -c '[.limits[] | {title, percent}]' <<<"$record") == '[{"title":"Budget Monthly","percent":0.2},{"title":"Anthropic budget (Budget)","percent":0.9},{"title":"Team pool Monthly","percent":0.25},{"title":"Openai budget (Team pool)","percent":0.1}]' ]] ||
+  fail "several budgets on one clock each keep their own provider caps" "$record"
+pass "several budgets on one clock each keep their own provider caps"
 
 record=$(KIMCHI_API_KEY=key-empty collect)
 [[ $(jq -c '{tierLabel, empty: (.balance.remaining == 0), usageStatusText}' <<<"$record") == '{"tierLabel":"Community","empty":true,"usageStatusText":"Out of credits, rate limited"}' ]] ||

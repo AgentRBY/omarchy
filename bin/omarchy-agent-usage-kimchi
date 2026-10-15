@@ -374,6 +374,11 @@ def period_title(period):
 # clock, which the panel draws as a tick on that budget's meter; in a period
 # the panel has no clock name for, it gets a line of its own. A cap is what
 # may be spent, not what was bought, so it never funds the balance gauge.
+#
+# The panel hangs a provider's tick on the meter its title names, so with
+# several budgets on one clock each is titled by its scope ("Team pool
+# Monthly") and its providers get lines of their own that name it, rather
+# than every cap landing on whichever budget came last.
 def budget_part(data):
   # The budgets list is the answer, and an empty or null one still is; a
   # reply without it fails the check rather than erasing the kept budgets.
@@ -383,17 +388,21 @@ def budget_part(data):
   # The gateway's own period end, or none: a reset time is never made up.
   resets = str(period.get("endTime") or "") if parse_time(period.get("endTime")) else ""
   title = period_title(period)
-  limits = []
+  budgets = []
   for entry in data["budgets"] or []:
     if not isinstance(entry, dict):
       continue
     cap = usd(entry.get("budgetLimitUsd"))
     spent = usd(entry.get("totalSpendUsd"))
-    if not cap or cap <= 0 or spent is None:
-      continue
-    limit = {"label": BUDGET_LABELS.get(entry.get("scope"), "Budget"), "percent": max(0.0, min(1.0, spent / cap)), "resetsAt": resets}
+    if cap and cap > 0 and spent is not None:
+      budgets.append((entry, spent / cap))
+  shared = len(budgets) > 1
+  limits = []
+  for entry, share in budgets:
+    label = BUDGET_LABELS.get(entry.get("scope"), "Budget")
+    limit = {"label": label, "percent": max(0.0, min(1.0, share)), "resetsAt": resets}
     if title:
-      limit["title"] = title
+      limit["title"] = f"{label} {title}" if shared else title
     limits.append(limit)
     for provider in entry.get("providerBudgets") or []:
       if not isinstance(provider, dict) or not str(provider.get("limitType") or "").endswith("CAPPED"):
@@ -406,7 +415,7 @@ def budget_part(data):
       name = name[:1].upper() + name[1:]
       limits.append({
         "label": f"{name} budget",
-        "title": f"{name} {title}" if title else f"{name} budget",
+        "title": f"{name} budget ({label})" if shared else (f"{name} {title}" if title else f"{name} budget"),
         "percent": max(0.0, min(1.0, used / provider_cap)),
         "resetsAt": resets,
       })
