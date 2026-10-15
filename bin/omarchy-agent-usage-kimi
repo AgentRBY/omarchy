@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import http.client
 import json
 import math
 import os
@@ -39,7 +40,9 @@ OAUTH_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
 ALLOWED_DOMAINS = ("kimi.com", "kimi.ai")
 REFRESH_SKEW_S = 60
 LOCK_WAIT_SECONDS = 15
-PROBE_REUSE_SECONDS = 60
+# A panel opened and shut repeatedly reuses a probe this recent instead of
+# asking again; --force skips it.
+PROBE_MIN_INTERVAL_SECONDS = 15
 
 
 def credentials_dir() -> Path:
@@ -57,9 +60,15 @@ CREDENTIALS_PATH = CREDENTIALS_DIR / "kimi-code.json"
 
 
 class KimiError(Exception):
-  def __init__(self, message: str, retry: bool = False):
+  # `retry` marks a service that couldn't be reached at all, so the panel
+  # tries again soon; `refused` marks a credential Kimi turned down, which
+  # only signing in again (or a new key) repairs; `missing` marks no
+  # credential at all.
+  def __init__(self, message: str, retry: bool = False, refused: bool = False, missing: bool = False):
     super().__init__(message)
     self.retry = retry
+    self.refused = refused
+    self.missing = missing
 
 
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -181,14 +190,16 @@ def request_refresh(refresh_token: str) -> dict[str, Any]:
       decoded = json.load(response)
   except urllib.error.HTTPError as error:
     if error.code in (400, 401, 403):
-      raise KimiError("Kimi rejected the sign-in; sign in again with `kimi login`") from error
+      raise KimiError("Kimi rejected the sign-in; sign in again with `kimi login`", refused=True) from error
     raise KimiError(f"Kimi token refresh failed (HTTP {error.code})") from error
   except urllib.error.URLError as error:
     raise KimiError("Could not reach the Kimi login service", retry=True) from error
-  except TimeoutError as error:
-    raise KimiError("Kimi token refresh timed out", retry=True) from error
   except json.JSONDecodeError as error:
     raise KimiError("Kimi returned an invalid token response") from error
+  except (OSError, http.client.HTTPException) as error:
+    # urllib only wraps failures while sending; a reset, timeout, or cut-off
+    # reply while reading the answer arrives raw, and is just as unreachable.
+    raise KimiError("Could not reach the Kimi login service", retry=True) from error
   if not isinstance(decoded, dict) or any(
     not isinstance(decoded.get(key), str) or not decoded[key] for key in ("access_token", "refresh_token")
   ):
@@ -269,7 +280,7 @@ def refresh_credentials(auth: dict[str, str] | None = None) -> dict[str, Any]:
       return credentials
     refresh_token = str(credentials.get("refresh_token") or "")
     if not refresh_token:
-      raise KimiError("Kimi sign-in is missing; sign in with `kimi login`")
+      raise KimiError("Kimi sign-in expired; sign in again with `kimi login`", refused=True)
     granted = request_refresh(refresh_token)
     check()
     latest = read_credentials()
@@ -305,7 +316,7 @@ def api_key(auth: dict[str, str] | None = None) -> str:
   if auth is not None:
     auth["key"] = str(credentials.get("access_token") or "")
   if not credentials.get("access_token"):
-    raise KimiError(AUTH_HELP)
+    raise KimiError(AUTH_HELP, missing=True)
   if not token_fresh(credentials):
     credentials = refresh_credentials(auth)
   return str(credentials.get("access_token") or "")
@@ -326,16 +337,17 @@ def quota(key: str) -> dict[str, Any]:
   except urllib.error.HTTPError as error:
     if error.code in (401, 403):
       remedy = "Update or unset KIMI_API_KEY." if os.environ.get("KIMI_API_KEY", "").strip() else "Sign in again with `kimi login`."
-      raise KimiError("Kimi rejected the credentials. " + remedy) from error
+      raise KimiError("Kimi rejected the credentials. " + remedy, refused=True) from error
     if error.code == 404:
       raise KimiError("Kimi usage endpoint not available. Try Kimi for Coding.") from error
     raise KimiError(f"Kimi API returned HTTP {error.code}") from error
   except urllib.error.URLError as error:
     raise KimiError("Could not reach the Kimi API", retry=True) from error
-  except TimeoutError as error:
-    raise KimiError("Kimi usage request timed out", retry=True) from error
   except json.JSONDecodeError as error:
     raise KimiError("Kimi returned an invalid usage response") from error
+  except (OSError, http.client.HTTPException) as error:
+    # A reset, timeout, or cut-off reply while reading arrives unwrapped.
+    raise KimiError("Could not reach the Kimi API", retry=True) from error
   if not isinstance(decoded, dict):
     raise KimiError("Kimi returned an empty usage response")
   return decoded
@@ -448,74 +460,151 @@ def to_limits(data: dict[str, Any]) -> list[dict[str, Any]]:
   return limits
 
 
+def cache_root() -> Path:
+  root = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "omarchy" / "agent-usage"
+  root.mkdir(parents=True, exist_ok=True)
+  return root
+
+
 def probe_cache(key: str) -> Path:
   identity = str(CREDENTIALS_PATH) + "\0" + USAGE_URL + "\0" + key
   digest = hashlib.sha256(identity.encode()).hexdigest()
-  root = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "omarchy" / "agent-usage"
-  return root / f"kimi-limits-{digest}.json"
+  return cache_root() / f"kimi-limits-{digest}.json"
+
+
+def fetched_at_ms(data: dict[str, Any]) -> int:
+  # Older caches stored the same epoch milliseconds under `fetchedAt`; the
+  # next good probe rewrites them under `fetchedAtMs`.
+  raw = data.get("fetchedAtMs", data.get("fetchedAt"))
+  if isinstance(raw, bool):
+    return 0
+  try:
+    stamp = float(raw)
+  except (TypeError, ValueError):
+    return 0
+  return int(stamp) if math.isfinite(stamp) and stamp > 0 else 0
 
 
 def read_probe(path: Path) -> dict[str, Any]:
   try:
     data = json.loads(path.read_text())
-    if isinstance(data, dict) and isinstance(data.get("limits"), list):
-      stamp = float(data.get("fetchedAt"))
-      if math.isfinite(stamp) and stamp > 0:
-        return data
-  except (OSError, ValueError, TypeError):
+  except (OSError, ValueError):
     return {}
+  if isinstance(data, dict) and isinstance(data.get("limits"), list) and fetched_at_ms(data):
+    return data
   return {}
+
+
+# A kept window whose reset has passed is an untouched allowance, not an
+# unknown one: it comes back at zero, with no reset time until Kimi names
+# the next one.
+def limit_window_open(entry: dict[str, Any], now: datetime) -> bool:
+  raw = str(entry.get("resetsAt") or "")
+  if raw == "":
+    return True
+  try:
+    resets_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+  except ValueError:
+    return True
+  if resets_at.tzinfo is None:
+    resets_at = resets_at.replace(tzinfo=timezone.utc)
+  return resets_at > now
+
+
+def usable_cached_limits(cached: dict[str, Any]) -> list[dict[str, Any]]:
+  entries = cached.get("limits")
+  if not isinstance(entries, list):
+    return []
+  now = datetime.now(timezone.utc)
+  return [
+    entry if limit_window_open(entry, now) else dict(entry, percent=0.0, resetsAt="")
+    for entry in entries if isinstance(entry, dict)
+  ]
+
+
+def has_credential() -> bool:
+  return bool(os.environ.get("KIMI_API_KEY", "").strip() or read_credentials().get("access_token"))
+
+
+# Kimi has no local stats, so it counts as in use on this machine when it has
+# a credential or a Kimi home of its own: a home without a sign-in is waiting
+# for one, while a machine with neither never ran Kimi at all.
+def in_use() -> bool:
+  if has_credential() or CREDENTIALS_PATH.exists():
+    return True
+  if home := os.environ.get("KIMI_CODE_HOME"):
+    return Path(home).expanduser().is_dir()
+  return (Path.home() / ".kimi-code").is_dir() or (Path.home() / ".kimi").is_dir()
+
+
+def failure_record(error: Exception, cached: dict[str, Any]) -> dict[str, Any]:
+  fallback = usable_cached_limits(cached)
+  help_text = str(error) if isinstance(error, KimiError) else "Kimi usage scan failed"
+  if isinstance(error, KimiError) and error.missing or not has_credential():
+    status, help_text = "Waiting for auth", AUTH_HELP
+  elif isinstance(error, KimiError) and error.refused:
+    status = "Sign-in expired"
+  elif fallback:
+    # A failed check that kept the last good limits isn't trouble to flag;
+    # limitsStale and the age on hover say the rest.
+    status = ""
+  else:
+    status = "Kimi limits unavailable"
+  record = base_record(
+    ready=True,
+    usageStatusText=status,
+    authHelpText=help_text,
+    limits=fallback,
+    limitsStale=bool(fallback),
+    limitsFetchedAt=fetched_at_ms(cached) if fallback else 0,
+  )
+  if isinstance(error, KimiError) and error.retry:
+    record["retryAdvised"] = True
+  return record
 
 
 def main() -> int:
   parser = argparse.ArgumentParser(description="Print the Kimi usage record as JSON")
-  # Flags accepted so the collector answers the same invocation as the others.
+  # Kimi keeps no local history, so there is no scan for --limits-only to
+  # reuse; --force skips the probe reuse window.
   parser.add_argument("--force", action="store_true")
   parser.add_argument("--limits-only", action="store_true")
   args = parser.parse_args()
+
+  if not in_use():
+    print(json.dumps(base_record(), separators=(",", ":")))
+    return 0
 
   cached = {}
   auth = {}
   try:
     key = api_key(auth)
     if not key:
-      record = base_record(usageStatusText="Kimi unavailable", authHelpText=AUTH_HELP)
-    else:
-      path = probe_cache(key)
-      cached = read_probe(path)
-      if not cached and auth.get("previous_key"):
-        cached = read_probe(probe_cache(auth["previous_key"]))
-        if cached:
-          try:
-            write_json(path, cached)
-          except OSError:
-            pass
-      age = time.time() * 1000 - float(cached.get("fetchedAt") or 0)
-      if not args.force and 0 <= age < PROBE_REUSE_SECONDS * 1000:
-        limits, fetched_at = cached["limits"], cached["fetchedAt"]
-      else:
-        limits, fetched_at = to_limits(quota(key)), int(time.time() * 1000)
+      raise KimiError(AUTH_HELP, missing=True)
+    path = probe_cache(key)
+    cached = read_probe(path)
+    if not cached and auth.get("previous_key"):
+      cached = read_probe(probe_cache(auth["previous_key"]))
+      if cached:
         try:
-          write_json(path, {"limits": limits, "fetchedAt": fetched_at})
+          write_json(path, cached)
         except OSError:
           pass
-      record = base_record(
-        ready=True,
-        limits=limits,
-        limitsFetchedAt=fetched_at,
-      )
-  except KimiError as error:
-    if not cached:
-      cached = read_probe(probe_cache(auth.get("key", "")))
-    record = base_record(usageStatusText="Kimi unavailable", authHelpText=str(error),
-                         limits=cached.get("limits", []), limitsStale=bool(cached.get("limits")),
-                         limitsFetchedAt=cached.get("fetchedAt", 0), retryAdvised=error.retry)
-  except Exception:
-    if not cached:
-      cached = read_probe(probe_cache(auth.get("key", "")))
-    record = base_record(usageStatusText="Kimi unavailable", authHelpText="Kimi usage scan failed",
-                         limits=cached.get("limits", []), limitsStale=bool(cached.get("limits")),
-                         limitsFetchedAt=cached.get("fetchedAt", 0))
+    fallback = usable_cached_limits(cached)
+    age = time.time() - fetched_at_ms(cached) / 1000
+    if fallback and not args.force and 0 <= age < PROBE_MIN_INTERVAL_SECONDS:
+      limits, fetched_at = fallback, fetched_at_ms(cached)
+    else:
+      limits, fetched_at = to_limits(quota(key)), int(time.time() * 1000)
+      try:
+        write_json(path, {"limits": limits, "fetchedAtMs": fetched_at})
+      except OSError:
+        pass
+    record = base_record(ready=True, limits=limits, limitsFetchedAt=fetched_at)
+  except Exception as error:
+    if not cached and auth.get("key"):
+      cached = read_probe(probe_cache(auth["key"]))
+    record = failure_record(error, cached)
   print(json.dumps(record, separators=(",", ":")))
   return 0
 
