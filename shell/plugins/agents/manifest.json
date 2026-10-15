@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "Omarchy",
   "license": "MIT",
-  "description": "Claude Code, Codex, Grok, Cursor, OpenCode, GitHub Copilot, Fireworks, Muse, and Kimi usage, limits, and pace in a native Omarchy bar panel.",
+  "description": "Usage, limits, pace, and prepaid balances for every AI agent and provider in a native Omarchy bar panel.",
   "kinds": ["bar-widget"],
   "activation": "on-demand",
   "entryPoints": {
@@ -27,7 +27,14 @@
         "copilot": { "enabled": true },
         "muse": { "enabled": true },
         "fireworks": { "enabled": true },
-        "kimi": { "enabled": true }
+        "kimi": { "enabled": true },
+        "hermes": { "enabled": true },
+        "agy": { "enabled": true },
+        "zai": { "enabled": true },
+        "ollama": { "enabled": true },
+        "minimax": { "enabled": true },
+        "openrouter": { "enabled": true },
+        "deepseek": { "enabled": true }
       },
       "refreshIntervalSec": 900,
       "syncMode": "Off",
