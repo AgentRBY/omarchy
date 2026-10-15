@@ -485,6 +485,9 @@
   "setup.default.agent.agy": {
     "label": "Antigravity"
   },
+  "setup.default.agent.amp": {
+    "label": "Amp"
+  },
   "setup.default.agent.claude": {
     "label": "Claude"
   },
