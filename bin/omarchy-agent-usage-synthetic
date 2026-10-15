@@ -1,314 +1,757 @@
 #!/usr/bin/python3
-# omarchy:summary=Print the Synthetic Labs usage record as JSON
+# omarchy:summary=Print the Synthetic usage record as JSON
 # omarchy:args=[--force] [--limits-only]
 # omarchy:hidden=true
-"""Collect Synthetic Labs quotas into one display-ready JSON record.
+"""Collect Synthetic usage into one display-ready JSON record.
 
-The account-global limits come from Synthetic's /v2/quotas endpoint. There
-are no local transcript stats: the agents panel displays the weekly credit,
-rolling request, and search allowances this collector prints.
+Local stats come from pi/omp sessions and opencode messages that ran on the
+synthetic provider. The account's allowances (the rolling five-hour request
+limit, the weekly credits, search and free tool calls) come from Synthetic's
+documented GET https://api.synthetic.new/v2/quotas, which doesn't count
+against them. The agents panel only ever reads the JSON this prints.
 """
 
-from __future__ import annotations
-
 import argparse
+import fcntl
+import hashlib
 import json
 import math
 import os
+import re
+import shutil
+import sqlite3
+import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 AGENT_ID = "synthetic"
-AGENT_NAME = "Synthetic Labs"
+AGENT_NAME = "Synthetic"
+PROVIDER = "synthetic"
 API_BASE_URL = "https://api.synthetic.new"
-AUTH_HELP = "Set SYNTHETIC_API_KEY or sign in to Synthetic in Pi or OpenCode."
+AUTH_HELP = "Set SYNTHETIC_API_KEY, or sign in to Synthetic in pi, omp or opencode, to read its quotas."
+REFUSED_HELP = "Synthetic rejected the API key. Set a current one in SYNTHETIC_API_KEY or sign in to Synthetic again."
+
+# A panel opened and closed repeatedly must not become one request per flick.
+PROBE_MIN_INTERVAL_SECONDS = 15
+SCAN_REUSE_SECONDS = 20
+LIMITS_ONLY_REUSE_SECONDS = 900
+
+# Past this a token count or timestamp from disk is garbage, not usage.
+MAX_TOKENS = 10_000_000_000
+EARLIEST_EPOCH = 946_684_800  # 2000-01-01
+LATEST_EPOCH = 4_102_444_800  # 2100-01-01
 
 
-class SyntheticError(Exception):
-  def __init__(self, message: str, retry_advised: bool = False):
-    super().__init__(message)
-    self.retry_advised = retry_advised
+# --------------------------------------------------------------- utilities
 
 
-def utc_now() -> str:
-  return datetime.now(timezone.utc).isoformat()
+def obj(value):
+  return value if isinstance(value, dict) else {}
 
 
-def finite_number(value: Any) -> float | None:
+# Token counts and timestamps on disk are untrusted: a boolean, NaN, infinite,
+# negative, huge or non-numeric value reads as nothing.
+def number(value):
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
+    return 0
+  if not math.isfinite(value) or value < 0 or value > MAX_TOKENS:
+    return 0
+  return int(value)
+
+
+def finite(value):
+  if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    return None
+  return float(value)
+
+
+def epoch_seconds(value):
+  if finite(value) is None:
+    return None
+  # Session timestamps are seconds or milliseconds.
+  seconds = value / 1000 if value > 100_000_000_000 else value
+  return seconds if EARLIEST_EPOCH <= seconds < LATEST_EPOCH else None
+
+
+def local_day(value):
+  seconds = epoch_seconds(value)
+  if seconds is not None:
+    return datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
+  if not isinstance(value, str) or not value.strip():
+    return None
   try:
-    parsed = float(value)
-    return parsed if math.isfinite(parsed) else None
-  except (TypeError, ValueError):
+    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+  except ValueError:
     return None
-
-
-def number(value: Any, fallback: float = 0.0) -> float:
-  parsed = finite_number(value)
-  if parsed is None:
-    return fallback
-  return parsed
-
-
-def ratio(used: Any, limit: Any) -> float | None:
-  used_value = finite_number(used)
-  total = finite_number(limit)
-  if used_value is None or total is None or total <= 0:
+  if epoch_seconds(parsed.timestamp()) is None:
     return None
-  return max(0.0, min(1.0, used_value / total))
+  return parsed.astimezone().strftime("%Y-%m-%d") if parsed.tzinfo else parsed.strftime("%Y-%m-%d")
 
 
-def remaining_ratio(remaining: Any, maximum: Any) -> float | None:
-  remaining_value = finite_number(remaining)
-  total = finite_number(maximum)
-  if remaining_value is None or total is None or total <= 0:
-    return None
-  return max(0.0, min(1.0, 1.0 - remaining_value / total))
+def model_name(raw):
+  # Synthetic serves Hugging Face models as "hf:org/model"; the model is the
+  # last part.
+  value = str(raw or "").strip().removeprefix("hf:").rstrip("/").split("/")[-1]
+  return value or AGENT_ID
 
 
-def reset_at(value: Any) -> str:
-  return str(value or "").strip()
+def runtime_env():
+  home = str(Path.home())
+  path_parts = [
+    os.environ.get("PATH", ""),
+    f"{home}/.local/bin",
+    f"{home}/.npm-global/bin",
+    f"{home}/.local/share/mise/shims",
+  ]
+  env = os.environ.copy()
+  env["PATH"] = os.pathsep.join(part for part in path_parts if part)
+  return env
 
 
-def format_quantity(value: Any) -> str:
-  parsed = number(value)
-  if parsed.is_integer():
-    return f"{int(parsed):,}"
-  return f"{parsed:,.2f}".rstrip("0").rstrip(".")
+ENV = runtime_env()
 
 
-def empty_stats() -> dict[str, Any]:
-  return {
-    "todayPrompts": 0,
-    "todaySessions": 0,
-    "todayTotalTokens": 0,
-    "todayTokensByModel": {},
-    "recentDays": [],
-    "totalPrompts": 0,
-    "totalSessions": 0,
-    "activeDays": 0,
-    "activeDates": [],
-    "modelUsage": {},
-  }
+def find_command(name):
+  return shutil.which(name, path=ENV.get("PATH"))
 
 
-def base_record(**overrides: Any) -> dict[str, Any]:
-  record: dict[str, Any] = {
-    "schemaVersion": 1,
-    "id": AGENT_ID,
-    "name": AGENT_NAME,
-    "updatedAt": utc_now(),
-    "ready": False,
-    "hasLocalStats": False,
-    "hasPromptStats": False,
-    "scope": "account",
-    "tierLabel": "Subscription",
-    "usageStatusText": "",
-    "authHelpText": "",
-    "limits": [],
-  }
-  record.update(empty_stats())
-  record.update(overrides)
-  return record
+def data_home():
+  return Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
 
 
-def stored_key(path: Path) -> str:
+def cache_root():
+  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
+  root.mkdir(parents=True, exist_ok=True)
+  return root
+
+
+def read_json(path):
   try:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-  except (OSError, json.JSONDecodeError):
-    return ""
-  entry = payload.get("synthetic") if isinstance(payload, dict) else None
-  if not isinstance(entry, dict):
-    return ""
-  return str(entry.get("key") or "").strip()
+    return json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    return None
 
 
-def credentials() -> str:
+def read_fresh_json(path, max_age_seconds):
+  if max_age_seconds <= 0:
+    return None
+  try:
+    # A negative age means the mtime is in the future: the clock moved
+    # backwards since the write, so the cache's freshness cannot be trusted.
+    age = time.time() - path.stat().st_mtime
+  except OSError:
+    return None
+  return read_json(path) if 0 <= age < max_age_seconds else None
+
+
+def write_json(path, payload):
+  # A temp name unique to this writer: several collectors can run at once, and
+  # a shared temp path means the second replace finds the first one's file
+  # already moved away.
+  handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+  tmp = Path(tmp_name)
+  try:
+    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    tmp.chmod(0o644)
+    tmp.replace(path)
+  except BaseException:
+    tmp.unlink(missing_ok=True)
+    raise
+
+
+# ------------------------------------------------------------------- stats
+
+
+def empty_bucket():
+  return {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
+
+
+class Stats:
+  """Token and activity totals shared by every local source. Sessions and days
+  are sets, so a day active in pi and opencode counts once toward activeDays."""
+
+  def __init__(self):
+    now = datetime.now()
+    self.today = now.strftime("%Y-%m-%d")
+    self.recent_dates = [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
+    self.recent = {day: 0 for day in self.recent_dates}
+    self.today_prompts = 0
+    self.today_total_tokens = 0
+    self.today_sessions = set()
+    self.today_tokens_by_model = {}
+    self.total_prompts = 0
+    self.total_sessions = set()
+    self.active_days = set()
+    self.model_usage = {}
+
+  def add(self, session, day, model, input_tokens, output_tokens, cache_read, cache_write):
+    total = input_tokens + output_tokens + cache_read + cache_write
+    if total <= 0:
+      return
+    self.total_prompts += 1
+    self.active_days.add(day)
+    if session is not None:
+      self.total_sessions.add(session)
+    bucket = self.model_usage.setdefault(model, empty_bucket())
+    bucket["inputTokens"] += input_tokens
+    bucket["outputTokens"] += output_tokens
+    bucket["cacheReadInputTokens"] += cache_read
+    bucket["cacheCreationInputTokens"] += cache_write
+    if day in self.recent:
+      # recentDays.messageCount holds tokens, despite the legacy name.
+      self.recent[day] += total
+    if day == self.today:
+      self.today_prompts += 1
+      if session is not None:
+        self.today_sessions.add(session)
+      self.today_total_tokens += total
+      self.today_tokens_by_model[model] = self.today_tokens_by_model.get(model, 0) + total
+
+  def add_session(self, session, today):
+    self.total_sessions.add(session)
+    if today:
+      self.today_sessions.add(session)
+
+  def record(self):
+    return {
+      "todayPrompts": self.today_prompts,
+      "todaySessions": len(self.today_sessions),
+      "todayTotalTokens": self.today_total_tokens,
+      "todayTokensByModel": self.today_tokens_by_model,
+      "recentDays": [{"date": day, "messageCount": self.recent[day]} for day in self.recent_dates],
+      "totalPrompts": self.total_prompts,
+      "totalSessions": len(self.total_sessions),
+      "activeDays": len(self.active_days),
+      "activeDates": sorted(self.active_days),
+      "modelUsage": self.model_usage,
+    }
+
+
+# --------------------------------------------------------------- pi and omp
+
+
+def pi_agent_dirs():
+  pi_agent = os.environ.get("PI_CODING_AGENT_DIR")
+  dirs = [Path(pi_agent).expanduser() if pi_agent else Path.home() / ".pi" / "agent", Path.home() / ".omp" / "agent"]
+  # `omp --profile=<name>` (and pi's equivalent) moves the agent tree under
+  # <base>/profiles/<name>/.
+  for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    try:
+      dirs.extend(sorted(child / "agent" for child in (base / "profiles").iterdir() if child.is_dir()))
+    except OSError:
+      pass
+  return dirs
+
+
+def pi_pattern():
+  return r'"provider"\s*:\s*"synthetic"'
+
+
+def accept_pi(message):
+  return str(message.get("provider") or "") == PROVIDER
+
+
+def pi_session_roots():
+  roots = []
+  for agent_dir in pi_agent_dirs():
+    root = agent_dir / "sessions"
+    if root.is_dir() and root.resolve() not in [r.resolve() for r in roots]:
+      roots.append(root)
+  return roots
+
+
+def pi_parent_session(path):
+  # A fork names the session it was cut from in its header line.
+  try:
+    with open(path, encoding="utf-8", errors="replace") as handle:
+      header = json.loads(handle.readline())
+  except (OSError, ValueError):
+    return None
+  parent = header.get("parentSession") if isinstance(header, dict) else None
+  return os.path.abspath(os.path.expanduser(parent)) if isinstance(parent, str) and parent else None
+
+
+def scan_pi_sessions(stats):
+  """Add the pi/omp assistant messages this collector counts. Returns whether
+  every root was read."""
+  roots = pi_session_roots()
+  if not roots:
+    return True
+  rg = find_command("rg") or "rg"
+  try:
+    proc = subprocess.Popen(
+      # --no-ignore: these are data files, not a source tree. A $HOME that is
+      # a git checkout would otherwise hide every session behind its ignores.
+      [rg, "--json", "--no-ignore", "-e", pi_pattern(), *map(str, roots)],
+      stdout=subprocess.PIPE,
+      stderr=subprocess.DEVNULL,
+      text=True,
+      errors="replace",
+      env=ENV,
+    )
+  except OSError:
+    return False
+
+  counted = set()
+  owned = {}
+  today_owned = {}
+  assert proc.stdout is not None
+  for raw in proc.stdout:
+    try:
+      event = json.loads(raw)
+      if event.get("type") != "match":
+        continue
+      path = os.path.abspath(event["data"]["path"]["text"])
+      line_number = event["data"].get("line_number")
+      entry = json.loads(event["data"]["lines"]["text"])
+    except Exception:
+      continue
+    if not isinstance(entry, dict) or entry.get("type") != "message":
+      continue
+    message = obj(entry.get("message"))
+    if message.get("role") != "assistant" or not accept_pi(message):
+      continue
+    usage = obj(message.get("usage"))
+    input_tokens = number(usage.get("input"))
+    output_tokens = number(usage.get("output"))
+    cache_read = number(usage.get("cacheRead"))
+    cache_write = number(usage.get("cacheWrite"))
+    if not (input_tokens or output_tokens or cache_read or cache_write):
+      input_tokens = number(usage.get("totalTokens"))
+    timestamp = entry.get("timestamp")
+    day = local_day(timestamp) or local_day(message.get("timestamp"))
+    if day is None or not (input_tokens or output_tokens or cache_read or cache_write):
+      continue
+    # A fork repeats its parent's messages with their ids and timestamps, so
+    # the pair says two lines are one message. An id alone is only unique
+    # within its file, and a line without one always counts.
+    message_id = str(entry.get("id") or "")
+    if message_id and timestamp is not None:
+      key = ("entry", message_id, str(timestamp))
+    elif message_id:
+      key = ("path", path, message_id)
+    else:
+      key = ("line", path, line_number)
+    owned.setdefault(path, set()).add(key)
+    if day == stats.today:
+      today_owned.setdefault(path, set()).add(key)
+    if key in counted:
+      continue
+    counted.add(key)
+    stats.add(None, day, model_name(message.get("model")), input_tokens, output_tokens, cache_read, cache_write)
+
+  try:
+    code = proc.wait(timeout=5)
+  except subprocess.TimeoutExpired:
+    proc.kill()
+    return False
+
+  # A message belongs to the oldest session holding it, so a fork is a
+  # session of its own only for what it added, whichever file rg read first.
+  parents = {}
+  for path, keys in owned.items():
+    inherited = set()
+    visited = {path}
+    parent = parents.setdefault(path, pi_parent_session(path))
+    while parent and parent not in visited:
+      visited.add(parent)
+      inherited |= owned.get(parent, set())
+      parent = parents.setdefault(parent, pi_parent_session(parent))
+    if keys - inherited:
+      stats.add_session(path, bool(today_owned.get(path, set()) - inherited))
+  # rg exits 1 when nothing matched and 2 when a file couldn't be read.
+  return code in (0, 1)
+
+
+# ---------------------------------------------------------------- opencode
+
+
+def opencode_db():
+  # OPENCODE_DB points opencode at another database, as the CLI itself reads
+  # it; a relative name lives beside the default one. Only a build whose
+  # channel was literally "v2" wrote opencode-v2.db.
+  root = data_home() / "opencode"
+  configured = os.environ.get("OPENCODE_DB", "").strip()
+  if configured:
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else root / path
+  normal = root / "opencode.db"
+  legacy = root / "opencode-v2.db"
+  return legacy if not normal.is_file() and legacy.is_file() else normal
+
+
+def table_columns(conn, table):
+  return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def opencode_row(stats, seen, message_id, session_id, entry, row_type, created):
+  # The original `message` store keeps the provider and model at the top
+  # level; the V2 `session_message` store nests them under `model` and keeps
+  # the role in its `type` column, with a compaction's tokens spent like any
+  # reply's.
+  if not isinstance(entry, dict) or (entry.get("role") or row_type) not in ("assistant", "compaction"):
+    return
+  model = entry.get("model")
+  provider = entry.get("providerID") or (model.get("providerID") if isinstance(model, dict) else "")
+  # Exact match: opencode provider ids are free-form.
+  if str(provider or "") != PROVIDER:
+    return
+  tokens = obj(entry.get("tokens"))
+  cache = obj(tokens.get("cache"))
+  input_tokens = number(tokens.get("input"))
+  # opencode keeps thinking tokens out of output; both are generated.
+  output_tokens = number(tokens.get("output")) + number(tokens.get("reasoning"))
+  cache_read = number(cache.get("read"))
+  cache_write = number(cache.get("write"))
+  if not (input_tokens or output_tokens or cache_read or cache_write):
+    return
+  # A migrated message can sit in both stores under the same id.
+  if message_id in seen:
+    return
+  seen.add(message_id)
+  day = local_day(obj(entry.get("time")).get("created")) or local_day(created)
+  if day is None:
+    return
+  model_id = entry.get("modelID") or (model.get("id") or model.get("modelID") if isinstance(model, dict) else model)
+  stats.add("opencode:" + str(session_id), day, model_name(model_id), input_tokens, output_tokens, cache_read, cache_write)
+
+
+def scan_opencode(stats):
+  """Add opencode messages on the synthetic provider, from both of its
+  stores. Returns whether the database was read to the end."""
+  db = opencode_db()
+  if not db.is_file():
+    return True
+  try:
+    # Read-only, and not immutable: opencode writes through a WAL, and an
+    # immutable open would miss what hasn't been checkpointed yet.
+    conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+  except sqlite3.Error:
+    return False
+  gate = '%"providerID"%:%"' + PROVIDER + '"%'
+  seen = set()
+  try:
+    conn.execute("PRAGMA query_only = ON")
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "session_message" in tables and {"id", "session_id", "type", "data"} <= table_columns(conn, "session_message"):
+      columns = table_columns(conn, "session_message")
+      created = "m.time_created" if "time_created" in columns else "NULL"
+      source, fork_filter = "session_message m", ""
+      if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= table_columns(conn, "session_v2"):
+        # A fork copies its source session's messages under new ids; only
+        # what came after the fork was spent in it.
+        source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
+        fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
+      for message_id, session_id, row_type, time_created, raw in conn.execute(
+        f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
+        " WHERE m.type IN ('assistant', 'compaction') AND m.data LIKE ?" + fork_filter, (gate,)
+      ):
+        try:
+          opencode_row(stats, seen, str(message_id), session_id, json.loads(raw), str(row_type or ""), time_created)
+        except (TypeError, ValueError):
+          continue
+    if "message" in tables and {"session_id", "data"} <= table_columns(conn, "message"):
+      message_id = "id" if "id" in table_columns(conn, "message") else "rowid"
+      for row_id, session_id, raw in conn.execute(f"SELECT {message_id}, session_id, data FROM message WHERE data LIKE ?", (gate,)):
+        try:
+          opencode_row(stats, seen, str(row_id), session_id, json.loads(raw), "", None)
+        except (TypeError, ValueError):
+          continue
+  except sqlite3.Error:
+    # Transient lock, schema migration, corruption: the numbers stop here,
+    # incomplete.
+    return False
+  finally:
+    conn.close()
+  return True
+
+
+# -------------------------------------------------------------- scan cache
+
+
+def scan_cache_paths():
+  digest = hashlib.sha1("\n".join([str(Path.home()), str(opencode_db()), os.environ.get("PI_CODING_AGENT_DIR", "")]).encode("utf-8")).hexdigest()[:16]
+  root = cache_root()
+  return root / f"synthetic-scan-{digest}.json", root / f"synthetic-scan-{digest}.lock"
+
+
+def run_local_scans():
+  stats = Stats()
+  complete = scan_pi_sessions(stats)
+  complete = scan_opencode(stats) and complete
+  return stats.record(), complete
+
+
+def read_cached_stats(cache_file, max_age):
+  cached = read_fresh_json(cache_file, max_age)
+  if not isinstance(cached, dict) or cached.get("schemaVersion") != 1:
+    return None
+  # today* fields only mean "today" on the day they were scanned.
+  if cached.get("scanDate") != datetime.now().strftime("%Y-%m-%d"):
+    return None
+  stats = cached.get("stats")
+  return stats if isinstance(stats, dict) and set(Stats().record()) <= set(stats) else None
+
+
+def cached_local_stats(max_age):
+  """Local stats, with the cache as a pure optimization: any cache-layer
+  failure degrades to a direct scan and a warning on stderr."""
+  try:
+    cache_file, lock_file = scan_cache_paths()
+    cached = read_cached_stats(cache_file, max_age)
+    if cached is not None:
+      return cached
+    with lock_file.open("w") as lock:
+      fcntl.flock(lock, fcntl.LOCK_EX)
+      cached = read_cached_stats(cache_file, max_age)
+      if cached is not None:
+        return cached
+      stats, complete = run_local_scans()
+      # A scan that couldn't read everything serves this run, but caching it
+      # would hide the missing usage from every reader until it expires.
+      if complete:
+        write_json(cache_file, {"schemaVersion": 1, "scanDate": datetime.now().strftime("%Y-%m-%d"), "stats": stats})
+      return stats
+  except Exception as exc:
+    print(f"omarchy-agent-usage-synthetic: cache unavailable ({exc}); scanning directly", file=sys.stderr)
+    return run_local_scans()[0]
+
+
+# ------------------------------------------------------------- credentials
+
+
+PI_ENV_REFERENCE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+
+
+def stored_key(path):
+  # pi, omp and opencode keep {"synthetic": {"key": ...}}. pi's key may also
+  # be a $ENV_VAR reference, resolved here, or a !command, which stays pi's.
+  entry = obj(obj(read_json(path)).get(PROVIDER))
+  key = str(entry.get("key") or "").strip()
+  if not key or key.startswith("!"):
+    return ""
+  unresolved = []
+
+  def substitute(match):
+    value = os.environ.get(match.group(1) or match.group(2), "")
+    if not value:
+      unresolved.append(match.group(0))
+    return value
+
+  key = PI_ENV_REFERENCE.sub(substitute, key).strip()
+  return "" if unresolved else key
+
+
+def api_key():
   explicit = str(os.environ.get("SYNTHETIC_API_KEY", "")).strip()
   if explicit:
     return explicit
-  # Pi and OpenCode use the same provider id and {"key": ...} auth shape.
-  pi_key = stored_key(Path.home() / ".pi" / "agent" / "auth.json")
-  if pi_key:
-    return pi_key
-  data_home = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
-  return stored_key(data_home / "opencode" / "auth.json")
+  paths = [agent_dir / "auth.json" for agent_dir in pi_agent_dirs()[:2]]
+  paths.append(data_home() / "opencode" / "auth.json")
+  for path in paths:
+    key = stored_key(path)
+    if key:
+      return key
+  return ""
 
 
-def quota_limit(label: str, payload: Any) -> dict[str, Any] | None:
-  if not isinstance(payload, dict):
+# ------------------------------------------------------------------ quotas
+
+
+def used_fraction(used, maximum):
+  used, maximum = finite(used), finite(maximum)
+  if used is None or maximum is None or maximum <= 0:
     return None
-  used = payload.get("requests")
-  maximum = payload.get("limit")
-  percent = ratio(used, maximum)
+  return max(0.0, min(1.0, used / maximum))
+
+
+def reset_time(value):
+  raw = str(value or "").strip()
+  if not raw:
+    return ""
+  try:
+    datetime.fromisoformat(raw.replace("Z", "+00:00"))
+  except ValueError:
+    return ""
+  return raw
+
+
+def request_window(label, payload, title=None):
+  payload = obj(payload)
+  percent = used_fraction(payload.get("requests"), payload.get("limit"))
   if percent is None:
     return None
-  return {
-    "label": label,
-    "title": label,
-    "percent": percent,
-    "detail": f"{format_quantity(used)} / {format_quantity(maximum)} used",
-    "resetsAt": reset_at(payload.get("renewsAt")),
-  }
+  window = {"label": label, "percent": percent, "resetsAt": reset_time(payload.get("renewsAt"))}
+  if title:
+    window["title"] = title
+  return window
 
 
-def parse_limits(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], str, str]:
-  limits: list[dict[str, Any]] = []
+def parse_quotas(payload):
+  limits = []
+  # The rolling limit and the weekly credits regenerate a little at a time.
+  # nextTickAt and nextRegenAt say when the next share comes back, not when
+  # the window starts over, so they are no reset time: reading them as one
+  # would zero a window that has only regained a sliver.
+  rolling = obj(payload.get("rollingFiveHourLimit"))
+  remaining, maximum = finite(rolling.get("remaining")), finite(rolling.get("max"))
+  if remaining is not None and maximum is not None and maximum > 0:
+    percent = 1.0 if rolling.get("limited") is True else max(0.0, min(1.0, 1.0 - remaining / maximum))
+    limits.append({"label": "Rolling (5h)", "percent": percent, "resetsAt": ""})
+  weekly = finite(obj(payload.get("weeklyTokenLimit")).get("percentRemaining"))
+  if weekly is not None:
+    limits.append({"label": "Weekly credits", "percent": max(0.0, min(1.0, 1.0 - weekly / 100.0)), "resetsAt": ""})
 
-  rolling = payload.get("rollingFiveHourLimit")
-  weekly = payload.get("weeklyTokenLimit")
-  has_modern_limit = False
-  limited = False
-  if isinstance(rolling, dict):
-    percent = remaining_ratio(rolling.get("remaining"), rolling.get("max"))
-    if percent is not None:
-      has_modern_limit = True
-      maximum = number(rolling.get("max"))
-      used = max(0.0, min(maximum, maximum - number(rolling.get("remaining"))))
-      limits.append({
-        "label": "Requests used / 5h",
-        "title": "Requests used / 5h",
-        "percent": percent,
-        "detail": f"{format_quantity(used)} / {format_quantity(maximum)} used",
-        "resetsAt": reset_at(rolling.get("nextTickAt")),
-        "resetLabel": "Next tick in",
-      })
-      limited = rolling.get("limited") is True
-
-  weekly_remaining = None
-  weekly_percent = finite_number(weekly.get("percentRemaining")) if isinstance(weekly, dict) else None
-  if isinstance(weekly, dict) and weekly_percent is not None:
-    has_modern_limit = True
-    remaining_percent = max(0.0, min(100.0, weekly_percent))
-    weekly_remaining = remaining_percent
-    remaining_credits = str(weekly.get("remainingCredits") or "").strip()
-    maximum_credits = str(weekly.get("maxCredits") or "").strip()
-    detail = (
-      f"{remaining_credits} / {maximum_credits} left"
-      if remaining_credits and maximum_credits
-      else f"{format_quantity(remaining_percent)}% left"
-    )
-    limits.append({
-      "label": "Credits used / week",
-      "title": "Credits used / week",
-      "percent": 1.0 - remaining_percent / 100.0,
-      "detail": detail,
-      "resetsAt": reset_at(weekly.get("nextRegenAt")),
-      "resetLabel": "Next regen in",
-    })
-
-  # The endpoint documented only this bucket originally. Modern accounts
-  # still receive it at zero alongside the credit/request system, so use it
-  # only when neither modern allowance parsed successfully.
-  if not has_modern_limit:
-    subscription = quota_limit("Subscription requests", payload.get("subscription"))
-    if subscription:
-      limits.insert(0, subscription)
-
-  search = payload.get("search")
-  if isinstance(search, dict):
-    hourly = quota_limit("Search used / hour", search.get("hourly"))
-    if hourly:
-      limits.append(hourly)
-
-  free_tools = quota_limit("Free tool calls", payload.get("freeToolCalls"))
-  if free_tools:
-    limits.append(free_tools)
-
-  if limited:
-    return limits, "Rolling limit reached", "Synthetic reports that the rolling five-hour limit is currently active."
-  if weekly_remaining is not None and weekly_remaining <= 0:
-    return limits, "Weekly credits exhausted", "Synthetic reports no weekly credits remaining."
-  return limits, "", ""
-
-
-class SyntheticClient:
-  def __init__(self, api_key: str, base_url: str = API_BASE_URL):
-    self.api_key = api_key
-    self.base_url = base_url.rstrip("/")
-
-  def quotas(self) -> dict[str, Any]:
-    request = urllib.request.Request(
-      self.base_url + "/v2/quotas",
-      headers={
-        "Authorization": "Bearer " + self.api_key,
-        "Accept": "application/json",
-        "User-Agent": "omarchy-agents-synthetic/1.0",
-      },
-    )
-    try:
-      with urllib.request.urlopen(request, timeout=15) as response:
-        payload = json.load(response)
-    except urllib.error.HTTPError as error:
-      if error.code == 401:
-        raise SyntheticError("Synthetic rejected the API key") from error
-      if error.code == 403:
-        raise SyntheticError("The Synthetic API key cannot read quota data") from error
-      if error.code == 429:
-        raise SyntheticError("Synthetic is rate limiting quota checks") from error
-      raise SyntheticError(f"Synthetic quota API returned HTTP {error.code}") from error
-    except urllib.error.URLError as error:
-      raise SyntheticError("Could not reach the Synthetic quota API", retry_advised=True) from error
-    except TimeoutError as error:
-      raise SyntheticError("Synthetic quota request timed out", retry_advised=True) from error
-    except json.JSONDecodeError as error:
-      raise SyntheticError("Synthetic returned an invalid quota response") from error
-    if not isinstance(payload, dict):
-      raise SyntheticError("Synthetic returned an invalid quota response")
-    return payload
-
-
-def scan(base_url: str) -> dict[str, Any]:
-  api_key = credentials()
-  if not api_key:
-    return base_record(usageStatusText="Waiting for auth", authHelpText=AUTH_HELP)
-
-  payload = SyntheticClient(api_key, base_url).quotas()
-  limits, status, help_text = parse_limits(payload)
+  # The documented bucket. Accounts on the credit system still receive it, at
+  # zero, so it stands in only when neither of those parsed.
   if not limits:
-    return base_record(
-      usageStatusText="Synthetic quota unavailable",
-      authHelpText="The quota endpoint returned no supported limits.",
-    )
-  tier_label = "Subscription"
-  weekly = payload.get("weeklyTokenLimit")
-  if isinstance(weekly, dict) and str(weekly.get("remainingCredits") or "").strip():
-    tier_label = str(weekly["remainingCredits"]).strip() + " weekly credits left"
-  return base_record(
-    ready=True,
-    tierLabel=tier_label,
-    usageStatusText=status,
-    authHelpText=help_text,
-    limits=limits,
+    window = request_window("Subscription requests", payload.get("subscription"))
+    if window:
+      limits.append(window)
+  for window in (
+    request_window("Search (hourly)", obj(payload.get("search")).get("hourly"), "Search"),
+    request_window("Free tool calls", payload.get("freeToolCalls")),
+  ):
+    if window:
+      limits.append(window)
+  return limits
+
+
+def probe_quotas(key, base_url):
+  request = urllib.request.Request(
+    base_url.rstrip("/") + "/v2/quotas",
+    headers={
+      "Authorization": "Bearer " + key,
+      "Accept": "application/json",
+      "User-Agent": "omarchy-agent-usage-synthetic/1.0",
+    },
   )
-
-
-def main() -> int:
-  parser = argparse.ArgumentParser(description="Print Synthetic quota status as JSON")
-  # The shared updater passes these flags to every collector. Synthetic's
-  # quota request is inexpensive and does not count against subscription limits.
-  parser.add_argument("--force", action="store_true")
-  parser.add_argument("--limits-only", action="store_true")
-  parser.parse_args()
-
   try:
-    record = scan(os.environ.get("SYNTHETIC_API_BASE_URL", API_BASE_URL))
-  except SyntheticError as error:
-    record = base_record(
-      usageStatusText="Synthetic unavailable",
-      authHelpText=str(error),
-      retryAdvised=error.retry_advised,
-    )
-  except Exception as error:
-    record = base_record(
-      usageStatusText="Synthetic unavailable",
-      authHelpText="Synthetic quota scan failed.",
-    )
-    print(f"omarchy-agent-usage-synthetic: {type(error).__name__}", file=sys.stderr)
+    with urllib.request.urlopen(request, timeout=10) as response:
+      payload = json.loads(response.read().decode("utf-8", errors="replace"))
+  except urllib.error.HTTPError as error:
+    if error.code in (401, 403):
+      return {"ok": False, "refused": True, "helpText": REFUSED_HELP}
+    return {"ok": False, "helpText": f"Synthetic's quota endpoint returned status {error.code}. Local Synthetic stats are still shown."}
+  except (urllib.error.URLError, TimeoutError, OSError):
+    # A transport failure reached no server at all: no route, no DNS.
+    return {"ok": False, "transport": True, "helpText": "Couldn't reach Synthetic's quota endpoint. Retrying shortly. Local Synthetic stats are still shown."}
+  except ValueError:
+    return {"ok": False, "helpText": "Synthetic returned an unreadable quota answer. Local Synthetic stats are still shown."}
+  limits = parse_quotas(payload) if isinstance(payload, dict) else []
+  if not limits:
+    return {"ok": False, "helpText": "Synthetic's quota endpoint returned no quotas. Local Synthetic stats are still shown."}
+  return {"ok": True, "limits": limits}
 
+
+def limit_window_open(entry, now):
+  raw = str(entry.get("resetsAt") or "")
+  if raw == "":
+    return True
+  try:
+    resets_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+  except ValueError:
+    return True
+  if resets_at.tzinfo is None:
+    resets_at = resets_at.replace(tzinfo=timezone.utc)
+  return resets_at > now
+
+
+# A kept window whose reset has passed is untouched, not unknown: it comes
+# back at zero with no reset time until the next check.
+def usable_cached_limits(cached):
+  entries = obj(cached).get("limits")
+  if not isinstance(entries, list):
+    return []
+  now = datetime.now(timezone.utc)
+  return [
+    entry if limit_window_open(entry, now) else dict(entry, percent=0.0, resetsAt="")
+    for entry in entries if isinstance(entry, dict)
+  ]
+
+
+# One cache per key, so another key never shows this one's quotas.
+def limits_cache_path(key):
+  return cache_root() / f"synthetic-limits-{hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]}.json"
+
+
+def collect_limits(key, base_url, force):
+  result = {"limits": [], "usageStatusText": "", "authHelpText": "", "stale": False, "fetchedAtMs": 0, "retryAdvised": False}
+  if not key:
+    return result
+
+  cache = limits_cache_path(key)
+  cached = read_json(cache)
+  fallback = usable_cached_limits(cached)
+  fetched_at = obj(cached).get("fetchedAtMs")
+  fetched_at = round(fetched_at) if epoch_seconds(fetched_at) else 0
+
+  # --force is a person asking for fresh numbers, so it skips the reuse window.
+  if fallback and not force and 0 <= time.time() - fetched_at / 1000 < PROBE_MIN_INTERVAL_SECONDS:
+    result.update(limits=fallback, fetchedAtMs=fetched_at)
+    return result
+
+  probe = probe_quotas(key, base_url)
+  if probe["ok"]:
+    fetched_at = round(time.time() * 1000)
+    try:
+      write_json(cache, {"fetchedAtMs": fetched_at, "limits": probe["limits"]})
+    except OSError as exc:
+      print(f"omarchy-agent-usage-synthetic: could not write the quota cache ({exc})", file=sys.stderr)
+    result.update(limits=probe["limits"], fetchedAtMs=fetched_at)
+    return result
+
+  # Last good numbers, marked stale, beat an empty section while the check
+  # fails.
+  result.update(limits=fallback, stale=bool(fallback), fetchedAtMs=fetched_at if fallback else 0, retryAdvised=bool(probe.get("transport")))
+  if probe.get("refused"):
+    result.update(usageStatusText="Sign-in expired", authHelpText=probe["helpText"])
+  elif not fallback:
+    result.update(usageStatusText="Synthetic limits unavailable", authHelpText=probe["helpText"])
+  return result
+
+
+# ------------------------------------------------------------------ record
+
+
+def main():
+  parser = argparse.ArgumentParser(description="Print the Synthetic usage record as JSON")
+  parser.add_argument("--force", action="store_true", help="rescan local sessions and re-check quotas, ignoring caches")
+  parser.add_argument("--limits-only", action="store_true", help="reuse a recent local scan; only the quotas must be fresh")
+  args = parser.parse_args()
+
+  max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
+  stats = cached_local_stats(max_age)
+  key = api_key()
+  limits = collect_limits(key, os.environ.get("SYNTHETIC_API_BASE_URL") or API_BASE_URL, args.force)
+  in_use = number(stats.get("totalPrompts")) > 0
+
+  record = {
+    "schemaVersion": 1,
+    "id": AGENT_ID,
+    "name": AGENT_NAME,
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "ready": in_use or bool(key),
+    "hasLocalStats": True,
+    # The quotas answer names no plan.
+    "tierLabel": "",
+    "usageStatusText": limits["usageStatusText"],
+    "authHelpText": limits["authHelpText"],
+    "limits": limits["limits"],
+    "limitsStale": limits["stale"],
+    "limitsFetchedAt": limits["fetchedAtMs"],
+  }
+  if in_use and not key:
+    record.update(usageStatusText="Waiting for auth", authHelpText=AUTH_HELP)
+  if limits["retryAdvised"]:
+    record["retryAdvised"] = True
+  record.update(stats)
   print(json.dumps(record, separators=(",", ":"), sort_keys=True))
   return 0
 
