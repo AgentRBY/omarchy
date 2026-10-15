@@ -23,8 +23,8 @@ neither it nor the returned API key is persisted, and the login file is only
 ever read, never refreshed or rewritten. A failed check keeps the last good
 windows, marked stale. Pay-as-you-go accounts
 and active plans that return no `subs_usage` (e.g. Muse Code Power Usage)
-have no subscription windows, so limits stay empty — tier plus local
-metering still show. No estimated meters from manual caps: without an
+have no subscription windows, so limits stay empty — the plan name (none for
+pay-as-you-go) plus local metering still show. No estimated meters from manual caps: without an
 authoritative probe the panel shows measured usage only. The agents panel
 only ever reads the JSON this prints.
 """
@@ -34,6 +34,7 @@ import base64
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -58,14 +59,17 @@ MAX_SESSION_BYTES = 512 * 1024 * 1024
 # caches are rescanned instead of trusted.
 CACHE_SCHEMA_VERSION = 2
 
+# A token count past this is a corrupt field, not a model call.
+MAX_TOKENS = 1_000_000_000_000
+
 # Same cache semantics as the codex collector: a scan this recent only dedups
 # concurrent collector runs; --limits-only may reuse a scan for 15 minutes.
 SCAN_REUSE_SECONDS = 20
 LIMITS_ONLY_REUSE_SECONDS = 900
 
-# Subscription probe reuse: polling mints the same key (idempotent) but the
-# answer moves slowly, so repeated panel opens reuse a recent probe.
-PROBE_MIN_INTERVAL_SECONDS = 60
+# Subscription probe reuse: minting is idempotent and cheap (the same key
+# comes back every call), so this only absorbs repeated panel opens.
+PROBE_MIN_INTERVAL_SECONDS = 15
 
 
 def key_endpoint() -> str:
@@ -81,8 +85,24 @@ def number(value):
     return 0
 
 
+# Token fields come from local files: a bool, string, NaN, negative or
+# implausibly huge value skips the field.
 def token_number(value):
-  return max(0, number(value))
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
+    return 0
+  if not math.isfinite(value) or value <= 0 or value >= MAX_TOKENS:
+    return 0
+  return int(value)
+
+
+def percent_number(value):
+  if isinstance(value, bool):
+    return -1.0
+  try:
+    parsed = float(value)
+  except (TypeError, ValueError):
+    return -1.0
+  return min(1.0, max(0.0, parsed / 100.0)) if math.isfinite(parsed) else -1.0
 
 
 def model_name(raw):
@@ -98,39 +118,46 @@ def model_name(raw):
 
 
 def local_day(value):
-  """Normalize assorted timestamps to a local YYYY-MM-DD date string."""
-  # bool is an int subclass: True would otherwise file under 1970.
+  """Normalize assorted timestamps to a local YYYY-MM-DD date string.
+
+  A stamp that isn't a plausible moment (missing, zero, negative, NaN, a
+  bool, far future, not a time at all) gives None, so the caller can fall
+  back or leave the row undated rather than file it under today.
+  """
   if value is None or isinstance(value, bool):
-    return datetime.now().astimezone().date().isoformat()
+    return None
   if isinstance(value, (int, float)):
     seconds = float(value)
+    if not math.isfinite(seconds) or seconds <= 0:
+      return None
     # Native muse recorded_at is microseconds; opencode created is millis;
     # codex-style seconds also possible.
     if seconds > 10_000_000_000_000:
       seconds = seconds / 1_000_000
     elif seconds > 10_000_000_000:
       seconds = seconds / 1000
+  else:
+    text = str(value).strip()
     try:
-      return datetime.fromtimestamp(seconds).astimezone().date().isoformat()
-    except Exception:
-      return datetime.now().astimezone().date().isoformat()
-  text = str(value).strip()
-  try:
-    # Some writers emit the epoch as a string: route micro/milli/second
-    # magnitudes through the numeric branch instead of misfiling them as today.
-    return local_day(float(text))
-  except ValueError:
-    pass
-  try:
-    if text.endswith("Z"):
-      dt = datetime.fromisoformat(text[:-1] + "+00:00")
-    else:
-      dt = datetime.fromisoformat(text)
-    if dt.tzinfo is not None:
+      # Some writers emit the epoch as a string: route micro/milli/second
+      # magnitudes through the numeric branch instead of misfiling them.
+      return local_day(float(text))
+    except ValueError:
+      pass
+    try:
+      dt = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+    except ValueError:
+      return None
+    if dt.tzinfo is None:
       dt = dt.astimezone()
-    return dt.strftime("%Y-%m-%d")
-  except Exception:
-    return datetime.now().astimezone().date().isoformat()
+    seconds = dt.timestamp()
+  # Muse didn't exist before 2000 and can't write from the future.
+  if not 946_684_800 <= seconds <= time.time() + 2 * 86_400:
+    return None
+  try:
+    return datetime.fromtimestamp(seconds).astimezone().date().isoformat()
+  except (OverflowError, OSError, ValueError):
+    return None
 
 
 now = datetime.now().astimezone()
@@ -148,6 +175,7 @@ total_prompts = 0
 total_sessions = set()
 
 
+# An undated row (day None) counts in the totals only.
 def add_usage(day, session_key, model, input_tokens, output_tokens, cache_read, cache_write):
   global today_prompts, today_total_tokens, total_prompts
   total = input_tokens + output_tokens + cache_read + cache_write
@@ -155,7 +183,8 @@ def add_usage(day, session_key, model, input_tokens, output_tokens, cache_read, 
     return
   total_prompts += 1
   total_sessions.add(session_key)
-  active_days.add(day)
+  if day is not None:
+    active_days.add(day)
 
   bucket = model_usage.setdefault(model, {
     "inputTokens": 0,
@@ -315,7 +344,8 @@ def scan_native_muse_sessions():
         if event_id in seen_event_ids:
           continue
         seen_event_ids.add(event_id)
-      day = local_day(recorded_at) if recorded_at else mtime_day
+      # An unusable stamp falls back on the file's own time.
+      day = local_day(recorded_at) or mtime_day
       # Subagent trees roll up into their parent session: normalize both the
       # main session.jsonl and any subagent/.../session.jsonl to the session
       # directory, so one user session counts once however many subagents
@@ -380,9 +410,9 @@ def add_opencode_row(message_id, session_id, entry, row_type, created, seen):
     return
   seen.add(message_id)
   # A malformed time object must not drop the row's valid tokens: non-dict
-  # shapes fall back to the row's own time, then today.
+  # shapes fall back to the row's own time, then leave the row undated.
   stamped = entry.get("time")
-  day = local_day((stamped.get("created") if isinstance(stamped, dict) else None) or created)
+  day = local_day(stamped.get("created") if isinstance(stamped, dict) else None) or local_day(created)
   add_usage(day, "opencode:" + str(session_id), model, input_tokens, output_tokens, cache_read, cache_write)
 
 
@@ -484,7 +514,7 @@ def read_access_token() -> str:
 
 
 def normalize_reset_at(value) -> str:
-  if value is None:
+  if value is None or isinstance(value, bool):
     return ""
   try:
     ts = float(value)
@@ -554,20 +584,14 @@ def probe_key(access_token: str) -> dict:
   limits = []
   window = usage.get("window") or {}
   if isinstance(window, dict) and window.get("used_percent") is not None:
-    try:
-      percent = min(1.0, max(0.0, float(window.get("used_percent")) / 100.0))
-    except Exception:
-      percent = -1.0
+    percent = percent_number(window.get("used_percent"))
     if percent >= 0:
       mins = number(window.get("window_duration_mins"))
       label = "Session (5-hour)" if mins == 300 else (f"Session ({mins}m)" if mins > 0 else "Session")
       limits.append({"label": label, "percent": percent, "resetsAt": normalize_reset_at(window.get("resets_at"))})
   weekly = usage.get("weekly") or {}
   if isinstance(weekly, dict) and weekly.get("used_percent") is not None:
-    try:
-      percent = min(1.0, max(0.0, float(weekly.get("used_percent")) / 100.0))
-    except Exception:
-      percent = -1.0
+    percent = percent_number(weekly.get("used_percent"))
     if percent >= 0:
       limits.append({"label": "Weekly (7-day)", "percent": percent, "resetsAt": normalize_reset_at(weekly.get("resets_at"))})
 
@@ -629,9 +653,14 @@ def collect_limits(force: bool) -> dict:
 
   access_token = read_access_token()
   if access_token == "":
-    # No login: PAYG or signed-out. Never estimated, never an auth nag —
-    # local metering is valid on its own.
+    # No login. Muse Spark used only through opencode's meta provider signs
+    # in with a Model API key, not `muse login`, so that alone is no reason
+    # to ask for one; the Muse CLI's own home on this machine is.
+    if muse_config_dir().is_dir() or muse_sessions_root().is_dir():
+      result["usageStatusText"] = "Waiting for auth"
+      result["authHelpText"] = "Run `muse login` to show Muse's session and weekly limits."
     return result
+  result["signedIn"] = True
 
   probe_cache = None
   cached = {}
@@ -644,7 +673,7 @@ def collect_limits(force: bool) -> dict:
     cached = {}
   fallback = usable_cached_limits(cached)
   fetched_at = number(cached.get("fetchedAtMs"))
-  result["tierLabel"] = str(cached.get("tierLabel") or "") or "Account"
+  result["tierLabel"] = str(cached.get("tierLabel") or "")
 
   # The last good windows, marked stale, with when they were measured.
   def keep_cached():
@@ -672,9 +701,10 @@ def collect_limits(force: bool) -> dict:
   if probe.get("transport"):
     result["retryAdvised"] = True
   if probe.get("payg"):
-    # Authenticated PAYG: no subscription windows exist. Keep local metering
-    # only, silent — not an error, not expired.
-    result["tierLabel"] = "Account"
+    # Authenticated PAYG: no subscription windows exist, and the service
+    # names no plan. Keep local metering only, silent — not an error, not
+    # expired.
+    result["tierLabel"] = ""
     return result
   if probe.get("silent"):
     # Active plan with no windows: same silence as PAYG, but keep the plan
@@ -713,7 +743,7 @@ def read_fresh_json(path, max_age_seconds):
     return None
   try:
     age = time.time() - path.stat().st_mtime
-    if 0 <= age <= max_age_seconds:
+    if 0 <= age < max_age_seconds:
       return json.loads(path.read_text(encoding="utf-8"))
   except Exception:
     return None
@@ -820,8 +850,9 @@ def main():
     "id": AGENT_ID,
     "name": AGENT_NAME,
     "updatedAt": datetime.now(timezone.utc).isoformat(),
-    # A signed-in plan shows even before its first session or window.
-    "ready": number(stats.get("totalPrompts")) > 0 or len(limits["limits"]) > 0 or limits["tierLabel"] not in ("", "Account"),
+    # A sign-in shows even before its first session or window, and so does
+    # a Muse CLI waiting for one.
+    "ready": number(stats.get("totalPrompts")) > 0 or len(limits["limits"]) > 0 or bool(limits.get("signedIn")) or limits["usageStatusText"] != "",
     "hasLocalStats": True,
     # Prompts and sessions are counted, so the panel shows them in tooltips.
     "hasPromptStats": True,

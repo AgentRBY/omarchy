@@ -161,10 +161,11 @@ pass "Muse collector resets a kept window once it has ended"
 pass "Muse collector never writes the login file"
 
 # Pay-as-you-go: key mints fine but there is no subscription window to
-# meter. Silent local metering — not an error, not expired.
+# meter, and no plan name to invent. Silent local metering — not an error,
+# not expired.
 set_payload '{"body":{"api_key":"minted","is_subs_active":false,"subs_tier_name":null}}'
 payg=$(run_collector --force)
-[[ $(jq -c '[.limits,.tierLabel,.usageStatusText,.authHelpText]' <<<"$payg") == '[[],"Account","",""]' ]] ||
+[[ $(jq -c '[.limits,.tierLabel,.usageStatusText,.authHelpText]' <<<"$payg") == '[[],"","",""]' ]] ||
   fail "Muse collector stays silent for pay-as-you-go accounts" "$payg"
 pass "Muse collector stays silent for pay-as-you-go accounts"
 
@@ -180,9 +181,8 @@ nosnap=$(run_collector --force)
   fail "Muse collector stays silent for an active plan without usage windows" "$nosnap"
 pass "Muse collector stays silent for an active plan without usage windows"
 
-# A signed-in plan shows before its first session; pay-as-you-go with no
-# usage has nothing to show.
-[[ $(jq -r '.ready' <<<"$nosnap") == "true" && $(jq -r '.ready' <<<"$payg") == "false" ]] ||
+# A sign-in shows before its first session, pay-as-you-go included.
+[[ $(jq -r '.ready' <<<"$nosnap") == "true" && $(jq -r '.ready' <<<"$payg") == "true" ]] ||
   fail "Muse collector shows a signed-in plan without sessions" "$nosnap"
 pass "Muse collector shows a signed-in plan without sessions"
 
@@ -204,12 +204,13 @@ expired=$(run_collector --force)
   fail "Muse collector reports an expired sign-in" "$expired"
 pass "Muse collector reports an expired sign-in"
 
-# A malformed login file is a missing credential, not a crash.
+# A malformed login file is a missing credential, not a crash: the Muse CLI
+# is set up here, so it waits for a sign-in.
 for malformed in '[1,2]' '"nope"' '{"providers":[]}' '{"providers":{"meta":7}}'; do
   printf '%s' "$malformed" >"$TEST_HOME/.config/muse/auth.json"
   garbled=$(run_collector --force) ||
     fail "Muse collector survives a malformed login file" "$malformed"
-  [[ $(jq -c '[.limits,.usageStatusText]' <<<"$garbled") == '[[],""]' ]] ||
+  [[ $(jq -c '[.limits,.usageStatusText,.ready]' <<<"$garbled") == '[[],"Waiting for auth",true]' ]] ||
     fail "Muse collector survives a malformed login file" "$malformed -> $garbled"
 done
 pass "Muse collector survives a malformed login file"
@@ -225,3 +226,32 @@ custom=$(run_collector --force)
   fail "Muse collector honors MUSE_AUTH_PATH over the default login" "$(cat "$STUB_SEEN_FILE")"
 pass "Muse collector honors MUSE_AUTH_PATH over the default login"
 unset MUSE_AUTH_PATH
+
+# A probe this recent is reused, and --force asks again.
+run_collector --force >/dev/null
+: >"$STUB_SEEN_FILE"
+run_collector --limits-only >/dev/null
+[[ ! -s $STUB_SEEN_FILE ]] || fail "Muse collector reuses a probe under 15 seconds old" "$(cat "$STUB_SEEN_FILE")"
+run_collector --force >/dev/null
+[[ -s $STUB_SEEN_FILE ]] || fail "Muse collector re-probes on --force" "nothing seen"
+pass "Muse collector reuses a recent probe, and --force asks again"
+
+# A server that answered with an error isn't retried sooner; one that can't be
+# reached at all is.
+printf '{"status":500}' >"$STUB_PAYLOAD_FILE"
+errored=$(run_collector --force)
+[[ $(jq 'has("retryAdvised")' <<<"$errored") == "false" ]] ||
+  fail "Muse collector doesn't retry a server error sooner" "$errored"
+closed=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+unreachable=$(HOME="$TEST_HOME" XDG_DATA_HOME="$TEST_HOME/.local/share" XDG_CACHE_HOME="$TEST_HOME/.cache" XDG_CONFIG_HOME="$TEST_HOME/.config" \
+  MUSE_KEY_ENDPOINT="http://127.0.0.1:$closed/key" "$ROOT/bin/omarchy-agent-usage-muse" --force)
+[[ $(jq -c '{retry: .retryAdvised, stale: .limitsStale, kept: (.limits | length > 0), status: .usageStatusText}' <<<"$unreachable") == '{"retry":true,"stale":true,"kept":true,"status":""}' ]] ||
+  fail "Muse collector retries an unreachable endpoint sooner, keeping the last limits" "$unreachable"
+pass "Muse collector advises a retry only when the endpoint can't be reached"
+
+# A machine that never ran Muse prints an unused record.
+unused=$(HOME="$TEST_HOME/nobody" XDG_DATA_HOME="$TEST_HOME/nobody/data" XDG_CACHE_HOME="$TEST_HOME/nobody/cache" XDG_CONFIG_HOME="$TEST_HOME/nobody/config" \
+  MUSE_KEY_ENDPOINT="http://127.0.0.1:$port/key" "$ROOT/bin/omarchy-agent-usage-muse")
+[[ $(jq -c '{ready, tierLabel, usageStatusText, authHelpText, limits, totalPrompts}' <<<"$unused") == '{"ready":false,"tierLabel":"","usageStatusText":"","authHelpText":"","limits":[],"totalPrompts":0}' ]] ||
+  fail "Muse collector prints an unused record on a machine without Muse" "$unused"
+pass "Muse collector prints an unused record on a machine without Muse"
