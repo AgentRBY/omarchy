@@ -122,6 +122,47 @@ check(
   json.dumps(snapshot),
 )
 
+stats = collectors.Stats()
+# A store that books a prompt apart from the tokens it spent.
+stats.add_prompts(today, "s1")
+stats.add(today, "s1", "m", 10, 5, 0, 0, prompts=0)
+# Running totals covering three prompts, and a line with no tokens at all.
+stats.add(today, "s2", "n", 4, 0, 0, 0, prompts=3)
+stats.add(today, "s3", "z", 0, 0, 0, 0, prompts=0)
+# A typed prompt booked on its own line, with no tokens and no model.
+stats.add(today, "s4", "", 0, 0, 0, 0)
+snapshot = stats.snapshot()
+check(
+  "prompts count apart from tokens, and tokens alone are no prompt",
+  (snapshot["todayPrompts"], snapshot["totalPrompts"], snapshot["todaySessions"], snapshot["todayTotalTokens"], sorted(snapshot["modelUsage"]), snapshot["todayTokensByModel"])
+  == (5, 5, 3, 19, ["m", "n"], {"m": 15, "n": 4}),
+  json.dumps(snapshot),
+)
+stats = collectors.Stats()
+stats.add(None, None, "m", 7, 0, 0, 0, prompts=0)
+stats.add_prompts(None, "s1", 2)
+stats.add_prompts("2000-01-01", None)
+stats.add_prompts(today, "s2", 0)
+snapshot = stats.snapshot()
+check(
+  "undated tokens with no session count toward the totals alone",
+  (snapshot["modelUsage"]["m"]["inputTokens"], snapshot["todayTotalTokens"], snapshot["totalPrompts"], snapshot["todayPrompts"], snapshot["totalSessions"], snapshot["todaySessions"], snapshot["activeDates"])
+  == (7, 0, 3, 0, 2, 1, ["2000-01-01", today]),
+  json.dumps(snapshot),
+)
+from datetime import date  # noqa: E402
+stats = collectors.Stats(today=date(2020, 3, 1))
+stats.add("2020-03-01", None, "m", 5, 0, 0, 0, prompts=0)
+stats.add("2020-02-24", None, "m", 1, 0, 0, 0, prompts=0)
+snapshot = stats.snapshot()
+check(
+  "an injected today dates today's fields and the recent week",
+  (snapshot["todayTotalTokens"], [day["date"] for day in snapshot["recentDays"]][0], snapshot["recentDays"][0]["messageCount"], snapshot["recentDays"][-1]["date"])
+  == (5, "2020-02-24", 1, "2020-03-01")
+  and collectors.Stats(today="2020-03-01").today == "2020-03-01",
+  json.dumps(snapshot),
+)
+
 # ------------------------------------------------------------- scan cache
 
 calls = []
@@ -146,6 +187,9 @@ check("a scan with other options is a miss", collectors.cached_scan("demo", ["a"
 check("a scan with the same options is reused", collectors.cached_scan("demo", ["a"], 900, scan, match={"modelPrefix": "kimi"})["totalPrompts"] == 4)
 collectors.cached_scan("demo", ["b"], 0, lambda: ({**collectors.empty_stats(), "totalPrompts": 99}, False))
 check("an incomplete scan is never cached", collectors.cached_scan("demo", ["b"], 900, scan)["totalPrompts"] == 5)
+partial = collectors.cached_scan("demo", ["c"], 900, lambda: ({**collectors.empty_stats(), "totalPrompts": 7}, False), with_complete=True)
+whole = collectors.cached_scan("demo", ["b"], 900, scan, with_complete=True)
+check("a caller can ask whether the scan was complete, a cached one being so", partial[0]["totalPrompts"] == 7 and partial[1] is False and whole == (whole[0], True) and whole[0]["totalPrompts"] == 5)
 
 # ------------------------------------------------------------------ limits
 
@@ -176,6 +220,39 @@ check("a future-stamped answer is kept but never trusted as fresh", future_stamp
 check("no answer at all has nothing to fall back on", collectors.LimitsCache("demo", "nobody").kept() == ([], 0))
 check("an identity holding a lone surrogate still gets its own limits cache", collectors.LimitsCache("demo", "who\udc80").path != cache.path)
 
+credits = collectors.LimitsCache("demo", "who@example.com", kind="credits")
+check(
+  "another kind of answer is kept beside the limits under the same key",
+  credits.path.name == cache.path.name.replace("demo-limits-", "demo-credits-", 1),
+)
+credits.save([], balance={"remaining": 3})
+credits = collectors.LimitsCache("demo", "who@example.com", kind="credits")
+check(
+  "an answer without limits stands in for a probe only when the caller allows it",
+  not credits.fresh(False) and credits.fresh(False, allow_empty=True) and not credits.fresh(True, allow_empty=True)
+  and not credits.fresh(False, seconds=0, allow_empty=True) and credits.data["balance"] == {"remaining": 3},
+)
+check("no answer at all never stands in, even allowing an empty one", not collectors.LimitsCache("demo", "nobody").fresh(False, allow_empty=True))
+newer = json.loads(credits.path.read_text())
+newer["fetchedAtMs"] = collectors.now_ms() + 60_000
+newer["balance"] = {"remaining": 9}
+credits.path.write_text(json.dumps(newer))
+older = collectors.LimitsCache("demo", "who@example.com", kind="credits")
+kept_stamp = older.save([], only_if_newer=True, balance={"remaining": 1})
+check(
+  "an answer saved only if newer never rolls back one another run stamped later, but serves this run",
+  json.loads(credits.path.read_text())["balance"] == {"remaining": 9} and older.data["balance"] == {"remaining": 1} and older.fetched_at == kept_stamp,
+)
+older.save([], balance={"remaining": 2})
+check("a plain save replaces whatever was kept", json.loads(credits.path.read_text())["balance"] == {"remaining": 2})
+named = collectors.LimitsCache.at(collectors.cache_root() / "demo-limits.json")
+named.save([{"label": "Weekly", "percent": 0.1, "resetsAt": future}])
+check(
+  "a cache opened at a name of its own keeps and reads like any other",
+  named.path.name == "demo-limits.json" and named.lock_path.name == "demo-limits.lock"
+  and collectors.LimitsCache.at(named.path).fresh(False) and collectors.LimitsCache.at(named.path).limits == named.limits,
+)
+
 # ------------------------------------------------------------------- http
 
 import io
@@ -205,6 +282,35 @@ check("open_json returns the JSON answer", outcome(lambda request, timeout=None:
 check("an HTTP status is a refusal, not a transport failure", outcome(failing(urllib.error.HTTPError("u", 401, "no", {}, None))) == (401, False, False))
 check("no route, no DNS, and a timeout are transport failures", {outcome(failing(error)) for error in (urllib.error.URLError("no route"), TimeoutError("slow"), ConnectionResetError())} == {(0, True, False)})
 check("a body that isn't JSON is an invalid answer", outcome(lambda request, timeout=None: io.BytesIO(b"<html>")) == (0, False, True))
+
+import http.client  # noqa: E402
+
+
+def error_of(opener):
+  urllib.request.urlopen = opener
+  try:
+    collectors.open_json(urllib.request.Request("https://example.invalid"))
+  except collectors.HttpError as error:
+    return error
+  finally:
+    urllib.request.urlopen = real_urlopen
+
+
+class CutShort(io.BytesIO):
+  def read(self, *args):
+    raise http.client.IncompleteRead(b'{"a"', 10)
+
+
+cut = error_of(lambda request, timeout=None: CutShort())
+check("a reply cut short is an answer, never a transport failure", (cut.status, cut.transport, cut.invalid, cut.cut_short) == (0, False, True, True))
+garbled = error_of(failing(http.client.BadStatusLine("HTTP/9 ???")))
+check("a garbled reply is an answer too", (garbled.transport, garbled.cut_short) == (False, True))
+dropped = error_of(failing(http.client.RemoteDisconnected("closed")))
+check("a server hanging up without a reply is a dropped connection, so transport", (dropped.transport, dropped.cut_short) == (True, False))
+reset = error_of(failing(ConnectionResetError()))
+check("a reset connection is transport, not a reply cut short", (reset.transport, reset.cut_short) == (True, False))
+refused = error_of(failing(urllib.error.HTTPError("u", 429, "slow down", {"retry-after": "30"}, None)))
+check("a refusal carries its own headers", refused.status == 429 and refused.headers.get("retry-after") == "30" and not refused.cut_short)
 handlers = [handler for handler in urllib.request._opener.handlers if isinstance(handler, urllib.request.HTTPRedirectHandler)]
 check("requests refuse redirects", handlers and handlers[0].redirect_request(None, None, 302, "Found", {}, "https://elsewhere") is None)
 
@@ -285,6 +391,19 @@ check("a forked message counts toward the session it was forked from", next(row 
 check("a fork that only copied its parent is no session of its own", os.path.realpath(sessions / "a" / "copy-only.jsonl") not in {row.session for row in rows})
 check("the provider filter is the caller's", all(row.provider == "demo" for row in rows))
 
+harness = work / "harness" / "sessions"
+write_session(harness / "h.jsonl", [reply("demo", 300, "h1"), reply("demo", 100, "m1")])
+own_rows, own_complete = collectors.scan_pi_sessions(r'"provider"\s*:\s*"demo"', lambda provider, model, entry: True, roots=[harness])
+check("a collector can read a pi-format tree of its own instead", own_complete and sorted(row.input_tokens for row in own_rows) == [100, 300])
+(work / "alias").symlink_to(harness)
+both_rows, _ = collectors.scan_pi_sessions(r'"provider"\s*:\s*"demo"', lambda provider, model, entry: True, roots=[*collectors.pi_session_roots(), harness, work / "alias", work / "missing"])
+check(
+  "roots read beside pi's count a message copied between them once, an alias once, and a missing one as nothing",
+  sorted(row.input_tokens + row.output_tokens + row.cache_read + row.cache_write for row in both_rows) == [1, 1, 10, 20, 40, 100, 300, 1000],
+  json.dumps([row._asdict() for row in both_rows]),
+)
+check("canonical roots drop an alias and a root inside another", collectors.canonical_roots([harness, work / "alias", harness / "inner", work / "harness"]) == [(work / "harness").resolve()])
+
 # --------------------------------------------------------------- opencode
 
 db = home / ".local" / "share" / "opencode" / "opencode.db"
@@ -348,4 +467,82 @@ check("the database is opened read-only", (db.parent / "opencode-v2.db").read_by
 (db.parent / "opencode-v2.db").write_bytes(b"not a database at all, just bytes" * 200)
 rows, complete = collectors.scan_opencode(["demo"], accept_demo)
 check("a database error marks the scan incomplete", not complete and rows == [])
+
+# --------------------------------------------------------------- sign-ins
+
+import base64  # noqa: E402
+
+
+def jwt(claims):
+  body = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+  return f"header.{body}.signature"
+
+
+later = time.time() + 3600
+check("jwt_claims reads a JWT's claims", collectors.jwt_claims(jwt({"sub": "u1", "exp": later})) == {"sub": "u1", "exp": later})
+check(
+  "jwt_claims reads anything else as no claims",
+  [collectors.jwt_claims(value) for value in ("opaque-key", "a.b", "a.!!!.c", f"h.{base64.urlsafe_b64encode(b'[1]').decode()}.s", None, 5)] == [{}] * 6,
+)
+check("a token keys by its subject, an opaque key by itself", (collectors.account_key(jwt({"sub": "u1"})), collectors.account_key("opaque")) == ("u1", "opaque"))
+check(
+  "a token lapses once its expiry passes; one with no expiry, or an opaque key, never does",
+  collectors.token_lapsed(jwt({"exp": time.time() - 5})) and not collectors.token_lapsed(jwt({"exp": later})) and not collectors.token_lapsed(jwt({})) and not collectors.token_lapsed("opaque"),
+)
+check("finite reads only finite numbers", [collectors.finite(value) for value in (True, "2.5", float("inf"), None, "x", 3)] == [0.0, 2.5, 0.0, 0.0, 0.0, 3.0])
+
+config = work / "config"
+os.environ["XDG_CONFIG_HOME"] = str(config)
+for name in ("CURSOR_API_KEY", "CURSOR_AUTH_PATH"):
+  os.environ.pop(name, None)
+check("no Cursor sign-in anywhere is no token", collectors.cursor_token() == "")
+state_db = collectors.cursor_state_db()
+state_db.parent.mkdir(parents=True)
+conn = sqlite3.connect(state_db)
+conn.execute("CREATE TABLE ItemTable (key TEXT, value BLOB)")
+conn.execute("INSERT INTO ItemTable VALUES ('cursorAuth/accessToken', ?)", (jwt({"sub": "ide", "exp": later}).encode(),))
+conn.commit()
+conn.close()
+check("the editor's sign-in stands when the CLI has none", collectors.account_key(collectors.cursor_token()) == "ide")
+cli = config / "cursor" / "auth.json"
+cli.parent.mkdir(parents=True)
+cli.write_text(json.dumps({"accessToken": jwt({"sub": "cli", "exp": time.time() - 5})}))
+check("a lapsed CLI sign-in gives way to the editor's", collectors.account_key(collectors.cursor_token()) == "ide")
+cli.write_text(json.dumps({"accessToken": jwt({"sub": "cli", "exp": later})}))
+check("the CLI's sign-in comes before the editor's", collectors.account_key(collectors.cursor_token()) == "cli")
+moved_auth = work / "moved-auth.json"
+moved_auth.write_text(json.dumps({"accessToken": "moved-key"}))
+os.environ["CURSOR_AUTH_PATH"] = str(moved_auth)
+check("CURSOR_AUTH_PATH moves the CLI's sign-in", collectors.cursor_auth_path() == moved_auth and collectors.cursor_token() == "moved-key")
+check("an explicit auth path wins over CURSOR_AUTH_PATH", collectors.account_key(collectors.cursor_token(cli)) == "cli")
+os.environ["CURSOR_API_KEY"] = " exported "
+check("an exported key comes first", collectors.cursor_token() == "exported")
+for name in ("CURSOR_API_KEY", "CURSOR_AUTH_PATH"):
+  os.environ.pop(name)
+
+# --------------------------------------------------------------- accounts
+
+os.environ["XDG_STATE_HOME"] = str(work / "state")
+registry = work / "state" / "omarchy" / "agents" / "accounts" / "demo.json"
+registry.parent.mkdir(parents=True)
+registry.write_text(json.dumps({"accounts": [{"id": "main", "primary": True}], "active": "main"}))
+check("a registry with one account adds nothing to the record", collectors.registered_accounts("demo") == [])
+check("no registry at all adds nothing either", collectors.registered_accounts("nothing") == [])
+registry.write_text(json.dumps({"accounts": [{"id": "main", "primary": True}, {"id": "work", "label": "Work"}, {"label": "no id"}, "junk"], "active": "gone", "switch": "auto", "threshold": 80}))
+accounts = collectors.registered_accounts("demo")
+check(
+  "registered accounts carry which is active (the first when the registry names none it has) and the switch settings",
+  [(a["id"], a["active"], a["switch"]) for a in accounts] == [("main", True, {"mode": "auto", "threshold": 80}), ("work", False, {"mode": "auto", "threshold": 80})],
+  json.dumps(accounts),
+)
+limits = {"limits": [{"label": "Weekly", "percent": 0.5, "resetsAt": ""}], "live": False, "fetchedAtMs": 5, "usageStatusText": "", "authHelpText": "help"}
+entry = collectors.account_entry(accounts[1], limits, "", resetCredits=None)
+check(
+  "an account entry names the account, its limits, and the collector's own fields last",
+  list(entry) == ["id", "label", "email", "plan", "active", "primary", "limits", "stale", "fetchedAt", "usageStatusText", "authHelpText", "retryAdvised", "resetCredits"]
+  and (entry["label"], entry["plan"], entry["stale"], entry["fetchedAt"], entry["retryAdvised"], entry["primary"]) == ("Work", "", True, 5, False, False)
+  and collectors.account_entry(dict(accounts[0], plan="Old"), dict(limits, live=True, retryAdvised=True), "Max")["plan"] == "Max"
+  and collectors.account_entry(dict(accounts[0], plan="Old"), limits, "")["plan"] == "Old",
+  json.dumps(entry),
+)
 PY

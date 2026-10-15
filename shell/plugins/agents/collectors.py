@@ -32,7 +32,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, NamedTuple
 
@@ -360,11 +360,22 @@ def emit(record: dict[str, Any], sort_keys: bool = False) -> None:
 
 class Stats:
   """Per-day and per-model totals of every counted reply, turned into the
-  record's stats fields by snapshot()."""
+  record's stats fields by snapshot().
 
-  def __init__(self) -> None:
-    self.today = today()
-    self.recent_dates = recent_dates()
+  `today` is the local day "today" means: today itself unless a caller hands
+  in another (a date or an ISO day), for rows summarized against a day of
+  their own.
+  """
+
+  def __init__(self, today: date | str | None = None) -> None:
+    if today is None:
+      day = datetime.now().date()
+    elif isinstance(today, str):
+      day = date.fromisoformat(today)
+    else:
+      day = today
+    self.today = date_string(day)
+    self.recent_dates = [date_string(day - timedelta(days=offset)) for offset in range(6, -1, -1)]
     self.recent = {day: 0 for day in self.recent_dates}
     self.today_prompts = 0
     self.today_tokens = 0
@@ -375,26 +386,70 @@ class Stats:
     self.active_dates: set[str] = set()
     self.model_usage: dict[str, dict[str, int]] = {}
 
-  def add(self, day: str, session: str, model: str, input_tokens: int, output_tokens: int, cache_read: int, cache_write: int) -> None:
-    """One reply, a prompt, spent on `day` in `session` by `model`."""
+  def add(
+    self,
+    day: str | None,
+    session: str | None,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read: int,
+    cache_write: int,
+    prompts: int = 1,
+  ) -> None:
+    """Tokens `model` spent on `day` in `session`, and the prompts they
+    answered: one reply is one prompt, the default.
+
+    A store that books prompts apart from the tokens they spent passes
+    prompts=0 here and counts each prompt with add_prompts(); one that keeps
+    running totals passes how many prompts they cover. A day of None is a
+    row with no date to trust that still counts toward the lifetime totals,
+    and a session of None is tokens no session is known for. With no tokens
+    there is no model bucket, and with neither tokens nor prompts there is
+    nothing to count at all.
+    """
     total = input_tokens + output_tokens + cache_read + cache_write
-    self.total_prompts += 1
-    self.sessions.add(session)
-    self.active_dates.add(day)
-    bucket = self.model_usage.setdefault(model, empty_bucket())
-    bucket["inputTokens"] += input_tokens
-    bucket["outputTokens"] += output_tokens
-    bucket["cacheReadInputTokens"] += cache_read
-    bucket["cacheCreationInputTokens"] += cache_write
+    if total <= 0 and prompts <= 0:
+      return
+    self.total_prompts += prompts
+    if session is not None:
+      self.sessions.add(session)
+    if day is not None:
+      self.active_dates.add(day)
+    if total > 0:
+      bucket = self.model_usage.setdefault(model, empty_bucket())
+      bucket["inputTokens"] += input_tokens
+      bucket["outputTokens"] += output_tokens
+      bucket["cacheReadInputTokens"] += cache_read
+      bucket["cacheCreationInputTokens"] += cache_write
     if day in self.recent:
       # recentDays' messageCount holds tokens, despite the name synced
       # snapshots share.
       self.recent[day] += total
-    if day == self.today:
-      self.today_prompts += 1
-      self.today_sessions.add(session)
+    if day is not None and day == self.today:
+      self.today_prompts += prompts
+      if session is not None:
+        self.today_sessions.add(session)
       self.today_tokens += total
-      self.today_by_model[model] = self.today_by_model.get(model, 0) + total
+      if total > 0:
+        self.today_by_model[model] = self.today_by_model.get(model, 0) + total
+
+  def add_prompts(self, day: str | None, session: str | None, count: int = 1) -> None:
+    """`count` prompts typed on `day` in `session`, with no tokens of their
+    own: for a store that books what was asked apart from what it spent.
+
+    A count of 0 still says the session was in use that day. A day or a
+    session of None reads as it does in add().
+    """
+    self.total_prompts += count
+    if session is not None:
+      self.sessions.add(session)
+    if day is not None:
+      self.active_dates.add(day)
+      if day == self.today:
+        self.today_prompts += count
+        if session is not None:
+          self.today_sessions.add(session)
 
   def add_row(self, row: UsageRow, model: str) -> None:
     """A row from scan_pi_sessions or scan_opencode, under the model name the
@@ -465,7 +520,8 @@ def cached_scan(
   max_age: float,
   scan: Callable[[], tuple[dict[str, Any], bool]],
   match: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+  with_complete: bool = False,
+) -> Any:
   """Local stats, from a scan cached per day, or from `scan` under flock.
 
   `scan` returns (stats, complete). A scan that couldn't read all its sources
@@ -473,6 +529,10 @@ def cached_scan(
   every reader until the cache expires, so only a complete one is kept.
   `match` names options the scan applied, stored with it and required to
   match on reuse.
+
+  With `with_complete` the answer is (stats, complete), for a record that
+  says whether its stats cover every source; a cached scan was a complete
+  one.
 
   The cache is a pure optimization: any failure in it (an unwritable cache
   root, a lock error, a full disk) degrades to a direct scan and a warning.
@@ -484,24 +544,25 @@ def cached_scan(
     cache_file, lock_file = scan_cache_paths(agent_id, sources)
     cached = read_cached_scan(cache_file, max_age, match)
     if cached is not None:
-      return cached
+      return (cached, True) if with_complete else cached
     lock = exclusive_lock(lock_file)
   except Exception as exc:
     warn(f"cache unavailable ({exc}); scanning directly")
-    return scan()[0]
+    stats, complete = scan()
+    return (stats, complete) if with_complete else stats
 
   with lock:
     # Another run may have scanned while this one waited for the lock.
     cached = read_cached_scan(cache_file, max_age, match)
     if cached is not None:
-      return cached
+      return (cached, True) if with_complete else cached
     stats, complete = scan()
     if complete:
       try:
         write_json(cache_file, {"schemaVersion": SCAN_CACHE_VERSION, "scanDate": today(), "scannedAtMs": now_ms(), **match, "stats": stats})
       except Exception as exc:
         warn(f"could not write usage cache ({exc})")
-    return stats
+    return (stats, complete) if with_complete else stats
 
 
 # ------------------------------------------------------- pi and omp sessions
@@ -553,10 +614,14 @@ def pi_session_roots() -> list[Path]:
     roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
   if os.environ.get("PI_CODING_AGENT_SESSION_DIR", "").strip():
     roots.append(Path(os.environ["PI_CODING_AGENT_SESSION_DIR"].strip()).expanduser())
-  # Canonical roots, so an override that aliases a default root through a
-  # symlink is scanned under one spelling. A root inside another is already
-  # read with it, so it is dropped rather than counted twice.
-  canonical = list(dict.fromkeys(root.resolve() for root in roots))
+  return canonical_roots(roots)
+
+
+def canonical_roots(roots: Iterable[Path]) -> list[Path]:
+  """Session roots by realpath, so an override that aliases another root
+  through a symlink is scanned under one spelling. A root inside another is
+  already read with it, so it is dropped rather than counted twice."""
+  canonical = list(dict.fromkeys(Path(root).resolve() for root in roots))
   return [root for root in canonical if not any(other != root and root.is_relative_to(other) for other in canonical)]
 
 
@@ -621,7 +686,7 @@ def _pi_row(entry: Any, path: str, accept: Accept) -> tuple[tuple, UsageRow] | N
   return key, UsageRow(day, path, provider, model, input_tokens, output_tokens, cache_read, cache_write)
 
 
-def scan_pi_sessions(pattern: str, accept: Accept) -> tuple[list[UsageRow], bool]:
+def scan_pi_sessions(pattern: str, accept: Accept, roots: Iterable[Path] | None = None) -> tuple[list[UsageRow], bool]:
   """Every pi/omp reply `accept` takes, each counted once, and whether every
   root was read in full.
 
@@ -630,8 +695,14 @@ def scan_pi_sessions(pattern: str, accept: Accept) -> tuple[list[UsageRow], bool
   authority for the ones that reach it. A message a fork repeats is one row,
   counted toward the oldest session holding it, so a fork is a session of
   its own only for what it added, whichever file rg read first.
+
+  `roots` are the session trees to read: pi_session_roots() unless the
+  collector names others in pi's format (a harness of its own, or pi's and
+  omp's with another beside them). They are read as canonical_roots() gives
+  them, so a message copied between any of them still counts once. A
+  collector that passes roots keys its scan cache by those same roots.
   """
-  roots = [root for root in pi_session_roots() if root.is_dir()]
+  roots = [root for root in canonical_roots(pi_session_roots() if roots is None else roots) if root.is_dir()]
   if not roots:
     return [], True
   rg = find_command("rg")
@@ -659,20 +730,21 @@ def scan_pi_sessions(pattern: str, accept: Accept) -> tuple[list[UsageRow], bool
     except OSError:
       return [], False
     assert proc.stdout is not None
-    for raw in proc.stdout:
-      try:
-        event = json.loads(raw)
-        if event.get("type") != "match":
+    with proc.stdout:
+      for raw in proc.stdout:
+        try:
+          event = json.loads(raw)
+          if event.get("type") != "match":
+            continue
+          data = event["data"]
+          path = os.path.realpath(_rg_text(data.get("path")))
+          counted = _pi_row(json.loads(_rg_text(data.get("lines"))), path, accept)
+          line_number = number(data.get("line_number"))
+        except Exception:
+          # One odd line costs that line, never the scan.
           continue
-        data = event["data"]
-        path = os.path.realpath(_rg_text(data.get("path")))
-        counted = _pi_row(json.loads(_rg_text(data.get("lines"))), path, accept)
-        line_number = number(data.get("line_number"))
-      except Exception:
-        # One odd line costs that line, never the scan.
-        continue
-      if counted is not None:
-        found.append((index, path, line_number, *counted))
+        if counted is not None:
+          found.append((index, path, line_number, *counted))
     try:
       # rg exits 1 for no match and 2 when it couldn't read something.
       if proc.wait(timeout=5) not in (0, 1):
@@ -849,13 +921,15 @@ def scan_opencode(providers: Iterable[str], accept: Accept) -> tuple[list[UsageR
 # ------------------------------------------------------------------ limits
 
 
-def limits_cache_path(agent_id: str, *identity: str) -> Path:
-  """`<id>-limits-<hash>.json`, keyed by who the credential signs in as (or
-  the credential itself), so another sign-in never shows this one's numbers."""
+def limits_cache_path(agent_id: str, *identity: str, kind: str = "limits") -> Path:
+  """`<id>-<kind>-<hash>.json`, keyed by who the credential signs in as (or
+  the credential itself), so another sign-in never shows this one's numbers.
+  `kind` names an answer kept beside the limits (credits, a balance, usage
+  rows) under the same key."""
   # surrogatepass: an identity read from JSON can hold a lone surrogate, and
   # that must not cost the record.
   digest = hashlib.sha256("\0".join(identity).encode("utf-8", "surrogatepass")).hexdigest()[:16]
-  return cache_root() / f"{agent_id}-limits-{digest}.json"
+  return cache_root() / f"{agent_id}-{kind}-{digest}.json"
 
 
 def limit_window_open(entry: dict[str, Any], now: datetime) -> bool:
@@ -895,12 +969,26 @@ class LimitsCache:
   Read whatever the file time, so a clock that went back keeps it. `limits`
   are the kept windows as they read now, `fetched_at` when they were
   measured (epoch ms, 0 when never), and `data` the whole file for anything
-  else a collector keeps beside them (a plan, a no-plan marker).
+  else a collector keeps beside them (a plan, a no-plan marker, a balance).
+
+  `kind` keeps another answer of the same credential beside its limits
+  (`<id>-<kind>-<hash>.json`): credits, a balance, usage rows. at() opens a
+  cache under a name a collector already gave it.
   """
 
-  def __init__(self, agent_id: str, *identity: str) -> None:
-    self.path = limits_cache_path(agent_id, *identity)
-    self.lock_path = self.path.with_suffix(".lock")
+  def __init__(self, agent_id: str, *identity: str, kind: str = "limits") -> None:
+    self._open(limits_cache_path(agent_id, *identity, kind=kind))
+
+  @classmethod
+  def at(cls, path: Path) -> LimitsCache:
+    """The cache kept at `path`, for a name that predates the shared one."""
+    cache = cls.__new__(cls)
+    cache._open(Path(path))
+    return cache
+
+  def _open(self, path: Path) -> None:
+    self.path = path
+    self.lock_path = path.with_suffix(".lock")
     self.reload()
 
   def reload(self) -> None:
@@ -911,23 +999,37 @@ class LimitsCache:
   def younger_than(self, seconds: float) -> bool:
     return age_below(self.fetched_at / 1000, seconds)
 
-  def fresh(self, force: bool, seconds: float = PROBE_MIN_INTERVAL_SECONDS) -> bool:
-    """Whether the kept limits stand in for a probe: recent, and no --force."""
-    return bool(self.limits) and not force and self.younger_than(seconds)
+  def fresh(self, force: bool, seconds: float = PROBE_MIN_INTERVAL_SECONDS, allow_empty: bool = False) -> bool:
+    """Whether the kept answer stands in for a probe: recent, and no --force.
+
+    Only kept limits count, unless `allow_empty`: then any answer stamped
+    inside the age guard does, limits or none, for a service whose answer
+    can hold no windows (a plan without quotas, credits, a balance).
+    """
+    if force or not self.younger_than(seconds):
+      return False
+    return bool(self.limits) or (allow_empty and self.fetched_at > 0)
 
   def kept(self) -> tuple[list[dict[str, Any]], int]:
     """The stale fallback: the kept limits and their limitsFetchedAt."""
     return self.limits, self.fetched_at if self.limits else 0
 
-  def save(self, limits: list[dict[str, Any]], **extra: Any) -> int:
+  def save(self, limits: list[dict[str, Any]], only_if_newer: bool = False, **extra: Any) -> int:
     """Keep a good answer, stamped now; returns the stamp. A cache that can't
-    be written costs only the reuse, never the answer."""
+    be written costs only the reuse, never the answer.
+
+    With `only_if_newer`, a file another run stamped later is left as it is,
+    so overlapping runs (the panel's own refresh and a sooner retry) never
+    roll a newer answer back. This run still uses its own answer.
+    """
     fetched_at = now_ms()
+    payload = {"fetchedAtMs": fetched_at, "limits": limits, **extra}
     try:
-      write_json(self.path, {"fetchedAtMs": fetched_at, "limits": limits, **extra})
+      if not only_if_newer or stamp(read_json(self.path).get("fetchedAtMs")) <= fetched_at:
+        write_json(self.path, payload)
     except Exception as exc:
       warn(f"could not write limits cache ({exc})")
-    self.data = {"fetchedAtMs": fetched_at, "limits": limits, **extra}
+    self.data = payload
     self.fetched_at = fetched_at
     self.limits = open_limits(limits)
     return fetched_at
@@ -956,18 +1058,23 @@ class HttpError(Exception):
   """A request that brought back no usable answer.
 
   `status` is the HTTP status of a refusal (a redirect included), 0 when
-  there is none. `transport` means no server answered at all (DNS, no route,
-  a refused connection, a timeout, a dropped connection), which is the only
-  failure worth retryAdvised. Otherwise the server answered with a body that
-  isn't JSON, or is too large to be an answer (`invalid`).
+  there is none, and `headers` the refusal's own (a 429's retry-after).
+  `transport` means the connection failed or dropped before any reply (DNS,
+  no route, a refused or reset connection, a timeout), which is the only
+  failure worth retryAdvised. Otherwise the server answered, with a body
+  that isn't JSON or is too large to be an answer (`invalid`), or with a
+  reply cut short or garbled on the way (`cut_short`, invalid too): an
+  answer all the same, so no reason to ask again sooner.
   """
 
-  def __init__(self, status: int = 0, transport: bool = False, body: bytes = b"") -> None:
-    super().__init__(f"HTTP {status}" if status else ("unreachable" if transport else "invalid answer"))
+  def __init__(self, status: int = 0, transport: bool = False, body: bytes = b"", headers: Any = None, cut_short: bool = False) -> None:
+    super().__init__(f"HTTP {status}" if status else ("unreachable" if transport else ("reply cut short" if cut_short else "invalid answer")))
     self.status = status
     self.transport = transport
     self.invalid = not status and not transport
+    self.cut_short = cut_short
     self.body = body
+    self.headers = headers
 
 
 def open_json(request: urllib.request.Request, timeout: float = 10, limit: int = HTTP_BODY_LIMIT) -> Any:
@@ -980,12 +1087,173 @@ def open_json(request: urllib.request.Request, timeout: float = 10, limit: int =
       body = error.read(limit) or b""
     except Exception:
       body = b""
-    raise HttpError(status=error.code, body=body) from error
-  except (OSError, http.client.HTTPException) as error:
+    raise HttpError(status=error.code, body=body, headers=error.headers) from error
+  except OSError as error:
+    # URLError and every socket failure, a reset and a timeout included: the
+    # connection failed or dropped before a reply. RemoteDisconnected is
+    # both an OSError and an HTTPException, and lands here: a server that
+    # hung up without a word gave no answer.
     raise HttpError(transport=True) from error
+  except http.client.HTTPException as error:
+    # A reply arrived but was cut short (IncompleteRead) or garbled (a bad
+    # status line, bad headers): the server answered.
+    raise HttpError(cut_short=True) from error
   if len(body) > limit:
     raise HttpError()
   try:
     return json.loads(body.decode("utf-8", errors="replace"))
   except ValueError as error:
     raise HttpError() from error
+
+
+# ---------------------------------------------------------------- sign-ins
+
+
+def finite(value: Any) -> float:
+  """A float from an answer or a token, 0.0 when it isn't a finite number."""
+  if isinstance(value, bool):
+    return 0.0
+  try:
+    parsed = float(value or 0)
+  except (TypeError, ValueError):
+    return 0.0
+  return parsed if math.isfinite(parsed) else 0.0
+
+
+def jwt_claims(token: Any) -> dict[str, Any]:
+  """The claims a JWT carries, read without checking its signature (only
+  ever to tell whose it is, or when it lapses), {} for anything else."""
+  if not isinstance(token, str):
+    return {}
+  parts = token.split(".")
+  if len(parts) != 3:
+    return {}
+  try:
+    claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+  except (ValueError, UnicodeDecodeError):
+    return {}
+  return claims if isinstance(claims, dict) else {}
+
+
+def token_lapsed(token: str) -> bool:
+  """A sign-in token whose expiry has passed. The agent renews its own the
+  next time it runs; an opaque API key never lapses here."""
+  expires = finite(jwt_claims(token).get("exp"))
+  return 0 < expires <= datetime.now(timezone.utc).timestamp()
+
+
+def account_key(token: str) -> str:
+  """Who a token signs in as (the JWT's subject), so a machine signed in to
+  someone else never shows the last one's numbers, and a refreshed token
+  keeps the same caches. An opaque key stands for itself; the caches hash
+  it."""
+  return str(jwt_claims(token).get("sub") or "") or token
+
+
+# The Cursor and Grok Bot collectors ask as the same Cursor account, found
+# the same way here, so the two never describe different people.
+
+
+def cursor_auth_path() -> Path:
+  """The Cursor CLI's auth.json: CURSOR_AUTH_PATH when set, else its home
+  under the config directory."""
+  configured = os.environ.get("CURSOR_AUTH_PATH", "").strip()
+  return Path(configured).expanduser() if configured else config_home() / "cursor" / "auth.json"
+
+
+def cursor_state_db() -> Path:
+  return config_home() / "Cursor" / "User" / "globalStorage" / "state.vscdb"
+
+
+def _cursor_ide_token(state_db: Path) -> str:
+  # The sign-in the Cursor editor keeps, for people who never ran the CLI.
+  # Read-only: the editor may be writing its database right now. No
+  # immutable=1, so a live database with an active WAL still reads.
+  if not state_db.is_file():
+    return ""
+  try:
+    conn = sqlite3.connect(state_db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+  except sqlite3.Error:
+    return ""
+  try:
+    conn.execute("PRAGMA query_only = ON")
+    row = conn.execute("SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken' LIMIT 1").fetchone()
+  except sqlite3.Error:
+    return ""
+  finally:
+    conn.close()
+  value = row[0] if row else None
+  if isinstance(value, bytes):
+    value = value.decode("utf-8", errors="replace")
+  return str(value or "").strip()
+
+
+def cursor_token(auth_path: Path | None = None, state_db: Path | None = None) -> str:
+  """The key the user exported, the credential the Cursor CLI stores, or the
+  editor's sign-in, in that order.
+
+  A sign-in that has lapsed gives way to the next one that hasn't: someone
+  who ran the CLI once and now lives in the editor would otherwise wait on a
+  token nothing renews. With all of them lapsed, the first one decides.
+  """
+  key = str(os.environ.get("CURSOR_API_KEY") or "").strip()
+  if key:
+    return key
+  cli = str(read_json(auth_path or cursor_auth_path()).get("accessToken") or "").strip()
+  if cli and not token_lapsed(cli):
+    return cli
+  ide = _cursor_ide_token(state_db or cursor_state_db())
+  if ide and not token_lapsed(ide):
+    return ide
+  return cli or ide
+
+
+# ---------------------------------------------------------------- accounts
+
+
+def registered_accounts(agent_id: str) -> list[dict[str, Any]]:
+  """The accounts `omarchy agent account` registered for the agent, read
+  straight from its registry, each marked `active` and carrying the
+  registry's `switch` settings. Only a registry holding a second account
+  matters: with one, the record is exactly what it always was."""
+  state = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
+  registry = read_json(state / "omarchy" / "agents" / "accounts" / f"{agent_id}.json")
+  accounts = [a for a in registry.get("accounts") or [] if isinstance(a, dict) and a.get("id")]
+  if len(accounts) < 2:
+    return []
+  active_id = registry.get("active") or accounts[0]["id"]
+  if not any(a["id"] == active_id for a in accounts):
+    active_id = accounts[0]["id"]
+  for account in accounts:
+    account["active"] = account["id"] == active_id
+    account["switch"] = {
+      "mode": "auto" if registry.get("switch") == "auto" else "manual",
+      "threshold": registry.get("threshold") or 95,
+    }
+  return accounts
+
+
+def account_entry(account: dict[str, Any], limits: dict[str, Any], plan: str, **extra: Any) -> dict[str, Any]:
+  """One registered account in the record's `accounts`.
+
+  `limits` is what the collector's limits check answered for it: `limits`,
+  `live`, `fetchedAtMs`, `usageStatusText`, `authHelpText`, and
+  `retryAdvised` when set. `plan` is the plan it names now, the registry's
+  standing in when it names none, and `extra` the collector's own fields,
+  last.
+  """
+  return {
+    "id": account["id"],
+    "label": str(account.get("label") or account["id"]),
+    "email": str(account.get("email") or ""),
+    "plan": plan or str(account.get("plan") or ""),
+    "active": account["active"],
+    "primary": bool(account.get("primary")),
+    "limits": limits["limits"],
+    "stale": not limits["live"],
+    "fetchedAt": limits["fetchedAtMs"],
+    "usageStatusText": limits["usageStatusText"],
+    "authHelpText": limits["authHelpText"],
+    "retryAdvised": bool(limits.get("retryAdvised")),
+    **extra,
+  }
