@@ -233,7 +233,7 @@ pass "Cursor collector keeps the last good limits, stale, after a failed check"
   fail "Cursor collector says a refused sign-in has expired" "$result"
 pass "Cursor collector says a refused sign-in has expired"
 
-[[ $(jq -c '.other | {limits, tierLabel, todayTotalTokens, recentDays, modelUsage}' <<<"$result") == '{"limits":[],"tierLabel":"","todayTotalTokens":0,"recentDays":[],"modelUsage":{}}' ]] ||
+[[ $(jq -c '.other | {limits, tierLabel, todayTotalTokens, counts: [.recentDays[].messageCount], last: .recentDays[6].date, modelUsage}' <<<"$result") == "{\"limits\":[],\"tierLabel\":\"\",\"todayTotalTokens\":0,\"counts\":[0,0,0,0,0,0,0],\"last\":\"$(TZ=UTC date +%F)\",\"modelUsage\":{}}" ]] ||
   fail "Cursor collector never carries another account's numbers" "$result"
 pass "Cursor collector never carries another account's numbers"
 
@@ -313,7 +313,10 @@ unsigned=$(HOME="$TEST_HOME/unsigned-home" XDG_CONFIG_HOME="$TEST_HOME/unsigned"
   CURSOR_API_KEY="" "$ROOT/bin/omarchy-agent-usage-cursor")
 [[ $(jq -c '{ready, usageStatusText, limits, help: (.authHelpText != "")}' <<<"$unsigned") == '{"ready":true,"usageStatusText":"Waiting for auth","limits":[],"help":true}' ]] ||
   fail "Cursor collector waits for a sign-in where Cursor is installed" "$unsigned"
-[[ $(jq -c '{ready, usageStatusText, authHelpText, limits, todayPrompts, recentDays, modelUsage}' <<<"$no_token") == '{"ready":false,"usageStatusText":"","authHelpText":"","limits":[],"todayPrompts":0,"recentDays":[],"modelUsage":{}}' ]] ||
+# The last seven local days ending today, none with messages: an unused
+# record still carries the full week, zeroed.
+empty_week=$(for offset in 6 5 4 3 2 1 0; do date -d "$(date +%F) 12:00 $offset days ago" +%F; done | jq -Rsc 'split("\n")[:-1] | map({date: ., messageCount: 0})')
+[[ $(jq -c '{ready, usageStatusText, authHelpText, limits, todayPrompts, recentDays, modelUsage}' <<<"$no_token") == '{"ready":false,"usageStatusText":"","authHelpText":"","limits":[],"todayPrompts":0,"recentDays":'"$empty_week"',"modelUsage":{}}' ]] ||
   fail "Cursor collector prints an unused record where Cursor isn't installed" "$no_token"
 pass "Cursor collector waits for a sign-in only where Cursor is installed"
 
