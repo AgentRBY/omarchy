@@ -103,6 +103,22 @@ def local_day(value) -> str:
     return ""
 
 
+# A pi or opencode row's day, read as every collector reading those sources
+# reads it: a row with no time at all is today's, and an untrusted time is
+# "", so the caller skips that row alone.
+def source_day(value) -> str:
+  return datetime.now().strftime("%Y-%m-%d") if value is None else local_day(value)
+
+
+# pi, omp, and the harnesses that copy their format spell usage camelCase or
+# snake_case; the first spelling present wins.
+def usage_tokens(usage: dict, *keys: str) -> int:
+  for key in keys:
+    if key in usage:
+      return number(usage.get(key))
+  return 0
+
+
 def model_name(raw: Any) -> str:
   value = str(raw or "openrouter").rstrip("/").split("/")[-1]
   return value or "openrouter"
@@ -441,8 +457,11 @@ def opencode_row(scan: LocalScan, message_id: str, session_id: Any, entry: Any, 
   if message_id in seen:
     return
   seen.add(message_id)
+  # The message's own time, else the row's: none at all is today's, and an
+  # untrusted one, zero included, skips only this row.
   timing = entry.get("time") if isinstance(entry.get("time"), dict) else {}
-  day = local_day(timing.get("created") or created)
+  stamp = timing.get("created")
+  day = source_day(created if stamp is None else stamp)
   if not day:
     return
   raw_model = entry.get("modelID") or ((model.get("modelID") or model.get("id")) if isinstance(model, dict) else model)
@@ -531,17 +550,30 @@ def cache_root() -> Path:
   return root
 
 
-# pi and omp keep sessions under their agent dir, and `--profile=<name>`
-# moves a whole agent tree under profiles/<name>/. PI_CODING_AGENT_DIR moves
-# pi's default one, as pi itself reads it.
+# pi's and omp's session trees, each profile's too: `--profile=<name>` moves
+# the whole agent tree under <base>/profiles/<name>/. pi moves its agent tree
+# with PI_CODING_AGENT_DIR and its sessions alone with
+# PI_CODING_AGENT_SESSION_DIR, both expanding a leading ~; either is read as
+# well as the default trees, which keep whatever was written before the move.
 def pi_session_roots() -> list[Path]:
-  roots = [pi_agent_dir() / "sessions", Path.home() / ".omp" / "agent" / "sessions"]
+  roots: list[Path] = []
   for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    roots.append(base / "agent" / "sessions")
     try:
+      # Sorted so the scan order does not depend on directory order.
       roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
     except OSError:
+      # No profiles directory, or it is unreadable: the default root stands.
       pass
-  return roots
+  if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
+  if os.environ.get("PI_CODING_AGENT_SESSION_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_SESSION_DIR"].strip()).expanduser())
+  # Canonical roots, so an override that aliases a default root through a
+  # symlink is scanned under one spelling. A root inside another is already
+  # read with it, so it is dropped rather than counted twice.
+  canonical = list(dict.fromkeys(root.resolve() for root in roots))
+  return [root for root in canonical if not any(other != root and root.is_relative_to(other) for other in canonical)]
 
 
 def scan_pi(scan: LocalScan, roots: list[Path] | None = None) -> bool:
@@ -577,23 +609,28 @@ def scan_pi(scan: LocalScan, roots: list[Path] | None = None) -> bool:
       if str(message.get("provider") or "") != "openrouter":
         continue
       # A forked session repeats its parent's messages with their ids and
-      # timestamps, so those count once; a line without both always counts.
+      # timestamps, so the pair names a message across files; an id alone
+      # only within its file. A line without an id always counts.
       entry_id, stamp = entry.get("id"), entry.get("timestamp")
-      if entry_id and stamp:
-        identity = (str(entry_id), str(stamp))
+      if entry_id:
+        identity = (str(entry_id), str(stamp)) if stamp else (path, str(entry_id))
         if identity in seen:
           continue
         seen.add(identity)
       usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
-      in_tok = number(usage.get("input"))
-      out_tok = number(usage.get("output"))
-      cache_read = number(usage.get("cacheRead"))
-      cache_write = number(usage.get("cacheWrite"))
+      in_tok = usage_tokens(usage, "input", "inputTokens", "input_tokens")
+      # pi folds thinking into its own field; both are generated.
+      out_tok = usage_tokens(usage, "output", "outputTokens", "output_tokens") + usage_tokens(usage, "reasoning", "reasoningTokens", "reasoning_tokens")
+      cache_read = usage_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens")
+      cache_write = usage_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens")
       if not (in_tok or out_tok or cache_read or cache_write):
-        in_tok = number(usage.get("totalTokens"))
+        # Some writers keep only the total; it was still spent.
+        in_tok = usage_tokens(usage, "totalTokens", "total_tokens")
       if not (in_tok or out_tok or cache_read or cache_write):
         continue
-      day = local_day(stamp if stamp is not None else message.get("timestamp"))
+      # The first time present decides: none at all is today's, and an
+      # untrusted one, zero included, skips only this line.
+      day = source_day(stamp if stamp is not None else message.get("timestamp"))
       if not day:
         continue
       model = model_name(str(message.get("model") or ""))
