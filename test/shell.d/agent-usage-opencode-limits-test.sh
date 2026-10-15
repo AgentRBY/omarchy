@@ -19,7 +19,9 @@ import io
 import json
 import os
 import pathlib
+import sqlite3
 import sys
+import time
 import urllib.error
 
 loader = importlib.machinery.SourceFileLoader("collector", os.environ["COLLECTOR"])
@@ -111,17 +113,45 @@ clear_cache()
 collector.urllib.request.urlopen = answer(error=urllib.error.HTTPError("https://x", 401, "Unauthorized", {}, None))
 result = collector.collect_limits(True)
 check(
-  "OpenCode collector asks for a fresh key on 401",
-  result["limits"] == [] and result["usageStatusText"] == "OpenCode limits unavailable" and "rejected the saved key" in result["authHelpText"],
+  "OpenCode collector asks for a new sign-in on 401",
+  result["limits"] == [] and result["usageStatusText"] == "Sign-in expired" and "rejected the saved key" in result["authHelpText"]
+  and result["retryAdvised"] is False,
   json.dumps(result),
 )
 
+# A Zen pay-as-you-go key has no Go plan behind it. That is no trouble, and
+# the answer is remembered so the next runs don't ask again.
 clear_cache()
-collector.urllib.request.urlopen = answer(error=urllib.error.HTTPError("https://x", 403, "Forbidden", {}, None))
+asked = []
+def no_plan(request, timeout=None):
+  asked.append(request.full_url)
+  raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, None)
+collector.urllib.request.urlopen = no_plan
 result = collector.collect_limits(True)
 check(
-  "OpenCode collector names a missing Go subscription on 403",
-  "no OpenCode Go subscription" in result["authHelpText"],
+  "OpenCode collector stays silent for a key without a Go plan",
+  result["limits"] == [] and result["usageStatusText"] == "" and result["authHelpText"] == "" and result["tierLabel"] == ""
+  and result["stale"] is False and len(asked) == 1,
+  json.dumps(result),
+)
+result = collector.collect_limits(False)
+check(
+  "OpenCode collector doesn't ask again about a key without a Go plan",
+  result["usageStatusText"] == "" and result["limits"] == [] and len(asked) == 1,
+  json.dumps(result),
+)
+collector.urllib.request.urlopen = answer({"usage": {"weekly": {"percent": 10, "resetsAt": "2999-01-01T00:00:00.000Z"}}})
+result = collector.collect_limits(True)
+check(
+  "OpenCode collector --force asks again after a Go plan appears",
+  [(w["label"], w["percent"]) for w in result["limits"]] == [("Weekly (7-day)", 0.1)] and result["tierLabel"] == "Go",
+  json.dumps(result),
+)
+collector.urllib.request.urlopen = no_plan
+result = collector.collect_limits(True)
+check(
+  "OpenCode collector drops a cancelled plan's windows",
+  result["limits"] == [] and result["usageStatusText"] == "" and result["tierLabel"] == "",
   json.dumps(result),
 )
 
@@ -129,8 +159,9 @@ clear_cache()
 collector.urllib.request.urlopen = answer(error=urllib.error.HTTPError("https://x", 500, "Server Error", {}, None))
 result = collector.collect_limits(True)
 check(
-  "OpenCode collector shows a non-auth status code",
-  "returned status 500" in result["authHelpText"],
+  "OpenCode collector shows a non-auth status code without advising a retry",
+  "returned status 500" in result["authHelpText"] and result["usageStatusText"] == "OpenCode limits unavailable"
+  and result["retryAdvised"] is False,
   json.dumps(result),
 )
 
@@ -143,12 +174,31 @@ check(
   json.dumps(result),
 )
 
-clear_key()
-collector.urllib.request.urlopen = answer({"usage": {"rolling": {"percent": 1}}})
+clear_cache()
+collector.urllib.request.urlopen = answer(error=TimeoutError("timed out"))
 result = collector.collect_limits(True)
 check(
-  "OpenCode collector falls back to local stats without a key",
-  result["limits"] == [] and result["usageStatusText"] == "Local usage only" and result["authHelpText"] != "",
+  "OpenCode collector advises a retry on a timeout",
+  result["retryAdvised"] is True and "Couldn't reach" in result["authHelpText"],
+  json.dumps(result),
+)
+
+# A server that answered with garbage was reached; retrying soon won't help.
+clear_cache()
+collector.urllib.request.urlopen = lambda request, timeout=None: io.BytesIO(b"<html>oops</html>")
+result = collector.collect_limits(True)
+check(
+  "OpenCode collector reads an unparseable answer as no data, not an outage",
+  result["retryAdvised"] is False and "returned no data" in result["authHelpText"],
+  json.dumps(result),
+)
+
+clear_key()
+collector.urllib.request.urlopen = answer(error=RuntimeError("no key, no request"))
+result = collector.collect_limits(True)
+check(
+  "OpenCode collector shows local stats alone without a key",
+  result["limits"] == [] and result["usageStatusText"] == "" and result["authHelpText"] == "" and result["signedIn"] is False,
   json.dumps(result),
 )
 
@@ -169,7 +219,30 @@ check(
   "OpenCode collector keeps cached windows, stale, after a failed probe",
   [(w["label"], w["percent"], w["resetsAt"]) for w in result["limits"]]
   == [("Rolling (5h)", 0.0, ""), ("Monthly", 0.4, "2999-01-01T00:00:00.000Z")] and result["stale"] is True
-  and result["fetchedAtMs"] == 1700000000000 and result["tierLabel"] == "Go" and result["usageStatusText"] == "",
+  and result["fetchedAtMs"] == 1700000000000 and result["tierLabel"] == "Go" and result["usageStatusText"] == ""
+  and result["retryAdvised"] is False,
+  json.dumps(result),
+)
+
+# A cache written before the clock went back is still the last good answer.
+future = time.time() + 86400
+os.utime(collector.limits_cache_path("zen_test"), (future, future))
+collector.urllib.request.urlopen = answer(error=urllib.error.URLError("no route"))
+result = collector.collect_limits(True)
+check(
+  "OpenCode collector keeps a cache whose file time is in the future",
+  [w["label"] for w in result["limits"]] == ["Rolling (5h)", "Monthly"] and result["stale"] is True and result["retryAdvised"] is True
+  and result["usageStatusText"] == "",
+  json.dumps(result),
+)
+
+# A refused key keeps its last numbers, stale, and asks for a new sign-in.
+collector.urllib.request.urlopen = answer(error=urllib.error.HTTPError("https://x", 401, "Unauthorized", {}, None))
+result = collector.collect_limits(True)
+check(
+  "OpenCode collector keeps the last limits when the key is refused",
+  [w["label"] for w in result["limits"]] == ["Rolling (5h)", "Monthly"] and result["stale"] is True
+  and result["usageStatusText"] == "Sign-in expired",
   json.dumps(result),
 )
 
@@ -227,8 +300,6 @@ check("OpenCode collector reads pi's credential as a last resort", [c.token for 
 
 # OpenCode V2 keeps its credentials in the database: a Go key first, and the
 # Console session last, asked on Console's endpoint with its workspace.
-import sqlite3
-import time
 clear_key()
 v2_home = os.path.join(home, "v2-data")
 os.makedirs(os.path.join(v2_home, "opencode"), exist_ok=True)
@@ -275,7 +346,7 @@ collector.urllib.request.urlopen = answer(error=urllib.error.HTTPError("https://
 result = collector.collect_limits(True)
 check(
   "OpenCode collector names an expired Console session",
-  result["usageStatusText"] == "OpenCode Console session expired" and result["limits"] == [],
+  result["usageStatusText"] == "Sign-in expired" and "Console session has expired" in result["authHelpText"] and result["limits"] == [],
   json.dumps(result),
 )
 PY

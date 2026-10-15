@@ -269,6 +269,6 @@ EMPTY_HOME=$(mktemp -d)
 trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME" "$EMPTY_HOME"' EXIT
 result=$(HOME="$EMPTY_HOME" XDG_CACHE_HOME="$EMPTY_HOME/.cache" XDG_DATA_HOME="$EMPTY_HOME/.local/share" \
   OPENCODE_API_KEY= PATH="$EMPTY_HOME/bin:$PATH" "$ROOT/bin/omarchy-agent-usage-opencode")
-[[ $(jq -c '{ready, tierLabel, limits, totalPrompts, limitsStale}' <<<"$result") == '{"ready":false,"tierLabel":"","limits":[],"totalPrompts":0,"limitsStale":false}' ]] ||
+[[ $(jq -c '{ready, tierLabel, limits, totalPrompts, limitsStale, limitsFetchedAt, usageStatusText, authHelpText, recentDays: (.recentDays | length), activeDates, modelUsage}' <<<"$result") == '{"ready":false,"tierLabel":"","limits":[],"totalPrompts":0,"limitsStale":false,"limitsFetchedAt":0,"usageStatusText":"","authHelpText":"","recentDays":7,"activeDates":[],"modelUsage":{}}' ]] ||
   fail "OpenCode collector gives an empty record where nobody uses it" "$result"
 pass "OpenCode collector gives an empty record where nobody uses it"

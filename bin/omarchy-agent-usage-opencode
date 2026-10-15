@@ -40,11 +40,15 @@ API_BASE_URL = "https://opencode.ai"
 USAGE_PATH = "/zen/go/v1/usage"
 CONSOLE_USAGE_PATH = "/inference/go/v1/usage"
 CONSOLE_ORG_HEADER = "x-opencode-org-id"
-AUTH_HELP = "Run `opencode providers login`, set OPENCODE_API_KEY, or sign in with pi to read subscription limits."
 CONSOLE_EXPIRED_HELP = "OpenCode's Console session has expired. Run `opencode auth login` to refresh it."
 
 # A panel opened and closed repeatedly must not become one request per flick.
 PROBE_MIN_INTERVAL_SECONDS = 15
+
+# A key with no Go plan behind it (a Zen pay-as-you-go account) gets the same
+# answer every time, so it is asked again hourly rather than on every run;
+# --force asks at once, for someone who just subscribed.
+NO_PLAN_RECHECK_SECONDS = 3600
 
 # The subscription has two provider ids: "opencode" for the plain Zen
 # gateway and "opencode-go" for the Go plan. Both spend the same account and
@@ -660,21 +664,27 @@ def probe_limits(credential):
   })
   try:
     with urllib.request.urlopen(request, timeout=10) as response:
-      payload = json.loads(response.read().decode("utf-8", errors="replace"))
+      body = response.read()
   except urllib.error.HTTPError as error:
     # A refused credential may just be the wrong one for this account, so the
     # next way in still gets its turn.
     if error.code == 401:
       return {"ok": False, "refused": True, "helpText": "OpenCode rejected the saved key. Reconnect OpenCode Go with /connect in the TUI, or set OPENCODE_API_KEY."}
     if error.code == 403:
-      return {"ok": False, "refused": True, "helpText": "The saved key has no OpenCode Go subscription behind it. Local OpenCode stats are still shown."}
+      # A key without a Go plan behind it: Zen pay-as-you-go has no meters,
+      # which is no trouble at all.
+      return {"ok": False, "noPlan": True}
     return {"ok": False, "helpText": f"OpenCode's usage endpoint returned status {error.code}. Local OpenCode stats are still shown."}
   except Exception:
-    # A transport failure reached no server at all — no route, no DNS. Any
-    # real answer, including an error status, is a server we should stop
-    # pestering; this is not.
+    # A transport failure reached no server at all: no route, no DNS, a
+    # timeout. Any real answer, including an error status, is a server we
+    # should stop pestering; this is not.
     return {"ok": False, "transport": True, "helpText": "Couldn't reach OpenCode's usage endpoint. Retrying shortly. Local OpenCode stats are still shown."}
 
+  try:
+    payload = json.loads(body.decode("utf-8", errors="replace"))
+  except ValueError:
+    payload = None
   if not isinstance(payload, dict) or not payload:
     return {"ok": False, "helpText": "OpenCode's usage endpoint returned no data. Local OpenCode stats are still shown."}
   limits = parse_usage(payload)
@@ -699,6 +709,14 @@ def limit_window_open(entry, now):
   return resets_at > now
 
 
+def read_json(path):
+  try:
+    value = json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    return {}
+  return value if isinstance(value, dict) else {}
+
+
 def open_cached_limits(cached):
   entries = cached.get("limits") if isinstance(cached, dict) else None
   if not isinstance(entries, list):
@@ -717,37 +735,56 @@ def limits_cache_path(token):
 
 
 def collect_limits(force):
-  result = {"limits": [], "tierLabel": "", "usageStatusText": "Local usage only", "authHelpText": "", "retryAdvised": False, "stale": False, "fetchedAtMs": 0}
+  result = {"limits": [], "tierLabel": "", "usageStatusText": "", "authHelpText": "", "retryAdvised": False, "stale": False, "fetchedAtMs": 0, "signedIn": False}
+  # No key at all is a Zen user paying as they go, or someone who only runs
+  # opencode locally: local stats stand alone, with nothing to fix.
   candidates = credential_candidates()
   if not candidates:
-    result["authHelpText"] = AUTH_HELP
     return result
+  result["signedIn"] = True
 
   # Limits only ever show for a Go plan, so a tier follows them.
   def answer(limits, fetched_at, stale):
-    result.update(limits=limits, tierLabel="Go" if limits else "", usageStatusText="", stale=stale, fetchedAtMs=fetched_at if limits else 0)
+    result.update(limits=limits, tierLabel="Go" if limits else "", stale=stale, fetchedAtMs=fetched_at if limits else 0)
     return result
 
+  def remember(cache, payload):
+    try:
+      write_json(cache, payload)
+    except Exception as exc:
+      print(f"omarchy-agent-usage-opencode: could not write limits cache ({exc})", file=sys.stderr)
+
   refused = None
+  no_plan = False
   for candidate in candidates:
     cache = limits_cache_path(candidate.token)
-    cached = read_fresh_json(cache, float("inf")) or {}
+    # Read whatever the file time says, so a clock that went back keeps it.
+    cached = read_json(cache)
     fallback = open_cached_limits(cached)
     fetched_at = number(cached.get("fetchedAtMs"))
+    age = time.time() - fetched_at / 1000
+
+    # A key already known to have no Go plan isn't asked again for a while.
+    if cached.get("noPlan") is True and not force and 0 <= age < NO_PLAN_RECHECK_SECONDS:
+      no_plan = True
+      continue
 
     # A panel opened and closed repeatedly must not become one request per
     # flick, so a recent answer is reused; --force skips the wait.
-    if fallback and not force and 0 <= time.time() - fetched_at / 1000 < PROBE_MIN_INTERVAL_SECONDS:
+    if fallback and not force and 0 <= age < PROBE_MIN_INTERVAL_SECONDS:
       return answer(fallback, fetched_at, False)
 
     probe = probe_limits(candidate)
     if probe.get("ok"):
       fetched_at = round(time.time() * 1000)
-      try:
-        write_json(cache, {"fetchedAtMs": fetched_at, "limits": probe["limits"]})
-      except Exception:
-        pass
+      remember(cache, {"fetchedAtMs": fetched_at, "limits": probe["limits"]})
       return answer(probe["limits"], fetched_at, False)
+
+    if probe.get("noPlan"):
+      # The windows of a plan that's gone mean nothing now, so they go too.
+      remember(cache, {"fetchedAtMs": round(time.time() * 1000), "limits": [], "noPlan": True})
+      no_plan = True
+      continue
 
     if probe.get("refused"):
       # Keep the first refusal that still has open windows, so a later
@@ -761,24 +798,28 @@ def collect_limits(force):
       continue
 
     # Last good numbers, marked stale, beat an empty limits section while
-    # the probe is down.
+    # the probe is down. A key that already said it has no plan makes an
+    # outage on another one no news.
     result["retryAdvised"] = bool(probe.get("transport"))
     answer(fallback, fetched_at, True)
-    if not fallback:
+    if fallback:
+      result["authHelpText"] = probe["helpText"]
+    elif not no_plan:
       result["usageStatusText"] = "OpenCode limits unavailable"
       result["authHelpText"] = probe["helpText"]
     return result
 
+  # A working key without a Go plan is the answer: the other ways in only
+  # failed to say the same.
+  if no_plan:
+    return result
+
   # Every way in was refused: an account problem, not an outage. Keep any
-  # still-open numbers, but say what went wrong.
+  # still-open numbers, but say a new sign-in is needed.
   probe, fallback, fetched_at, expired = refused
   answer(fallback, fetched_at, True)
-  if expired:
-    result["usageStatusText"] = "OpenCode Console session expired"
-    result["authHelpText"] = CONSOLE_EXPIRED_HELP
-  else:
-    result["usageStatusText"] = "Sign-in rejected" if fallback else "OpenCode limits unavailable"
-    result["authHelpText"] = probe["helpText"]
+  result["usageStatusText"] = "Sign-in expired"
+  result["authHelpText"] = CONSOLE_EXPIRED_HELP if expired else probe["helpText"]
   return result
 
 
@@ -797,14 +838,14 @@ def main():
   stats = cached_local_stats(max_age)
   limits = collect_limits(args.force)
 
-  # Nobody uses OpenCode's subscription here: no usage and no limits leave
-  # an empty tier, a record the panel skips.
+  # Nobody uses OpenCode here: no usage and no credential leave a record the
+  # panel skips.
   record = {
     "schemaVersion": 1,
     "id": AGENT_ID,
     "name": AGENT_NAME,
     "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": number(stats.get("totalPrompts")) > 0 or bool(limits["limits"]),
+    "ready": number(stats.get("totalPrompts")) > 0 or bool(limits["limits"]) or limits["signedIn"],
     "hasLocalStats": True,
     "tierLabel": limits["tierLabel"],
     "usageStatusText": limits["usageStatusText"],
