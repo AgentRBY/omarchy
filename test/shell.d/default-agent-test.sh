@@ -150,6 +150,7 @@ zeroclaw_package="github:zeroclaw-labs/zeroclaw"
 kilo_package="npm:@kilocode/cli"
 devin_package="http:devin[platforms_linux_x64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-x86_64-unknown-linux.tar.gz,platforms_linux_arm64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-aarch64-unknown-linux.tar.gz,bin_path=bin,version_list_url=https://static.devin.ai/cli/current/manifest.json,version_json_path=.version]"
 amp_package="amp"
+commandcode_package="npm:command-code"
 cursor_agent_package="cursor-agent"
 muse_package="http:muse[url=https://api.meta.ai/muse-launcher.sh,bin=muse,version_list_url=https://api.meta.ai/muse-code/channels/muse-stable,version_json_path=.version]"
 
@@ -182,6 +183,7 @@ assert_lazy_stub "$zeroclaw_package" zeroclaw
 assert_lazy_stub "$kilo_package" kilo
 assert_lazy_stub "$devin_package" devin
 assert_lazy_stub "$amp_package" amp
+assert_lazy_stub "$commandcode_package" commandcode
 assert_lazy_stub "$cursor_agent_package" cursor-agent
 assert_lazy_stub "$muse_package" muse
 pass "custom agent lazy stubs preserve their mise packages"
@@ -205,6 +207,7 @@ grep -Fx "$freebuff_package freebuff" "$stub_log" >/dev/null || fail "user setup
 grep -Fx "$zeroclaw_package zeroclaw" "$stub_log" >/dev/null || fail "user setup creates the ZeroClaw lazy stub"
 grep -Fx "$kilo_package kilo" "$stub_log" >/dev/null || fail "user setup creates the Kilo lazy stub"
 grep -Fx "$devin_package devin" "$stub_log" >/dev/null || fail "user setup creates the Devin CLI lazy stub"
+grep -Fx "$commandcode_package commandcode" "$stub_log" >/dev/null || fail "user setup creates the Command Code lazy stub"
 grep -Fx "$amp_package" "$stub_log" >/dev/null || fail "user setup creates the Amp lazy stub"
 pass "user setup creates the custom agent lazy stubs"
 
@@ -223,6 +226,7 @@ grep -Fx "$freebuff_package freebuff" "$stub_log" >/dev/null || fail "user setup
 grep -Fx "$zeroclaw_package zeroclaw" "$stub_log" >/dev/null || fail "user setup recreates the ZeroClaw lazy stub"
 grep -Fx "$kilo_package kilo" "$stub_log" >/dev/null || fail "user setup recreates the Kilo lazy stub"
 grep -Fx "$devin_package devin" "$stub_log" >/dev/null || fail "user setup recreates the Devin CLI lazy stub"
+grep -Fx "$commandcode_package commandcode" "$stub_log" >/dev/null || fail "user setup recreates the Command Code lazy stub"
 grep -Fx "$amp_package" "$stub_log" >/dev/null || fail "user setup recreates the Amp lazy stub"
 pass "user setup recreates wrappers even when the commands are present"
 
@@ -283,6 +287,10 @@ grep -Fx "$kilo_package kilo" "$stub_log" >/dev/null || fail "Kilo migration cre
 : >"$stub_log"
 OMARCHY_TEST_MISSING_COMMAND=devin source "$ROOT/migrations/1792034198.sh" >/dev/null
 grep -Fx "$devin_package devin" "$stub_log" >/dev/null || fail "Devin CLI migration creates its lazy stub"
+
+: >"$stub_log"
+OMARCHY_TEST_MISSING_COMMAND=commandcode source "$ROOT/migrations/1792034306.sh" >/dev/null
+grep -Fx "$commandcode_package commandcode" "$stub_log" >/dev/null || fail "Command Code migration creates its lazy stub"
 
 : >"$stub_log"
 OMARCHY_TEST_MISSING_COMMAND=amp source "$ROOT/migrations/1792034243.sh" >/dev/null
@@ -402,6 +410,7 @@ OMARCHY_TEST_MISSING_COMMAND=zeroclaw source "$ROOT/migrations/1792034058.sh" >/
 OMARCHY_TEST_MISSING_COMMAND=kilo source "$ROOT/migrations/1792034151.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=devin source "$ROOT/migrations/1792034198.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=amp source "$ROOT/migrations/1792034243.sh" >/dev/null
+OMARCHY_TEST_MISSING_COMMAND=commandcode source "$ROOT/migrations/1792034306.sh" >/dev/null
 [[ ! -s $stub_log ]] || fail "agent migrations respect the preinstall opt-out"
 [[ ! -e $test_home/.local/bin/omp ]] || fail "agent migration removes the obsolete Oh My Pi wrapper after opt-out"
 
@@ -546,9 +555,10 @@ pass "agent migrations install working wrappers without overriding the preinstal
 "$ROOT/bin/omarchy-mise-install" "$kilo_package" kilo
 "$ROOT/bin/omarchy-mise-install" "$devin_package" devin
 "$ROOT/bin/omarchy-mise-install" "$amp_package" amp
+"$ROOT/bin/omarchy-mise-install" "$commandcode_package" commandcode
 touch "$test_home/.local/bin/agy" "$test_home/.local/bin/ori"
 omarchy-remove-preinstalls >/dev/null
-for command in agy omp ori grok crush cursor-agent muse kimi qwen dsh mcode goose kiro-cli vibe freebuff zeroclaw kilo devin amp; do
+for command in agy omp ori grok crush cursor-agent muse kimi qwen dsh mcode goose kiro-cli vibe freebuff zeroclaw kilo devin amp commandcode; do
   [[ ! -e $test_home/.local/bin/$command ]] || fail "Remove Preinstalls deletes the $command lazy stub"
 done
 pass "Remove Preinstalls deletes every optional agent lazy stub"
@@ -654,6 +664,9 @@ declare -A expected_agents=(
   [devin-cli]="devin"
   [amp]="amp"
   [ampcode]="amp"
+  [commandcode]="commandcode"
+  [command-code]="commandcode"
+  [cmdc]="commandcode"
   [cursor]="cursor-agent"
   [cursor-agent]="cursor-agent"
   [muse]="muse"
@@ -684,6 +697,7 @@ declare -A expected_packages=(
   [kilo]="$kilo_package"
   [devin]="$devin_package"
   [amp]="$amp_package"
+  [commandcode]="$commandcode_package"
   [cursor-agent]="$cursor_agent_package"
   [muse]="$muse_package"
 )
@@ -972,6 +986,7 @@ assert_launch zeroclaw zerocode
 assert_launch kilo kilo --auto "--prompt=Review this project"
 assert_launch devin devin --permission-mode dangerous --respect-workspace-trust false -- "Review this project"
 assert_launch amp bash -c 'printf "%s\n" "$1" | exec amp --dangerously-allow-all' amp "Review this project"
+assert_launch commandcode commandcode --yolo -- "Review this project"
 [[ $(<"$clipboard_log") == "Review this project" ]] || fail "Freebuff launcher puts the prompt on the clipboard"
 mapfile -d '' -t notification_args <"$notification_history"
 [[ ${notification_args[*]} == *"Freebuff takes no starting prompt"* ]] || fail "Freebuff launcher says where the prompt went"
@@ -1017,6 +1032,7 @@ assert_bypass zeroclaw zerocode
 assert_bypass kilo kilo --auto
 assert_bypass devin devin --permission-mode dangerous --respect-workspace-trust false
 assert_bypass amp amp --dangerously-allow-all
+assert_bypass commandcode commandcode --yolo
 [[ ! -s $clipboard_log && ! -s $notification_history ]] || fail "Freebuff launcher leaves the clipboard alone without a prompt"
 pass "agent launcher skips permission prompts for every supported agent"
 

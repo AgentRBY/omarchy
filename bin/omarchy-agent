@@ -212,6 +212,12 @@ amp)
     command=(amp --dangerously-allow-all)
   fi
   ;;
+commandcode)
+  # --yolo skips permission prompts and implies --trust. A positional prompt
+  # seeds the interactive session; -- keeps one starting with a dash literal.
+  command=(commandcode --yolo)
+  [[ -n ${prompt:-} ]] && command+=(-- "$prompt")
+  ;;
 *)
   echo "Unsupported default agent: $agent" >&2
   exit 1

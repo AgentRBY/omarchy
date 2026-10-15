@@ -494,6 +494,9 @@
   "setup.default.agent.codex": {
     "label": "Codex"
   },
+  "setup.default.agent.commandcode": {
+    "label": "Command Code"
+  },
   "setup.default.agent.copilot": {
     "label": "Copilot"
   },

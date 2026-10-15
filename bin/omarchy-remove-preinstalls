@@ -102,6 +102,12 @@ if gum confirm --affirmative "$(omarchy-i18n common.yes)" --negative "$(omarchy-
     rm -f ~/.local/bin/amp
   fi
 
+  # Preserve a user-managed Command Code launcher at the same path.
+  if [[ -f ~/.local/bin/commandcode && ! -L ~/.local/bin/commandcode ]] &&
+    grep -Eq '^mise use -g .*"npm:command-code"' ~/.local/bin/commandcode; then
+    rm -f ~/.local/bin/commandcode
+  fi
+
   omarchy-pkg-drop \
     aether \
     cliamp \

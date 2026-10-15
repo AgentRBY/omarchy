@@ -27,6 +27,7 @@ The private-use glyphs in `omarchy.ttf` are:
 - `U+E916` — Kilo, from <https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/kilocode.svg>
 - `U+E917` — Devin, from the official mark published by Cognition at <https://github.com/club-cog/built-by-devin>
 - `U+E918` — Amp, from <https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/amp.svg>, its three paths joined into one
+- `U+E919` — Command Code, from <https://commandcode.ai/favicon/2024/safari-pinned-tab.svg>, its traced paths joined into one
 
 The agent marks are monochrome so the menu can render them using the active
 theme's foreground and selection colors.
