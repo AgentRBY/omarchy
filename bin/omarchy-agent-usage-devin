@@ -7,7 +7,8 @@
 Token stats come from the Devin CLI session database at
 $XDG_DATA_HOME/devin/cli/sessions.db, where each assistant message carries
 metadata.metrics with its input/output/cache token counts and the model that
-generated it, and from pi/omp sessions that ran on the devin provider.
+generated it, and from pi/omp sessions and opencode's message database (both
+of its stores) that ran on the devin provider.
 
 The daily and weekly quota comes from the user-status cache the Devin CLI
 writes at $XDG_CACHE_HOME/devin/cli/user_status.*.bin every time it starts:
@@ -508,12 +509,118 @@ def scan_pi_sessions(stats):
   return code in (0, 1)
 
 
+# ---------------------------------------------------------------- opencode
+
+
+def opencode_db():
+  # The database opencode itself reads, as the opencode collector finds it:
+  # OPENCODE_DB when set (a relative name lives beside the default one), and
+  # opencode-v2.db only for the builds that wrote nothing else.
+  root = data_home() / "opencode"
+  configured = os.environ.get("OPENCODE_DB", "").strip()
+  if configured:
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else root / path
+  normal = root / "opencode.db"
+  legacy = root / "opencode-v2.db"
+  return legacy if not normal.is_file() and legacy.is_file() else normal
+
+
+def add_opencode_row(stats, message_id, session_id, entry, row_type, created, seen):
+  # The original `message` table keeps the provider and model at the top
+  # level; V2's `session_message` nests them under `model` and keeps the role
+  # in its `type` column, with a compaction's tokens spent like a reply's.
+  if not isinstance(entry, dict) or (entry.get("role") or row_type) not in ("assistant", "compaction"):
+    return
+  nested = obj(entry.get("model"))
+  if str(entry.get("providerID") or nested.get("providerID") or "") != PROVIDER:
+    return
+  tokens = obj(entry.get("tokens"))
+  cache = obj(tokens.get("cache"))
+  input_tokens = number(tokens.get("input"))
+  # opencode keeps thinking tokens out of output; both are generated.
+  output_tokens = number(tokens.get("output")) + number(tokens.get("reasoning"))
+  cache_read = number(cache.get("read"))
+  cache_write = number(cache.get("write"))
+  if not (input_tokens or output_tokens or cache_read or cache_write):
+    return
+  # A message migrated into both stores counts once.
+  if message_id in seen:
+    return
+  seen.add(message_id)
+  day = local_day(obj(entry.get("time")).get("created")) or local_day(created)
+  if day is None:
+    return
+  model = entry.get("modelID") or nested.get("id") or nested.get("modelID")
+  stats.add("opencode:" + str(session_id), day, model_name(model), input_tokens, output_tokens, cache_read, cache_write)
+
+
+def scan_opencode_db(stats):
+  """Add the devin rows from both of opencode's message stores, deduplicated
+  by message id. Returns whether the scan ran to completion."""
+  db = opencode_db()
+  if not db.is_file():
+    return True
+  try:
+    # Read-only: opencode may be writing right now.
+    conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+  except sqlite3.Error:
+    return False
+  # The LIKE gate is pure acceleration; the Python filter stays the authority
+  # for the rows that reach it.
+  gate = "LIKE '%\"providerID\"%:%\"devin\"%'"
+  try:
+    conn.execute("PRAGMA query_only = ON")
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    seen = set()
+    # V2 first: a build that migrated keeps reading, and a message in both
+    # stores counts once.
+    columns = table_columns(conn, "session_message") if "session_message" in tables else set()
+    if {"id", "session_id", "type", "data"} <= columns:
+      created = "m.time_created" if "time_created" in columns else "NULL"
+      source = "session_message m"
+      fork_filter = ""
+      if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= table_columns(conn, "session_v2"):
+        # A fork copies its source session's messages under new ids; only
+        # what came after the fork was spent in it.
+        source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
+        fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
+      for message_id, session_id, row_type, time_created, raw in conn.execute(
+        f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
+        f" WHERE m.type IN ('assistant', 'compaction') AND m.data {gate}" + fork_filter
+      ):
+        # One row that still fails must not take the scan down with it.
+        try:
+          add_opencode_row(stats, str(message_id), session_id, json.loads(raw), str(row_type or ""), time_created, seen)
+        except Exception:
+          continue
+    columns = table_columns(conn, "message") if "message" in tables else set()
+    if {"session_id", "data"} <= columns:
+      row_id = "id" if "id" in columns else "rowid"
+      for message_id, session_id, raw in conn.execute(
+        f"SELECT {row_id}, session_id, data FROM message"
+        f" WHERE data LIKE '%\"role\"%:%\"assistant\"%' AND data {gate}"
+      ):
+        try:
+          add_opencode_row(stats, str(message_id), session_id, json.loads(raw), "", None, seen)
+        except Exception:
+          continue
+  except sqlite3.Error as error:
+    # Transient lock, schema migration, corruption: the numbers stop here,
+    # incomplete.
+    print(f"omarchy-agent-usage-devin: {db}: {error}", file=sys.stderr)
+    return False
+  finally:
+    conn.close()
+  return True
+
+
 # -------------------------------------------------------------- scan cache
 
 
 def scan_cache_paths():
   digest = hashlib.sha1("\n".join([
-    str(Path.home()), str(data_dir()), str(data_home()), os.environ.get("PI_CODING_AGENT_DIR", ""),
+    str(Path.home()), str(data_dir()), str(data_home()), os.environ.get("PI_CODING_AGENT_DIR", ""), str(opencode_db()),
   ]).encode("utf-8")).hexdigest()[:16]
   root = cache_root()
   return root / f"devin-scan-{digest}.json", root / f"devin-scan-{digest}.lock"
@@ -524,6 +631,7 @@ def run_local_scans():
   complete = scan_pi_sessions(stats)
   for path in session_databases():
     complete = scan_devin_database(path, stats) and complete
+  complete = scan_opencode_db(stats) and complete
   return stats.record(), complete
 
 
