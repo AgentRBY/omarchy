@@ -311,8 +311,8 @@ before = hashlib.sha256(db.read_bytes()).hexdigest()
 
 os.environ["XDG_CONFIG_HOME"] = str(root)
 print(json.dumps({
-  "ide": collector.read_token(root / "cursor" / "auth.json"),
-  "cliWins": collector.read_token(Path(sys.argv[3])),
+  "ide": collector.cursor_token(root / "cursor" / "auth.json"),
+  "cliWins": collector.cursor_token(Path(sys.argv[3])),
   "untouched": hashlib.sha256(db.read_bytes()).hexdigest() == before and sorted(p.name for p in db.parent.iterdir()) == ["state.vscdb"],
 }))
 PY
@@ -455,7 +455,7 @@ conn.execute("CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value
 conn.execute("INSERT INTO ItemTable VALUES ('cursorAuth/accessToken', ?)", (jwt("u-editor", time.time() + 3600),))
 conn.commit()
 conn.close()
-out["fallthrough"] = collector.account_key(collector.read_token(auth)) == collector.account_key(jwt("u-editor", 0))
+out["fallthrough"] = collector.account_key(collector.cursor_token(auth)) == collector.account_key(jwt("u-editor", 0))
 
 # Untrusted numbers never break the record.
 out["robust"] = [collector.fraction("nan"), collector.fraction("inf"), collector.fraction(True), collector.number("1e400"), collector.iso("9" * 30)]

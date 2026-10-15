@@ -213,6 +213,11 @@ rm -f "$XDG_CONFIG_HOME/cursor/auth.json"
 record=$(EXPECT="$editor_token" ANSWER="$answer" collect)
 [[ $(jq -c '{ready, stale: .limitsStale, percent: .limits[0].percent}' <<<"$record") == "$live" ]] ||
   fail "the Cursor editor's sign-in stands in for the CLI's" "$record"
+moved_token=$(jwt p-moved "$expiry")
+jq -n --arg token "$moved_token" '{accessToken: $token}' >"$test_tmp/moved-auth.json"
+record=$(CURSOR_AUTH_PATH="$test_tmp/moved-auth.json" EXPECT="$moved_token" ANSWER="$answer" collect)
+[[ $(jq -c '{ready, stale: .limitsStale, percent: .limits[0].percent}' <<<"$record") == "$live" ]] ||
+  fail "CURSOR_AUTH_PATH moves the CLI's sign-in, as it does for the Cursor collector" "$record"
 pass "the sign-in is the one the Cursor collector reads, in the same order"
 
 # Both collectors pick the same sign-in from the same files.
@@ -229,7 +234,7 @@ def load(name):
 
 cursor = load("omarchy-agent-usage-cursor")
 grokbot = load("omarchy-agent-usage-grokbot")
-print(cursor.read_token(cursor.default_auth_path()) == grokbot.read_token() != "")
+print(cursor.cursor_token(cursor.cursor_auth_path()) == grokbot.cursor_token() != "")
 PY
 )
 [[ $same == "True" ]] || fail "Grok Bot and Cursor read the same sign-in" "$same"

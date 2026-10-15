@@ -15,12 +15,8 @@ The agents panel only ever reads the JSON this prints.
 from __future__ import annotations
 
 import argparse
-import base64
-import http.client
 import json
-import math
 import os
-import sqlite3
 import sys
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -32,20 +28,24 @@ from typing import Any
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
 from collectors import (  # noqa: E402
-  PROBE_MIN_INTERVAL_SECONDS,
   HttpError,
   LimitsCache,
+  account_key,
   base_record as shared_base_record,
   cached_scan,
   config_home,
+  cursor_auth_path,
+  cursor_token,
   emit,
   empty_bucket,
   empty_stats,
+  finite,
   number,
   open_json,
   read_json,
   scan_cache_paths,
   scan_max_age,
+  token_lapsed,
 )
 
 AGENT_ID = "cursor"
@@ -77,104 +77,6 @@ def cursor_in_use(auth_path: Path) -> bool:
   return any(path.is_dir() for path in (auth_path.parent, config_home() / "Cursor", Path.home() / ".cursor"))
 
 
-# ------------------------------------------------------------ cursor sign-in
-#
-# The Grok Bot collector reads the same account the same way, from this same
-# block; keep the two identical.
-
-
-def finite(value: Any) -> float:
-  if isinstance(value, bool):
-    return 0.0
-  try:
-    parsed = float(value or 0)
-  except (TypeError, ValueError):
-    return 0.0
-  return parsed if math.isfinite(parsed) else 0.0
-
-
-def default_auth_path() -> Path:
-  return config_home() / "cursor" / "auth.json"
-
-
-def default_state_db() -> Path:
-  return config_home() / "Cursor" / "User" / "globalStorage" / "state.vscdb"
-
-
-def read_ide_token(state_db: Path) -> str:
-  """The sign-in the Cursor editor keeps, for people who never ran the CLI.
-
-  Read-only: the editor may be writing its database right now. No
-  immutable=1, so a live database with an active WAL still reads.
-  """
-  if not state_db.is_file():
-    return ""
-  try:
-    conn = sqlite3.connect(state_db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
-  except sqlite3.Error:
-    return ""
-  try:
-    conn.execute("PRAGMA query_only = ON")
-    row = conn.execute("SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken' LIMIT 1").fetchone()
-  except sqlite3.Error:
-    return ""
-  finally:
-    conn.close()
-  value = row[0] if row else None
-  if isinstance(value, bytes):
-    value = value.decode("utf-8", errors="replace")
-  return str(value or "").strip()
-
-
-def read_cli_token(path: Path) -> str:
-  return str(read_json(path).get("accessToken") or "").strip()
-
-
-def jwt_claims(token: str) -> dict[str, Any]:
-  parts = token.split(".")
-  if len(parts) != 3:
-    return {}
-  try:
-    claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
-  except (ValueError, UnicodeDecodeError):
-    return {}
-  return claims if isinstance(claims, dict) else {}
-
-
-# A sign-in token whose expiry has passed. The CLI and the editor each renew
-# their own the next time they run; an opaque API key never lapses here.
-def token_lapsed(token: str) -> bool:
-  expires = finite(jwt_claims(token).get("exp"))
-  return 0 < expires <= datetime.now(timezone.utc).timestamp()
-
-
-def read_token(path: Path | None = None, state_db: Path | None = None) -> str:
-  """The key the user exported, the credential the Cursor CLI stores, or the
-  editor's sign-in, in that order.
-
-  A sign-in that has lapsed gives way to the next one that hasn't: someone who
-  ran the CLI once and now lives in the editor would otherwise wait on a
-  token nothing renews. With all of them lapsed, the first one decides.
-  """
-  key = str(os.environ.get("CURSOR_API_KEY") or "").strip()
-  if key:
-    return key
-  cli = read_cli_token(path or default_auth_path())
-  if cli and not token_lapsed(cli):
-    return cli
-  ide = read_ide_token(state_db or default_state_db())
-  if ide and not token_lapsed(ide):
-    return ide
-  return cli or ide
-
-
-# Who the token signs in as (the JWT's subject), so a machine signed in to
-# someone else never shows the last one's numbers, and a refreshed token keeps
-# the same caches. An opaque API key stands for itself. The caches hash it.
-def account_key(token: str) -> str:
-  return str(jwt_claims(token).get("sub") or "") or token
-
-
 # ------------------------------------------------------------------ record
 
 
@@ -194,12 +96,6 @@ def base_record(**overrides: Any) -> dict[str, Any]:
   # dashboard reports usage events, never prompt or session counts; the panel
   # keeps those numbers out of today's tooltip when hasPromptStats is false.
   return shared_base_record(AGENT_ID, AGENT_NAME, scope="account", hasPromptStats=False, **overrides)
-
-
-# A reply cut short came from a server that answered, so it is no reason to
-# ask the panel for a sooner retry, unlike a dashboard nothing reached.
-def cut_short(error: HttpError) -> bool:
-  return isinstance(error.__cause__, http.client.HTTPException)
 
 
 class CursorClient:
@@ -226,7 +122,9 @@ class CursorClient:
         raise CursorError(AUTH_HELP, auth=True) from error
       if error.status:
         raise CursorError(f"Cursor's dashboard returned status {error.status}.") from error
-      if error.transport and cut_short(error):
+      # A reply cut short came from a server that answered, so it is no
+      # reason to ask the panel for a sooner retry.
+      if error.cut_short:
         raise CursorError("Cursor's dashboard cut its reply short.") from error
       # No route, no DNS, refused, reset or timed out: nothing answered.
       if error.transport:
@@ -440,7 +338,7 @@ def kept_limits(cache: LimitsCache) -> list[dict[str, Any]]:
 
 
 def scan(api_base_url: str, auth_path: Path, limits_only: bool, state_db: Path | None = None, force: bool = False) -> dict[str, Any]:
-  token = read_token(auth_path, state_db)
+  token = cursor_token(auth_path, state_db)
   if not token:
     if cursor_in_use(auth_path):
       return base_record(ready=True, usageStatusText="Waiting for auth", authHelpText=AUTH_HELP)
@@ -482,7 +380,7 @@ def scan(api_base_url: str, auth_path: Path, limits_only: bool, state_db: Path |
 
   # A panel opened and shut repeatedly must not turn into a request per
   # flick, so an answer this recent is the answer, even one with no meters.
-  if not force and isinstance(cache.data.get("limits"), list) and cache.younger_than(PROBE_MIN_INTERVAL_SECONDS):
+  if cache.fresh(force, allow_empty=True):
     record = base_record(ready=True, tierLabel=kept_tier, limits=kept, limitsFetchedAt=fetched_at)
     record.update(week_stats(client, today, key, scan_age))
     return record
@@ -514,7 +412,7 @@ def main() -> int:
   parser.add_argument("--api-base-url", default=os.environ.get("CURSOR_API_ENDPOINT", API_BASE_URL))
   args = parser.parse_args()
 
-  auth_path = Path(args.auth_path).expanduser() if args.auth_path else default_auth_path()
+  auth_path = Path(args.auth_path).expanduser() if args.auth_path else cursor_auth_path()
   try:
     record = scan(args.api_base_url, auth_path, args.limits_only, force=args.force)
   # scan() keeps the last limits through any failed check; only a failure
