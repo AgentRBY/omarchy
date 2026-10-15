@@ -20,7 +20,6 @@ only ever read. The agents panel only ever reads the JSON this prints.
 """
 
 import argparse
-import base64
 import json
 import math
 import os
@@ -45,6 +44,7 @@ from collectors import (  # noqa: E402
   cached_scan,
   canonical_roots,
   emit,
+  jwt_claims,
   now_ms,
   number,
   open_json,
@@ -203,11 +203,7 @@ def logins():
 
 
 def email_of(id_token):
-  try:
-    claims = str(id_token).split(".")[1]
-    return str(json.loads(base64.urlsafe_b64decode(claims + "=" * (-len(claims) % 4))).get("email") or "")
-  except Exception:
-    return ""
+  return str(jwt_claims(id_token).get("email") or "")
 
 
 # Which Google account a sign-in belongs to, so the limits kept for it are
