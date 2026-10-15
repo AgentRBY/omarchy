@@ -18,6 +18,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import tempfile
@@ -35,6 +36,8 @@ EXPIRED_HELP = "Antigravity's saved sign-in expired. Start `agy` to refresh it."
 PROBE_REUSE_SECONDS = 60
 # A limits-only refresh needs fresh limits, not a fresh history scan.
 LIMITS_ONLY_SCAN_REUSE_SECONDS = 900
+# More tokens than any one step could hold is a damaged field, not usage.
+MAX_TOKENS = 1e12
 
 
 def app_root():
@@ -269,6 +272,67 @@ def model_bucket(models, model):
   return models.setdefault(model, {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0})
 
 
+# A token count from disk is untrusted: a boolean, a negative, NaN, an
+# absurdly large or a non-numeric value counts as nothing, so one bad field
+# costs that field rather than the scan.
+def number(value):
+  if isinstance(value, bool):
+    return 0
+  try:
+    count = float(value or 0)
+  except (TypeError, ValueError, OverflowError):
+    return 0
+  return round(count) if 0 < count < MAX_TOKENS else 0
+
+
+# A transcript step's tokens as (input, output, cache read, cache write).
+# Steps nest Gemini's counts under usage, where the prompt count includes
+# the cached part and thinking sits beside the candidates; newer builds put
+# input_tokens, output_tokens, cache_read_tokens and cache_write_tokens on the
+# step itself. Every reader of those adds the four up, so input here excludes
+# the cache reads, the way Anthropic's counts do. None when the step reports
+# no usage.
+def step_tokens(step):
+  usage = step.get("usage")
+  for source in ([usage] if isinstance(usage, dict) else []) + [step]:
+    if "prompt_token_count" in source or "candidates_token_count" in source:
+      prompt = number(source.get("prompt_token_count"))
+      cached = min(prompt, number(source.get("cached_content_token_count")))
+      output = number(source.get("candidates_token_count")) + number(source.get("thoughts_token_count"))
+      return prompt - cached, output, cached, 0
+    if any(key in source for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")):
+      return (number(source.get("input_tokens")), number(source.get("output_tokens")),
+              number(source.get("cache_read_tokens")), number(source.get("cache_write_tokens")))
+  return None
+
+
+# A model step names its model by id; a "Model Selection" step names it the
+# way the picker shows it ("Gemini 3.8 Flash (High)"). Both fold to the same
+# key, so a conversation's tokens don't split across two spellings.
+MODEL_SELECTION = re.compile(r"Model Selection` (?:from .+? )?to (.+?)\.(?:\s|$|<)")
+
+
+def model_key(name):
+  key = re.sub(r"[\s_]+", "-", re.sub(r"[()]", " ", name).strip().lower())
+  return re.sub(r"-+", "-", key).strip("-")
+
+
+def step_model(step):
+  for field in ("model", "model_name", "model_id"):
+    value = step.get(field)
+    if isinstance(value, str) and model_key(value):
+      return model_key(value)
+  return ""
+
+
+def selected_model(step):
+  content = step.get("content")
+  if not isinstance(content, str) or "Model Selection" not in content:
+    return ""
+  match = MODEL_SELECTION.search(content)
+  return model_key(match.group(1)) if match else ""
+
+
 def history_entries(root):
   try:
     lines = (root / "history.jsonl").read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -283,9 +347,28 @@ def history_entries(root):
       yield entry
 
 
+# Each conversation in the summaries with when it last changed and, where
+# agy records it, the conversation it was spawned from.
+def conversation_summaries(root):
+  summaries = root / "conversation_summaries.db"
+  if not summaries.is_file():
+    return []
+  try:
+    conn = sqlite3.connect(summaries.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+    try:
+      columns = {row[1] for row in conn.execute("PRAGMA table_info(conversation_summaries)")}
+      parent = "parent_conversation_id" if "parent_conversation_id" in columns else "NULL"
+      return conn.execute(f"SELECT conversation_id, last_modified_time, {parent} FROM conversation_summaries").fetchall()
+    finally:
+      conn.close()
+  except sqlite3.Error:
+    return []
+
+
 # Every prompt from history.jsonl, every conversation from it and from the
 # conversation summaries, and the tokens each model step in a transcript
-# reports. Steps that report no usage add no tokens.
+# reports. Steps that report no usage add no tokens; steps without a usable
+# date still count toward the lifetime totals.
 def local_stats(root):
   today = datetime.now().astimezone().date()
   week = [(today - timedelta(days=offset)).isoformat() for offset in range(6, -1, -1)]
@@ -295,60 +378,72 @@ def local_stats(root):
   days, sessions, today_sessions = set(), set(), set()
   today_by_model, models = {}, {}
 
+  # A subagent's conversation is part of the one that spawned it, so it
+  # counts toward that conversation rather than as a session of its own.
+  summaries = conversation_summaries(root)
+  parents = {str(conversation): str(parent) for conversation, _, parent in summaries if conversation and parent}
+
+  def session_of(conversation):
+    conversation, seen = str(conversation), set()
+    while conversation in parents and conversation not in seen:
+      seen.add(conversation)
+      conversation = parents[conversation]
+    return conversation
+
   for entry in history_entries(root):
     day = local_day(entry.get("timestamp"))
     if not day:
       continue
     prompts += 1
     days.add(day)
-    conversation = entry.get("conversationId") or entry.get("conversation_id")
+    conversation = entry.get("conversationId") or entry.get("conversation_id") or entry.get("sessionId")
     if conversation:
-      sessions.add(conversation)
+      sessions.add(session_of(conversation))
     if day == today:
       today_prompts += 1
       if conversation:
-        today_sessions.add(conversation)
+        today_sessions.add(session_of(conversation))
 
-  summaries = root / "conversation_summaries.db"
-  if summaries.is_file():
-    try:
-      conn = sqlite3.connect(summaries.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
-      try:
-        for conversation, modified in conn.execute("SELECT conversation_id, last_modified_time FROM conversation_summaries"):
-          if conversation:
-            sessions.add(conversation)
-            if local_day(modified) == today:
-              today_sessions.add(conversation)
-      finally:
-        conn.close()
-    except sqlite3.Error:
-      pass
+  for conversation, modified, _ in summaries:
+    if conversation:
+      sessions.add(session_of(conversation))
+      if local_day(modified) == today:
+        today_sessions.add(session_of(conversation))
 
   for transcript in (root / "brain").glob("*/.system_generated/logs/transcript.jsonl"):
     try:
       lines = transcript.read_text(encoding="utf-8", errors="ignore").splitlines()
     except OSError:
       continue
+    # The model a conversation runs on carries from step to step until a
+    # step names another one.
+    current = ""
     for line in lines:
       try:
         step = json.loads(line)
       except ValueError:
         continue
-      usage = step.get("usage") if isinstance(step, dict) else None
-      if not isinstance(usage, dict):
+      if not isinstance(step, dict):
         continue
-      uncached = int(usage.get("prompt_token_count") or usage.get("input_tokens") or 0)
-      output = int(usage.get("candidates_token_count") or usage.get("output_tokens") or 0)
-      model = str(step.get("model") or "unknown")
+      current = step_model(step) or selected_model(step) or current
+      tokens = step_tokens(step)
+      if not tokens or not any(tokens):
+        continue
+      model = current or "unknown"
       bucket = model_bucket(models, model)
-      bucket["inputTokens"] += uncached
-      bucket["outputTokens"] += output
-      day = local_day(step.get("created_at"))
+      bucket["inputTokens"] += tokens[0]
+      bucket["outputTokens"] += tokens[1]
+      bucket["cacheReadInputTokens"] += tokens[2]
+      bucket["cacheCreationInputTokens"] += tokens[3]
+      total = sum(tokens)
+      day = local_day(step.get("created_at") or step.get("timestamp"))
+      if day:
+        days.add(day)
       if day in by_day:
-        by_day[day] += uncached + output
+        by_day[day] += total
       if day == today:
-        today_tokens += uncached + output
-        today_by_model[model] = today_by_model.get(model, 0) + uncached + output
+        today_tokens += total
+        today_by_model[model] = today_by_model.get(model, 0) + total
 
   return {
     "hasLocalStats": prompts > 0 or bool(sessions) or bool(models),
