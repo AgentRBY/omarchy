@@ -31,7 +31,7 @@ printf '#!/bin/bash\nexit 0\n' >"$test_tmp/bin/omarchy-restart-shell"
 printf '#!/bin/bash\nexit 1\n' >"$test_tmp/bin/pacman"
 cat >"$test_tmp/bin/gum" <<'STUB'
 #!/bin/bash
-[[ $* != "confirm Linux kernel has been updated. Reboot?" ]] || exit 1
+[[ $* != "confirm --affirmative Yes --negative No Linux kernel has been updated. Reboot?" ]] || exit 1
 printf '%s\n' "$*" >>"$TEST_TMP/prompts"
 exit 1
 STUB
@@ -59,7 +59,7 @@ done
 
 run_restart() {
   : >"$test_tmp/prompts"
-  env HOME="$test_tmp/home" OMARCHY_UPDATE_UNATTENDED=0 PATH="$test_tmp/bin:$PATH" \
+  env HOME="$test_tmp/home" OMARCHY_PATH="$ROOT" OMARCHY_UPDATE_UNATTENDED=0 PATH="$test_tmp/bin:$ROOT/bin:$PATH" \
     TEST_TMP="$test_tmp" TEST_PIDS="$1" \
     bash "$ROOT/bin/omarchy-update-restart" >"$test_tmp/output"
   [[ ! -e $test_tmp/unexpected ]] || fail "restart test attempted a system mutation"
@@ -72,7 +72,7 @@ assert_prompts() {
   count=$(wc -l <"$test_tmp/prompts")
   ((count == $1)) || fail "$2" "Expected $1 prompts, got $count"
   if ((count)); then
-    [[ $(cat "$test_tmp/prompts") == "confirm Hyprland has been updated. Reboot?" ]] ||
+    [[ $(cat "$test_tmp/prompts") == "confirm --affirmative Yes --negative No Hyprland has been updated. Reboot?" ]] ||
       fail "restart prompt identifies the changed compositor"
   fi
   pass "$2"
