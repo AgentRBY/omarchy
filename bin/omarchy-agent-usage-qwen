@@ -237,7 +237,6 @@ def summarize(rows):
   # Qwen Code's prompts are its user records, not its replies: a reply adds
   # its tokens, and a prompt only its session and day.
   stats = Stats()
-  prompts = today_prompts = 0
   seen = set()
 
   for row in rows:
@@ -256,17 +255,9 @@ def summarize(rows):
     seen.add((kind, key))
     session = str(session)
     if kind == "r":
-      stats.add(day, session, model, input_tokens, output_tokens, cache_read, 0)
-      continue
-    prompts += 1
-    stats.sessions.add(session)
-    stats.active_dates.add(day)
-    if day == stats.today:
-      today_prompts += 1
-      stats.today_sessions.add(session)
-
-  stats.total_prompts = prompts
-  stats.today_prompts = today_prompts
+      stats.add(day, session, model, input_tokens, output_tokens, cache_read, 0, prompts=0)
+    else:
+      stats.add_prompts(day, session)
   return stats.snapshot()
 
 
