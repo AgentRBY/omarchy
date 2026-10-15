@@ -126,7 +126,8 @@ class TimestampTests(unittest.TestCase):
       with local_zone(zone), tempfile.TemporaryDirectory() as scratch, self.subTest(zone=zone):
         root = Path(scratch)
         write_fixture(root, invalid)
-        with patch.dict(namespace, datetime=FrozenDatetime):
+        # Today is the shared module's to say, as well as the collector's.
+        with patch.dict(namespace, datetime=FrozenDatetime), patch.object(sys.modules['collectors'], 'datetime', FrozenDatetime):
           stats = collector.local_stats(root)
         self.assertTrue(stats['hasLocalStats'])
         self.assertEqual(stats['totalPrompts'], 3)
