@@ -24,6 +24,7 @@ The private-use glyphs in `omarchy.ttf` are:
 - `U+E913` — Kiro, from the ghost in <https://kiro.dev/icon.svg>, with its tile dropped
 - `U+E914` — Mistral AI, from <https://simpleicons.org/icons/mistralai.svg>
 - `U+E915` — Freebuff, from <https://freebuff.com/favicon.svg>, its rects joined into one path
+- `U+E916` — Kilo, from <https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/kilocode.svg>
 
 The agent marks are monochrome so the menu can render them using the active
 theme's foreground and selection colors.

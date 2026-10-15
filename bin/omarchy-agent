@@ -191,6 +191,12 @@ zeroclaw)
   command=(zerocode)
   prompt_via_clipboard="ZeroClaw"
   ;;
+kilo)
+  # Kilo is built on OpenCode and shares its flags. Bind the prompt so one
+  # starting with a dash stays literal.
+  command=(kilo --auto)
+  [[ -n ${prompt:-} ]] && command+=("--prompt=$prompt")
+  ;;
 *)
   echo "Unsupported default agent: $agent" >&2
   exit 1

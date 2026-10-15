@@ -515,6 +515,9 @@
   "setup.default.agent.hermes": {
     "label": "Hermes"
   },
+  "setup.default.agent.kilo": {
+    "label": "Kilo"
+  },
   "setup.default.agent.kimi": {
     "label": "Kimi"
   },

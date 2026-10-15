@@ -23,6 +23,7 @@ omarchy-mise-install "http:kiro-cli[platforms_linux_x64_url=https://prod.downloa
 omarchy-mise-install "github:mistralai/mistral-vibe[matching=vibe-linux]" vibe
 omarchy-mise-install npm:freebuff freebuff
 omarchy-mise-install github:zeroclaw-labs/zeroclaw zeroclaw
+omarchy-mise-install npm:@kilocode/cli kilo
 omarchy-mise-install cursor-agent
 omarchy-mise-install npm:@kitlangton/ghui ghui
 omarchy-mise-install aqua:modem-dev/hunk hunk
