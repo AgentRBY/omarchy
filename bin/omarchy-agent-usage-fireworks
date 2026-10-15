@@ -128,13 +128,19 @@ def empty_bucket() -> dict[str, int]:
   }
 
 
+def empty_recent_days() -> list[dict[str, Any]]:
+  """The last seven local days ending today, each with no messages."""
+  today = datetime.now().astimezone().date()
+  return [{"date": (today - timedelta(days=offset)).isoformat(), "messageCount": 0} for offset in range(6, -1, -1)]
+
+
 def empty_stats() -> dict[str, Any]:
   return {
     "todayPrompts": 0,
     "todaySessions": 0,
     "todayTotalTokens": 0,
     "todayTokensByModel": {},
-    "recentDays": [],
+    "recentDays": empty_recent_days(),
     "totalPrompts": 0,
     "totalSessions": 0,
     "activeDays": 0,

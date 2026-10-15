@@ -39,7 +39,10 @@ pass "Fireworks collector prints a valid record without credentials"
 [[ $(jq -c '{usageStatusText, authHelpText, tierLabel, limits, balance, limitsStale, limitsFetchedAt}' <<<"$no_key") == '{"usageStatusText":"","authHelpText":"","tierLabel":"","limits":[],"balance":null,"limitsStale":false,"limitsFetchedAt":0}' ]] ||
   fail "Fireworks collector reports no trouble on an unused machine" "$no_key"
 pass "Fireworks collector reports no trouble on an unused machine"
-[[ $(jq -c '[.todayPrompts, .todaySessions, .todayTotalTokens, .todayTokensByModel, .recentDays, .totalPrompts, .totalSessions, .activeDays, .activeDates, .modelUsage]' <<<"$no_key") == '[0,0,0,{},[],0,0,0,[],{}]' ]] ||
+# The last seven local days ending today, none with messages: an unused
+# record still carries the full week, zeroed.
+empty_week=$(for offset in 6 5 4 3 2 1 0; do date -d "$(date +%F) 12:00 $offset days ago" +%F; done | jq -Rsc 'split("\n")[:-1] | map({date: ., messageCount: 0})')
+[[ $(jq -c '[.todayPrompts, .todaySessions, .todayTotalTokens, .todayTokensByModel, .recentDays, .totalPrompts, .totalSessions, .activeDays, .activeDates, .modelUsage]' <<<"$no_key") == "[0,0,0,{},$empty_week,0,0,0,[],{}]" ]] ||
   fail "Fireworks collector prints the full empty stats block on an unused machine" "$no_key"
 pass "Fireworks collector prints the full empty stats block on an unused machine"
 
