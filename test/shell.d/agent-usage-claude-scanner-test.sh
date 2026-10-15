@@ -181,7 +181,7 @@ cat >>"$projects/session.jsonl" <<EOF
 {"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-4","message":{"id":"message-3","role":"assistant","model":"claude-test","usage":{"input_tokens":7,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3}}}
 EOF
 cache_file=$(find "$TEST_HOME/.cache/omarchy/agent-usage" -name 'claude-scan-*.json' -print -quit)
-touch -d "@$(( $(date +%s) + 3600 ))" "$cache_file"
+jq -c --argjson at "$(( ($(date +%s) + 3600) * 1000 ))" '.scannedAtMs = $at' "$cache_file" >"$cache_file.tmp" && mv "$cache_file.tmp" "$cache_file"
 
 result=$(HOME="$TEST_HOME" XDG_CACHE_HOME="$TEST_HOME/.cache" XDG_DATA_HOME="$TEST_HOME/.local/share" \
   "$ROOT/bin/omarchy-agent-usage-claude")
