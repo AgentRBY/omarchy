@@ -551,6 +551,9 @@
   "setup.default.agent.ori": {
     "label": "Ori"
   },
+  "setup.default.agent.phantombot": {
+    "label": "Phantombot"
+  },
   "setup.default.agent.pi": {
     "label": "Pi"
   },

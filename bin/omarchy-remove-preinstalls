@@ -108,6 +108,12 @@ if gum confirm --affirmative "$(omarchy-i18n common.yes)" --negative "$(omarchy-
     rm -f ~/.local/bin/commandcode
   fi
 
+  # Preserve a user-managed Phantombot launcher at the same path.
+  if [[ -f ~/.local/bin/phantombot && ! -L ~/.local/bin/phantombot ]] &&
+    grep -Eq '^mise use -g .*"github:phantomyard/phantombot"' ~/.local/bin/phantombot; then
+    rm -f ~/.local/bin/phantombot
+  fi
+
   omarchy-pkg-drop \
     aether \
     cliamp \

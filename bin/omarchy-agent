@@ -218,6 +218,13 @@ commandcode)
   command=(commandcode --yolo)
   [[ -n ${prompt:-} ]] && command+=(-- "$prompt")
   ;;
+phantombot)
+  # Permissions belong to the harness Phantombot runs underneath, so it has
+  # no bypass flag. --prompt= opens the TUI with the prompt as its first turn;
+  # the bound form is the one that keeps a leading dash literal.
+  command=(phantombot)
+  [[ -n ${prompt:-} ]] && command+=("--prompt=$prompt")
+  ;;
 *)
   echo "Unsupported default agent: $agent" >&2
   exit 1
