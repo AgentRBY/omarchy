@@ -23,6 +23,7 @@ The private-use glyphs in `omarchy.ttf` are:
 - `U+E912` — Goose, from <https://github.com/aaif-goose/goose/blob/main/documentation/static/img/goose.svg>
 - `U+E913` — Kiro, from the ghost in <https://kiro.dev/icon.svg>, with its tile dropped
 - `U+E914` — Mistral AI, from <https://simpleicons.org/icons/mistralai.svg>
+- `U+E915` — Freebuff, from <https://freebuff.com/favicon.svg>, its rects joined into one path
 
 The agent marks are monochrome so the menu can render them using the active
 theme's foreground and selection colors.

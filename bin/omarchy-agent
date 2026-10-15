@@ -179,11 +179,26 @@ vibe)
   command=(vibe --auto-approve)
   [[ -n ${prompt:-} ]] && command+=(-- "$prompt")
   ;;
+freebuff)
+  # Freebuff takes no starting prompt and asks no tool permissions, so a
+  # prompt goes to the clipboard below instead.
+  command=(freebuff)
+  prompt_via_clipboard="Freebuff"
+  ;;
 *)
   echo "Unsupported default agent: $agent" >&2
   exit 1
   ;;
 esac
+
+# An agent with no way to take a starting prompt still opens, with the prompt
+# on the clipboard to paste as its first message, so a prompted launch from the
+# agents panel or a crash report is not lost.
+if [[ -n ${prompt:-} && -n ${prompt_via_clipboard:-} ]]; then
+  printf '%s' "$prompt" | wl-copy
+  omarchy-notification-send -g 󰅇 "$(omarchy-i18n agents.promptOnClipboard "$prompt_via_clipboard")" \
+    "$(omarchy-i18n agents.promptOnClipboardBody)"
+fi
 
 # A new session uses the current selection rather than its parent's account
 # pin. Explicit provider homes still override the selection. Carry the new pin
