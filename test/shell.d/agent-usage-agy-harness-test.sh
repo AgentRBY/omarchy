@@ -228,9 +228,11 @@ if command -v rg >/dev/null; then
     '{"type":"message","id":"a2","timestamp":"'$now'","message":{"role":"assistant","provider":"google-gemini-cli","model":"gemini-3-pro","usage":{"input":999,"output":999}}}' \
     >"$test_tmp/.omp/agent/sessions/project/one.jsonl"
   printf '%s\n' "$answer" >"$test_tmp/.omp/agent/sessions/project/fork.jsonl"
-  # A profile's sessions count; an answer with an unreadable time and a
-  # total alone still counts toward the lifetime totals.
-  printf '%s\n' '{"type":"message","id":"p1","timestamp":"0001-01-01T00:00:00Z","message":{"role":"assistant","provider":"google-antigravity","model":"gemini-3-pro","usage":{"input":"many","totalTokens":30}}}' \
+  # A profile's sessions count, an answer that keeps only a total among
+  # them; one with an unreadable time skips only itself, as it does in every
+  # collector reading pi.
+  printf '%s\n%s\n' '{"type":"message","id":"p1","timestamp":"0001-01-01T00:00:00Z","message":{"role":"assistant","provider":"google-antigravity","model":"gemini-3-pro","usage":{"input":"many","totalTokens":30}}}' \
+    '{"type":"message","id":"p2","timestamp":"'$now'","message":{"role":"assistant","provider":"google-antigravity","model":"gemini-3-pro","usage":{"input":"many","totalTokens":30}}}' \
     >"$test_tmp/.omp/profiles/work/agent/sessions/s.jsonl"
   printf '%s\n' '{"type":"message","id":"m1","timestamp":"'$now'","message":{"role":"assistant","provider":"google-antigravity","model":"gemini-3-pro","usage":{"input":3,"output":1}}}' \
     >"$test_tmp/pi-elsewhere/sessions/s.jsonl"
@@ -239,16 +241,16 @@ if command -v rg >/dev/null; then
   printf '%s\n%s\n' "$openclaw" "$openclaw" >"$test_tmp/.openclaw/agents/main/sessions/s.jsonl"
   sqlite "$test_tmp/.local/share/opencode/opencode.db" \
     "CREATE TABLE message (session_id TEXT, data TEXT);
-     CREATE TABLE session_message (session_id TEXT, data TEXT, type TEXT);
+     CREATE TABLE session_message (id TEXT, session_id TEXT, data TEXT, type TEXT);
      INSERT INTO message VALUES
        ('s1', '{\"role\":\"assistant\",\"providerID\":\"google\",\"modelID\":\"antigravity-gemini-3-pro\",\"time\":{\"created\":$(in_ms 0)},\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":1,\"cache\":{\"read\":2,\"write\":0}}}'),
        ('s2', '{\"role\":\"assistant\",\"providerID\":\"google\",\"modelID\":\"gemini-3-pro\",\"time\":{\"created\":$(in_ms 0)},\"tokens\":{\"input\":999,\"output\":999}}'),
        ('s3', '{\"role\":\"user\",\"providerID\":\"google\",\"modelID\":\"antigravity-gemini-3-pro\",\"tokens\":{\"input\":999}}');
      INSERT INTO session_message VALUES
-       ('s4', '{\"model\":{\"providerID\":\"google\",\"id\":\"antigravity-gemini-3-pro\"},\"time\":{\"created\":$(in_ms 0)},\"tokens\":{\"input\":4,\"output\":\"x\"}}', 'assistant');"
+       ('m4', 's4', '{\"model\":{\"providerID\":\"google\",\"id\":\"antigravity-gemini-3-pro\"},\"time\":{\"created\":$(in_ms 0)},\"tokens\":{\"input\":4,\"output\":\"x\"}}', 'assistant');"
   record=$(PI_DIR="$test_tmp/pi-elsewhere" collect "")
   asked >/dev/null
-  [[ $(jq -c '{ready, hasLocalStats, totalPrompts, totalSessions, todayPrompts, todayTotalTokens, models: (.modelUsage | keys)}' <<<"$record") == '{"ready":true,"hasLocalStats":true,"totalPrompts":7,"totalSessions":6,"todayPrompts":6,"todayTotalTokens":155,"models":["antigravity-gemini-3-pro","gemini-3-pro"]}' ]] ||
+  [[ $(jq -c '{ready, hasLocalStats, totalPrompts, totalSessions, todayPrompts, todayTotalTokens, models: (.modelUsage | keys)}' <<<"$record") == '{"ready":true,"hasLocalStats":true,"totalPrompts":7,"totalSessions":6,"todayPrompts":7,"todayTotalTokens":185,"models":["antigravity-gemini-3-pro","gemini-3-pro"]}' ]] ||
     fail "Antigravity collector counts usage from pi, omp, OpenClaw, and opencode's plugin" "$record"
   [[ $(jq -c '.modelUsage["gemini-3-pro"]' <<<"$record") == '{"inputTokens":135,"outputTokens":23,"cacheReadInputTokens":5,"cacheCreationInputTokens":0}' ]] ||
     fail "Antigravity collector counts each harness answer's tokens once" "$record"
@@ -269,7 +271,7 @@ if command -v rg >/dev/null; then
        ('m2', 's2', '{\"model\":{\"providerID\":\"google\",\"id\":\"antigravity-gemini-3-pro\"},\"time\":{\"created\":$(in_ms 0)},\"tokens\":{\"input\":4,\"output\":\"x\"}}', 'assistant');"
   record=$(PI_DIR="$test_tmp/pi-elsewhere" collect "")
   asked >/dev/null
-  [[ $(jq -c '{totalPrompts, totalSessions, todayTotalTokens, opencode: .modelUsage["antigravity-gemini-3-pro"].inputTokens}' <<<"$record") == '{"totalPrompts":7,"totalSessions":6,"todayTotalTokens":155,"opencode":14}' ]] ||
+  [[ $(jq -c '{totalPrompts, totalSessions, todayTotalTokens, opencode: .modelUsage["antigravity-gemini-3-pro"].inputTokens}' <<<"$record") == '{"totalPrompts":7,"totalSessions":6,"todayTotalTokens":185,"opencode":14}' ]] ||
     fail "Antigravity collector counts a message in both opencode stores once" "$record"
   pass "Antigravity collector counts a message in both opencode stores once"
 else

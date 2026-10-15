@@ -620,27 +620,80 @@ def conversation_summaries(root, problems):
     return []
 
 
-# pi and omp keep sessions under <home>/agent/sessions, and `--profile=<name>`
-# moves the whole agent tree under <home>/profiles/<name>/; PI_CODING_AGENT_DIR
-# moves pi's. OpenClaw keeps the same transcript format, one directory per
-# agent. Sorted, so the scan order doesn't depend on directory order.
-def session_roots():
-  roots = [pi_agent_dir() / "sessions", Path.home() / ".omp" / "agent" / "sessions"]
+# pi's and omp's session trees, each profile's too: `--profile=<name>` moves
+# the whole agent tree under <base>/profiles/<name>/. pi moves its agent tree
+# with PI_CODING_AGENT_DIR and its sessions alone with
+# PI_CODING_AGENT_SESSION_DIR, both expanding a leading ~; either is read as
+# well as the default trees, which keep whatever was written before the move.
+def pi_session_roots():
+  roots = []
   for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    roots.append(base / "agent" / "sessions")
     try:
+      # Sorted so the scan order does not depend on directory order.
       roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
     except OSError:
+      # No profiles directory, or it is unreadable: the default root stands.
       pass
+  if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
+  if os.environ.get("PI_CODING_AGENT_SESSION_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_SESSION_DIR"].strip()).expanduser())
+  return canonical_roots(roots)
+
+
+# Canonical roots, so an override that aliases a default root through a
+# symlink is scanned under one spelling. A root inside another is already
+# read with it, so it is dropped rather than counted twice.
+def canonical_roots(roots):
+  canonical = list(dict.fromkeys(root.resolve() for root in roots))
+  return [root for root in canonical if not any(other != root and root.is_relative_to(other) for other in canonical)]
+
+
+# OpenClaw keeps pi's transcript format, one directory per agent, beside
+# pi's and omp's own trees.
+def session_roots():
+  roots = pi_session_roots()
   openclaw = Path(os.environ.get("OPENCLAW_STATE_DIR") or (Path.home() / ".openclaw"))
   try:
+    # Sorted so the scan order doesn't depend on directory order.
     roots.extend(sorted(child / "sessions" for child in (openclaw / "agents").iterdir() if child.is_dir()))
   except OSError:
     pass
-  return list(dict.fromkeys(roots))
+  return canonical_roots(roots)
 
 
 def opencode_database():
-  return Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode" / "opencode.db"
+  # OPENCODE_DB points opencode at another database, as the CLI itself reads
+  # it; a relative name lives beside the default one. Only a build whose
+  # channel was literally "v2" wrote opencode-v2.db, so it is a fallback for
+  # those installs alone.
+  root = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode"
+  configured = os.environ.get("OPENCODE_DB", "").strip()
+  if configured:
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else root / path
+  normal = root / "opencode.db"
+  legacy = root / "opencode-v2.db"
+  return legacy if not normal.is_file() and legacy.is_file() else normal
+
+
+# A pi or opencode row's day, read as every collector reading those sources
+# reads it: a row with no time at all is today's, and an untrusted time is
+# None, so the caller skips that row alone.
+def source_day(value):
+  if value is None:
+    return datetime.now().astimezone().date().isoformat()
+  return local_day(value) or None
+
+
+# pi, omp, and the harnesses that copy their format spell usage camelCase or
+# snake_case; the first spelling present wins.
+def usage_tokens(usage, *keys):
+  for key in keys:
+    if key in usage:
+      return number(usage.get(key))
+  return 0
 
 
 # Each answer pi, omp, or OpenClaw got through its google-antigravity
@@ -687,24 +740,78 @@ def session_messages(problems):
           continue
         seen.add(key)
       usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
-      tokens = (number(usage.get("input")), number(usage.get("output")), number(usage.get("cacheRead")), number(usage.get("cacheWrite")))
+      tokens = (
+        usage_tokens(usage, "input", "inputTokens", "input_tokens"),
+        # pi folds thinking into its own field; both are generated.
+        usage_tokens(usage, "output", "outputTokens", "output_tokens") + usage_tokens(usage, "reasoning", "reasoningTokens", "reasoning_tokens"),
+        usage_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens"),
+        usage_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens"),
+      )
       if not any(tokens):
-        tokens = (number(usage.get("totalTokens")), 0, 0, 0)
+        # Some writers keep only the total; it was still spent.
+        tokens = (usage_tokens(usage, "totalTokens", "total_tokens"), 0, 0, 0)
+      if not any(tokens):
+        continue
+      # The first time present decides: none at all is today's, and an
+      # untrusted one, zero included, skips only this line.
+      stamp = entry.get("timestamp")
+      day = source_day(message.get("timestamp") if stamp is None else stamp)
+      if day is None:
+        continue
       model = message.get("model") if isinstance(message.get("model"), str) else ""
-      if any(tokens):
-        yield path, local_day(entry.get("timestamp") or message.get("timestamp")), model_key(model) or "unknown", tokens
+      yield path, day, model_key(model) or "unknown", tokens
     try:
-      proc.wait(timeout=1)
+      # rg exits 1 for no match and 2 when it couldn't read something.
+      if proc.wait(timeout=1) not in (0, 1):
+        problems.append(str(root))
     except subprocess.TimeoutExpired:
       proc.kill()
+      problems.append(str(root))
 
 
-# opencode's Antigravity plugin runs under a "google" provider, with model
-# ids it prefixes with antigravity- to keep them apart from Gemini API ones.
-# opencode v1 keeps messages in `message`, with the role, provider and model
-# in each row's data; v2 writes `session_message`, with the role in its type
-# column and the provider and model under data.model. Read-only: opencode
-# may be writing right now.
+def opencode_columns(conn, table):
+  try:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+  except sqlite3.Error:
+    return set()
+
+
+# One opencode row as (day, model, counts), or None. The original `message`
+# table keeps the role, provider and model at the top level; the V2
+# `session_message` table nests the provider and model under `model` and
+# keeps the role in its `type` column, with a compaction's tokens spent like
+# any reply's. opencode's Antigravity plugin runs under a "google" provider,
+# with model ids it prefixes with antigravity- to keep them apart from Gemini
+# API ones.
+def opencode_row(entry, row_type, created):
+  if not isinstance(entry, dict) or (entry.get("role") or row_type) not in ("assistant", "compaction"):
+    return None
+  info = entry.get("model") if isinstance(entry.get("model"), dict) else {}
+  provider = entry.get("providerID") or info.get("providerID")
+  model = entry.get("modelID") or info.get("id")
+  if not str(provider or "").startswith("google") or not str(model or "").startswith("antigravity-"):
+    return None
+  tokens = entry.get("tokens") if isinstance(entry.get("tokens"), dict) else {}
+  cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+  # opencode keeps thinking tokens out of output; both are generated.
+  counts = (number(tokens.get("input")), number(tokens.get("output")) + number(tokens.get("reasoning")), number(cache.get("read")), number(cache.get("write")))
+  if not any(counts):
+    return None
+  # The message's own time, else the row's: none at all is today's, and an
+  # untrusted one, zero included, skips only this row.
+  times = entry.get("time") if isinstance(entry.get("time"), dict) else {}
+  stamp = times.get("created")
+  day = source_day(created if stamp is None else stamp)
+  if day is None:
+    return None
+  return day, model_key(str(model)), counts
+
+
+# Every opencode row that may be the Antigravity plugin's, from both stores,
+# V2 first, deduplicated by message id: a build that migrated keeps reading,
+# and a message in both counts once. Read-only: opencode may be writing right
+# now. A scan cut short by a database error keeps what it already read, but
+# is reported so it isn't cached.
 def opencode_messages(problems):
   database = opencode_database()
   if not database.is_file():
@@ -714,47 +821,48 @@ def opencode_messages(problems):
   except sqlite3.Error:
     problems.append("opencode")
     return
-  # A migrated message sits in both stores under the same id, so V2 is read
-  # first and each id counts once. A table without an id column keys its rows
-  # by table and rowid, which never matches the other store.
-  def message_key(table):
-    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-    return "id" if "id" in columns else f"'{table}:' || rowid"
-
+  rows = []
   try:
+    conn.execute("PRAGMA query_only = ON")
     tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    rows = []
-    if "session_message" in tables:
-      rows += conn.execute(f"SELECT {message_key('session_message')}, session_id, data, type FROM session_message WHERE data LIKE '%antigravity-%'").fetchall()
-    if "message" in tables:
-      rows += conn.execute(f"SELECT {message_key('message')}, session_id, data, NULL FROM message WHERE data LIKE '%antigravity-%'").fetchall()
+    # The LIKE gates skip rows that cannot name an antigravity- model before
+    # any parse; opencode_row stays the authority.
+    columns = opencode_columns(conn, "session_message") if "session_message" in tables else set()
+    if {"id", "session_id", "type", "data"} <= columns:
+      created = "m.time_created" if "time_created" in columns else "NULL"
+      source = "session_message m"
+      fork_filter = ""
+      if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= opencode_columns(conn, "session_v2"):
+        # A fork copies its source session's messages under new ids; only
+        # what came after the fork was spent in it.
+        source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
+        fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
+      for row in conn.execute(
+        f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
+        " WHERE m.type IN ('assistant', 'compaction') AND m.data LIKE '%antigravity-%'" + fork_filter
+      ):
+        rows.append(row)
+    columns = opencode_columns(conn, "message") if "message" in tables else set()
+    if {"session_id", "data"} <= columns:
+      row_id = "id" if "id" in columns else "rowid"
+      for message_id, session, raw in conn.execute(f"SELECT {row_id}, session_id, data FROM message WHERE data LIKE '%antigravity-%'"):
+        rows.append((message_id, session, "", None, raw))
   except sqlite3.Error:
     problems.append("opencode")
-    return
   finally:
     conn.close()
   seen = set()
-  for message_id, session, raw, kind in rows:
+  for message_id, session, row_type, created, raw in rows:
     try:
-      entry = json.loads(raw)
-      if kind is None:
-        role, provider, model = entry.get("role"), entry.get("providerID"), entry.get("modelID")
-      else:
-        info = entry.get("model") if isinstance(entry.get("model"), dict) else {}
-        role, provider, model = kind, info.get("providerID"), info.get("id")
-      tokens = entry.get("tokens") if isinstance(entry.get("tokens"), dict) else {}
-      cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
-      created = (entry.get("time") or {}).get("created")
+      row = opencode_row(json.loads(raw), str(row_type or ""), created)
     except (ValueError, TypeError, AttributeError):
       continue
-    if role != "assistant" or not str(provider or "").startswith("google") or not str(model or "").startswith("antigravity-"):
+    if row is None or str(message_id) in seen:
       continue
-    # opencode keeps thinking tokens out of output; both are generated.
-    counts = (number(tokens.get("input")), number(tokens.get("output")) + number(tokens.get("reasoning")), number(cache.get("read")), number(cache.get("write")))
-    if any(counts) and str(message_id) not in seen:
-      seen.add(str(message_id))
-      # One key per session id across both stores: a migrated session is one.
-      yield "opencode:" + str(session), local_day(created), model_key(str(model)), counts
+    seen.add(str(message_id))
+    day, model, counts = row
+    # One key per session id across both stores: a migrated session is one.
+    yield "opencode:" + str(session), day, model, counts
 
 
 # Hermes reaches Antigravity only through plugins that run agy itself, so its
