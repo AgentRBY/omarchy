@@ -14,10 +14,8 @@ and token usage. The agents panel only ever reads the JSON this prints.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import os
-import subprocess
 import sys
 import urllib.request
 from datetime import datetime, timezone
@@ -27,26 +25,17 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
 from collectors import (  # noqa: E402
-  PROBE_MIN_INTERVAL_SECONDS,
   HttpError,
+  LimitsCache,
   Stats,
-  age_below,
   base_record,
   cached_scan,
   emit,
-  find_command,
-  limits_cache_path,
-  local_day,
-  now_ms,
-  obj,
   open_json,
-  open_limits,
   read_json,
-  runtime_env,
   scan_max_age,
+  scan_pi_sessions,
   stamp,
-  token_count,
-  write_json,
 )
 
 AGENT_ID = "kimchi"
@@ -98,79 +87,15 @@ def harness_dir():
   return Path(os.environ.get("KIMCHI_CODING_AGENT_DIR") or (Path.home() / ".config" / "kimchi" / "harness"))
 
 
-# Listed with rg --no-ignore, since a $HOME kept as a git checkout would
-# otherwise hide ~/.config from the listing. The flag says whether every
-# file could be listed.
-def session_files(sessions_root):
-  root = Path(sessions_root)
-  if not root.is_dir():
-    return [], True
-  rg = find_command("rg")
-  if not rg:
-    return [], False
-  try:
-    listed = subprocess.run(
-      [rg, "--files", "--no-ignore", "--hidden", "--glob", "*.jsonl", str(root)],
-      capture_output=True, text=True, timeout=60, env=runtime_env(),
-    )
-  except (OSError, subprocess.TimeoutExpired):
-    return [], False
-  # rg exits 1 when it finds nothing, and 2 when part of the tree was
-  # unreadable while still listing the rest.
-  return sorted(Path(line) for line in listed.stdout.splitlines() if line), listed.returncode in (0, 1)
-
-
-# Every session file under <harness>/sessions. The shared pi reader only
-# reads pi's and omp's own session roots, so Kimchi's pi-format sessions are
-# read here. Only assistant messages carry usage. A forked or resumed session
-# repeats its parent's entries, so a reply with both an id and a timestamp
-# counts once across every file; one without an id always counts. Returns
-# the stats and whether every source was read.
+# Every session file under <harness>/sessions, in pi's format, read the way
+# the shared reader reads pi's own: every assistant reply with usage counts,
+# whatever its provider, and a message a fork or resumed session repeats
+# counts once. Returns the stats and whether every source was read.
 def local_stats(sessions_root):
+  rows, complete = scan_pi_sessions(r'"usage"', lambda provider, model, entry: True, [sessions_root])
   stats = Stats()
-  seen = set()
-  files, complete = session_files(sessions_root)
-  for path in files:
-    try:
-      lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-      complete = False
-      continue
-    for line in lines:
-      if '"usage"' not in line:
-        continue
-      try:
-        entry = json.loads(line)
-      except ValueError:
-        continue
-      message = entry.get("message") if isinstance(entry, dict) and entry.get("type") == "message" else None
-      if not isinstance(message, dict) or message.get("role") != "assistant":
-        continue
-      # pi stamps entries with ISO strings and messages with epoch
-      # milliseconds.
-      when = entry.get("timestamp") or message.get("timestamp")
-      entry_id = entry.get("id")
-      if entry_id and when:
-        identity = (str(entry_id), str(when))
-        if identity in seen:
-          continue
-        seen.add(identity)
-
-      usage = obj(message.get("usage"))
-      uncached = token_count(usage.get("input"))
-      output = token_count(usage.get("output"))
-      cached = token_count(usage.get("cacheRead"))
-      created = token_count(usage.get("cacheWrite"))
-      if not (uncached or output or cached or created):
-        uncached = token_count(usage.get("totalTokens"))
-      if not (uncached or output or cached or created):
-        continue
-      # No time at all is today's; one that can't be trusted counts nowhere.
-      day = local_day(when)
-      if day is None:
-        continue
-      stats.add(day, str(path), str(message.get("model") or AGENT_ID), uncached, output, cached, created)
-
+  for row in rows:
+    stats.add_row(row, row.model or AGENT_ID)
   return {"hasLocalStats": bool(stats.sessions), **stats.snapshot()}, complete
 
 
@@ -303,28 +228,19 @@ def budget_part(data):
 # in to someone else, or pointed at another region, never shows the last
 # one's numbers. One file per endpoint, so a run only ever writes the answer
 # it actually got: the budget's limits under the limits cache name every
-# collector shares, and the credits' plan and balance beside them. Neither is
-# a LimitsCache: an answer without limits (no budget, or the credits) must
-# still stand in for a probe, and an overlapping run must not roll it back.
+# collector shares, and the credits' plan and balance beside them. An answer
+# without limits (no budget, or the credits) still stands in for a probe.
+# Returns the cache to save to and the one holding the last answer.
 def billing_cache(key, base, resource):
-  path = limits_cache_path(AGENT_ID, base, key)
-  return path if resource == "budget" else path.with_name(path.name.replace("kimchi-limits-", "kimchi-credits-", 1))
-
-
-def read_part(path, resource):
-  cached = read_json(path)
-  if not cached and resource == "budget":
+  if resource == "credits":
+    cache = LimitsCache(AGENT_ID, base, key, kind="credits")
+    return cache, cache
+  cache = LimitsCache(AGENT_ID, base, key)
+  if not cache.data:
     # Budgets were cached as kimchi-budget-<key>.json before they joined the
     # limits cache name every collector shares.
-    cached = read_json(path.with_name(path.name.replace("kimchi-limits-", "kimchi-budget-", 1)))
-  return cached if stamp(cached.get("fetchedAtMs")) else None
-
-
-# Refreshes can overlap (the panel's own and a limits retry), so an answer
-# only replaces one fetched after it.
-def remember(path, part):
-  if stamp(read_json(path).get("fetchedAtMs")) <= part["fetchedAtMs"]:
-    write_json(path, part)
+    return cache, LimitsCache(AGENT_ID, base, key, kind="budget")
+  return cache, cache
 
 
 # The two endpoints answer on their own, and so does each fall back: a part
@@ -342,24 +258,28 @@ def collect_billing(force):
   failed = set()
   rejected = unreachable = False
   for resource, parse in (("credits", credits_part), ("budget", budget_part)):
-    cache = billing_cache(key, base, resource)
-    cached = read_part(cache, resource)
-    if cached is not None:
+    cache, kept = billing_cache(key, base, resource)
+    cached = None
+    if kept.fetched_at:
       # A kept budget whose period ended is an untouched allowance, not an
       # unknown one: it comes back at zero, with no reset time until the
       # gateway names the next period.
-      cached = dict(cached, limits=open_limits(cached.get("limits"))) if resource == "budget" else cached
-      if not force and age_below(stamp(cached.get("fetchedAtMs")) / 1000, PROBE_MIN_INTERVAL_SECONDS):
+      cached = dict(kept.data, limits=kept.limits, fetchedAtMs=kept.fetched_at)
+      if kept.fresh(force, allow_empty=True):
         parts[resource] = cached
         continue
     try:
       data = get_json(f"{base}/v1/{resource}", key)
-      parts[resource] = dict(parse(data), fetchedAtMs=now_ms())
-      remember(cache, parts[resource])
+      part = parse(data)
+      # Refreshes can overlap (the panel's own and a limits retry), so an
+      # answer only replaces one fetched before it.
+      cache.save(part.pop("limits", []), only_if_newer=True, **part)
+      parts[resource] = dict(cache.data)
       continue
     except HttpError as error:
       rejected = rejected or error.status in (401, 403)
-      # No answer at all: no route, no DNS, a timeout, or a reply cut off.
+      # No answer at all: no route, no DNS, a timeout, or a dropped
+      # connection. A reply cut short is an answer that failed to read.
       unreachable = unreachable or error.transport
     except Exception:
       pass
