@@ -151,7 +151,7 @@ PY
 age_cache() {
   local file
   for file in "$cache_home"/.cache/omarchy/agent-usage/hermes-scan-*.json; do
-    touch -d "-$1 seconds" "$file"
+    jq -c --argjson age "$1" '.scannedAtMs -= $age * 1000' "$file" >"$file.new" && mv "$file.new" "$file"
   done
 }
 [[ $(run_cached) == "1" ]] || fail "Hermes collector scans on first run"
