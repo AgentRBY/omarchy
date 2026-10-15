@@ -1175,6 +1175,12 @@ def fetch_codex_rpc(home=None):
       return result
     rpc_result = limits_msg.get("result") if isinstance(limits_msg.get("result"), dict) else {}
     buckets = rate_limit_buckets(rpc_result)
+    # An answer with neither view of the limits isn't a plan without any; it
+    # fails like any other probe, so the last good windows stand, stale.
+    if not buckets:
+      result["usageStatusText"] = "Codex limits unavailable"
+      result["authHelpText"] = "Codex's app-server answered without its rate limits."
+      return result
     result["authHelpText"] = ""
     plan = next((bucket.get("planType") for _, bucket in buckets if bucket.get("planType")), "")
     if not plan and isinstance(rpc_result.get("rateLimits"), dict):

@@ -206,6 +206,9 @@ for line in sys.stdin:
     if mode == "backend":
       print(json.dumps({"id": message["id"], "error": {"code": -32603, "message": "failed to fetch codex rate limits"}}), flush=True)
       continue
+    if mode == "empty":
+      print(json.dumps({"id": message["id"], "result": {"rateLimits": None, "rateLimitsByLimitId": {}}}), flush=True)
+      continue
     if mode == "switch":
       os.system(os.environ["CODEX_LOGIN"] + " ws-three user-c")
     if mode == "auth":
@@ -251,7 +254,7 @@ fetched_at=$(jq '.fetchedAtMs' <"$(ls "$XDG_CACHE_HOME"/omarchy/agent-usage/code
 # Let the weekly window reset before the next probe fails.
 sleep 3
 
-for mode in backend died crashed; do
+for mode in backend died crashed empty; do
   kept=$(collect "$mode")
   [[ $(jq -c --argjson at "$fetched_at" '{limitsStale, at: (.limitsFetchedAt == $at), used: [.limits[].percent * 100 | round], resets: [.limits[].resetsAt == ""], status: .usageStatusText, tierLabel}' <<<"$kept") == '{"limitsStale":true,"at":true,"used":[40,0],"resets":[false,true],"status":"","tierLabel":"pro"}' ]] ||
     fail "a failed Codex probe ($mode) keeps the last limits, stale, with an elapsed window at zero" "$kept"
@@ -267,7 +270,7 @@ for mode in stall died; do
   [[ $(jq -c '{retryAdvised, limitsStale, kept: (.limits | length)}' <<<"$retry") == '{"retryAdvised":true,"limitsStale":true,"kept":2}' ]] ||
     fail "an unreachable Codex backend ($mode) advises a retry" "$retry"
 done
-for mode in backend crashed auth; do
+for mode in backend crashed auth empty; do
   refused=$(collect "$mode")
   [[ $(jq -r '.retryAdvised // false' <<<"$refused") == false ]] ||
     fail "a Codex backend that answered ($mode) advises no retry" "$refused"
