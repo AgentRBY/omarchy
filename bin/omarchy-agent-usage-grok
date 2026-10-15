@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", 
 from collectors import (  # noqa: E402
   HttpError,
   LimitsCache,
+  account_entry,
   base_record,
   cached_scan,
   emit,
@@ -36,6 +37,7 @@ from collectors import (  # noqa: E402
   number,
   open_json,
   read_json,
+  registered_accounts,
   scan_max_age,
   token_count,
 )
@@ -251,27 +253,6 @@ def collect_limits(home, key, force):
   return result
 
 
-# The accounts `omarchy agent account` registered, read straight from its
-# registry. Only a registry holding a second account matters: with one, the
-# record describes ~/.grok alone.
-def registered_accounts():
-  state = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
-  registry = read_json(state / "omarchy" / "agents" / "accounts" / "grok.json")
-  accounts = [a for a in registry.get("accounts") or [] if isinstance(a, dict) and a.get("id")]
-  if len(accounts) < 2:
-    return []
-  active_id = registry.get("active") or accounts[0]["id"]
-  if not any(a["id"] == active_id for a in accounts):
-    active_id = accounts[0]["id"]
-  for account in accounts:
-    account["active"] = account["id"] == active_id
-    account["switch"] = {
-      "mode": "auto" if registry.get("switch") == "auto" else "manual",
-      "threshold": registry.get("threshold") or 95,
-    }
-  return accounts
-
-
 def home_of(account):
   return Path(account.get("home") or (Path.home() / ".grok"))
 
@@ -286,20 +267,7 @@ def cache_key(home, fallback):
 def account_limits(account, force):
   home = home_of(account)
   limits = collect_limits(home, cache_key(home, account["id"]), force)
-  return {
-    "id": account["id"],
-    "label": str(account.get("label") or account["id"]),
-    "email": str(account.get("email") or ""),
-    "plan": plan(home) or str(account.get("plan") or ""),
-    "active": account["active"],
-    "primary": bool(account.get("primary")),
-    "limits": limits["limits"],
-    "stale": not limits["live"],
-    "fetchedAt": limits["fetchedAtMs"],
-    "usageStatusText": limits["usageStatusText"],
-    "authHelpText": limits["authHelpText"],
-    "retryAdvised": bool(limits.get("retryAdvised")),
-  }
+  return account_entry(account, limits, plan(home))
 
 
 def main():
@@ -308,7 +276,7 @@ def main():
   parser.add_argument("--limits-only", action="store_true")
   args = parser.parse_args()
 
-  registered = registered_accounts()
+  registered = registered_accounts(AGENT_ID)
   accounts = [account_limits(account, args.force) for account in registered]
   current = next((a for a in accounts if a["active"]), None)
   if current:
