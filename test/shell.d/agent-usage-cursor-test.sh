@@ -108,7 +108,7 @@ carried = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME
 # ...but only for so long: an old scan is fetched again.
 stats_file = collector.stats_cache(collector.account_key("cursor_test"))
 fresh_scan = json.loads(stats_file.read_text())
-stats_file.write_text(json.dumps(dict(fresh_scan, scannedAtMs=fresh_scan["scannedAtMs"] - collector.LIMITS_ONLY_REUSE_SECONDS * 1000)))
+stats_file.write_text(json.dumps(dict(fresh_scan, scannedAtMs=fresh_scan["scannedAtMs"] - sys.modules["collectors"].LIMITS_ONLY_REUSE_SECONDS * 1000)))
 calls_before = len(calls)
 collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", True)
 refetched = sum(1 for method, _ in calls[calls_before:] if method == "GetAggregatedUsageEvents")
@@ -137,16 +137,16 @@ yesterday_scan = dict(scan, scanDate=yesterday.isoformat())
 yesterday_scan["stats"] = dict(scan["stats"], recentDays=[{"date": (today - timedelta(days=offset)).isoformat(), "messageCount": offset} for offset in range(7, 0, -1)])
 # Each day's usage rides along, so the day that falls out of the week leaves
 # the model totals and active days as well as the chart.
-yesterday_scan["days"] = [[(today - timedelta(days=offset)).isoformat(), {"carried-model": {"inputTokens": offset}}] for offset in range(7, 0, -1)]
+yesterday_scan["stats"]["days"] = [[(today - timedelta(days=offset)).isoformat(), {"carried-model": {"inputTokens": offset}}] for offset in range(7, 0, -1)]
 cache.write_text(json.dumps(yesterday_scan))
 overnight = collector.carried_stats(key, today)
 # A scan cached before days were kept still moves onto the new week.
-cache.write_text(json.dumps({k: v for k, v in yesterday_scan.items() if k != "days"}))
+cache.write_text(json.dumps(dict(yesterday_scan, stats={k: v for k, v in yesterday_scan["stats"].items() if k != "days"})))
 overnight_legacy = collector.carried_stats(key, today)
 cache.write_text(json.dumps(scan))
 
 # A kept limit whose billing cycle has ended comes back at zero.
-limits_cache = collector.limits_cache(key)
+limits_cache = collector.limits_cache(key).path
 good = json.loads(limits_cache.read_text())
 past = "2020-01-01T00:00:00+00:00"
 limits_cache.write_text(json.dumps(dict(good, limits=[dict(good["limits"][0], resetsAt=past)] + good["limits"][1:3] + [dict(good["limits"][3], resetsAt=past)])))

@@ -16,20 +16,37 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import http.client
 import json
 import math
 import os
 import sqlite3
 import sys
-import tempfile
-import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+# The shared collector plumbing ships with the agents panel.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
+from collectors import (  # noqa: E402
+  PROBE_MIN_INTERVAL_SECONDS,
+  HttpError,
+  LimitsCache,
+  base_record as shared_base_record,
+  cached_scan,
+  config_home,
+  emit,
+  empty_bucket,
+  empty_stats,
+  number,
+  open_json,
+  read_json,
+  scan_cache_paths,
+  scan_max_age,
+)
 
 AGENT_ID = "cursor"
 AGENT_NAME = "Cursor"
@@ -38,14 +55,6 @@ API_BASE_URL = "https://api2.cursor.sh"
 SERVICE = "aiserver.v1.DashboardService"
 REQUEST_TIMEOUT = 20
 RECENT_DAYS = 7
-# Repeated panel opens reuse a limits answer this recent instead of asking
-# again; --force (a person pressing refresh) always asks.
-PROBE_MIN_INTERVAL_SECONDS = 15
-# A normal run reuses a token scan this recent, so runs started together
-# don't ask the dashboard for the same week twice.
-SCAN_REUSE_SECONDS = 20
-# How long --limits-only serves the last token scan before asking again.
-LIMITS_ONLY_REUSE_SECONDS = 900
 
 
 class CursorError(Exception):
@@ -54,6 +63,24 @@ class CursorError(Exception):
     self.auth = auth
     # Nothing answered at all, so the panel should try again soon.
     self.transport = transport
+
+
+def fraction(value: Any) -> float:
+  # Cursor reports whole percentages; the panel's meters take 0..1.
+  return min(1.0, max(0.0, finite(value) / 100))
+
+
+# The Cursor CLI keeps its config beside auth.json and in ~/.cursor, the editor
+# under ~/.config/Cursor. Any of them means Cursor is used here, so a missing
+# sign-in is worth saying; without them the machine doesn't use Cursor at all.
+def cursor_in_use(auth_path: Path) -> bool:
+  return any(path.is_dir() for path in (auth_path.parent, config_home() / "Cursor", Path.home() / ".cursor"))
+
+
+# ------------------------------------------------------------ cursor sign-in
+#
+# The Grok Bot collector reads the same account the same way, from this same
+# block; keep the two identical.
 
 
 def finite(value: Any) -> float:
@@ -66,32 +93,12 @@ def finite(value: Any) -> float:
   return parsed if math.isfinite(parsed) else 0.0
 
 
-def number(value: Any) -> int:
-  return max(0, round(finite(value)))
-
-
-def fraction(value: Any) -> float:
-  # Cursor reports whole percentages; the panel's meters take 0..1.
-  return min(1.0, max(0.0, finite(value) / 100))
-
-
-def config_home() -> Path:
-  return Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
-
-
 def default_auth_path() -> Path:
   return config_home() / "cursor" / "auth.json"
 
 
 def default_state_db() -> Path:
   return config_home() / "Cursor" / "User" / "globalStorage" / "state.vscdb"
-
-
-# The Cursor CLI keeps its config beside auth.json and in ~/.cursor, the editor
-# under ~/.config/Cursor. Any of them means Cursor is used here, so a missing
-# sign-in is worth saying; without them the machine doesn't use Cursor at all.
-def cursor_in_use(auth_path: Path) -> bool:
-  return any(path.is_dir() for path in (auth_path.parent, config_home() / "Cursor", Path.home() / ".cursor"))
 
 
 def read_ide_token(state_db: Path) -> str:
@@ -120,11 +127,7 @@ def read_ide_token(state_db: Path) -> str:
 
 
 def read_cli_token(path: Path) -> str:
-  try:
-    data = json.loads(path.read_text(encoding="utf-8"))
-  except (OSError, ValueError):
-    return ""
-  return str(data.get("accessToken") or "").strip() if isinstance(data, dict) else ""
+  return str(read_json(path).get("accessToken") or "").strip()
 
 
 def jwt_claims(token: str) -> dict[str, Any]:
@@ -145,25 +148,34 @@ def token_lapsed(token: str) -> bool:
   return 0 < expires <= datetime.now(timezone.utc).timestamp()
 
 
-def read_token(path: Path, state_db: Path | None = None) -> str:
+def read_token(path: Path | None = None, state_db: Path | None = None) -> str:
   """The key the user exported, the credential the Cursor CLI stores, or the
   editor's sign-in, in that order.
 
   A sign-in that has lapsed gives way to the next one that hasn't: someone who
   ran the CLI once and now lives in the editor would otherwise wait on a
-  token nothing renews. With all of them lapsed, the first one decides. The
-  Grok Bot collector reads the same account the same way.
+  token nothing renews. With all of them lapsed, the first one decides.
   """
   key = str(os.environ.get("CURSOR_API_KEY") or "").strip()
   if key:
     return key
-  cli = read_cli_token(path)
+  cli = read_cli_token(path or default_auth_path())
   if cli and not token_lapsed(cli):
     return cli
   ide = read_ide_token(state_db or default_state_db())
   if ide and not token_lapsed(ide):
     return ide
   return cli or ide
+
+
+# Who the token signs in as (the JWT's subject), so a machine signed in to
+# someone else never shows the last one's numbers, and a refreshed token keeps
+# the same caches. An opaque API key stands for itself. The caches hash it.
+def account_key(token: str) -> str:
+  return str(jwt_claims(token).get("sub") or "") or token
+
+
+# ------------------------------------------------------------------ record
 
 
 def iso(epoch_millis: Any) -> str:
@@ -176,60 +188,18 @@ def iso(epoch_millis: Any) -> str:
     return ""
 
 
-def empty_bucket() -> dict[str, int]:
-  return {
-    "inputTokens": 0,
-    "outputTokens": 0,
-    "cacheReadInputTokens": 0,
-    "cacheCreationInputTokens": 0,
-  }
-
-
-def empty_recent_days() -> list[dict[str, Any]]:
-  """The last seven local days ending today, each with no messages."""
-  today = datetime.now().astimezone().date()
-  return [{"date": (today - timedelta(days=offset)).isoformat(), "messageCount": 0} for offset in range(RECENT_DAYS - 1, -1, -1)]
-
-
-def empty_stats() -> dict[str, Any]:
-  return {
-    "hasLocalStats": False,
-    "todayPrompts": 0,
-    "todaySessions": 0,
-    "todayTotalTokens": 0,
-    "todayTokensByModel": {},
-    "recentDays": empty_recent_days(),
-    "totalPrompts": 0,
-    "totalSessions": 0,
-    "activeDays": 0,
-    "activeDates": [],
-    "modelUsage": {},
-  }
-
-
 def base_record(**overrides: Any) -> dict[str, Any]:
-  record: dict[str, Any] = {
-    "schemaVersion": 1,
-    "id": AGENT_ID,
-    "name": AGENT_NAME,
-    "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": False,
-    # Dashboard numbers are account-global, not machine-local: every synced
-    # device reports the same truth, so aggregation must not sum them.
-    "scope": "account",
-    # The dashboard reports usage events, never prompt or session counts; the
-    # panel keeps those numbers out of today's tooltip when this is false.
-    "hasPromptStats": False,
-    "tierLabel": "",
-    "usageStatusText": "",
-    "authHelpText": "",
-    "limits": [],
-    "limitsStale": False,
-    "limitsFetchedAt": 0,
-  }
-  record.update(empty_stats())
-  record.update(overrides)
-  return record
+  # Dashboard numbers are account-global, not machine-local: every synced
+  # device reports the same truth, so aggregation must not sum them. The
+  # dashboard reports usage events, never prompt or session counts; the panel
+  # keeps those numbers out of today's tooltip when hasPromptStats is false.
+  return shared_base_record(AGENT_ID, AGENT_NAME, scope="account", hasPromptStats=False, **overrides)
+
+
+# A reply cut short came from a server that answered, so it is no reason to
+# ask the panel for a sooner retry, unlike a dashboard nothing reached.
+def cut_short(error: HttpError) -> bool:
+  return isinstance(error.__cause__, http.client.HTTPException)
 
 
 class CursorClient:
@@ -250,20 +220,17 @@ class CursorClient:
       method="POST",
     )
     try:
-      with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
-        body = response.read().decode("utf-8")
-    except urllib.error.HTTPError as error:
-      if error.code in (401, 403):
+      parsed = open_json(request, timeout=REQUEST_TIMEOUT)
+    except HttpError as error:
+      if error.status in (401, 403):
         raise CursorError(AUTH_HELP, auth=True) from error
-      raise CursorError(f"Cursor's dashboard returned status {error.code}.") from error
-    except http.client.HTTPException as error:
-      raise CursorError("Cursor's dashboard cut its reply short.") from error
-    # No route, no DNS, refused, reset or timed out: nothing answered.
-    except OSError as error:
-      raise CursorError("Couldn't reach Cursor's dashboard. Retrying shortly.", transport=True) from error
-    try:
-      parsed = json.loads(body or "{}")
-    except ValueError as error:
+      if error.status:
+        raise CursorError(f"Cursor's dashboard returned status {error.status}.") from error
+      if error.transport and cut_short(error):
+        raise CursorError("Cursor's dashboard cut its reply short.") from error
+      # No route, no DNS, refused, reset or timed out: nothing answered.
+      if error.transport:
+        raise CursorError("Couldn't reach Cursor's dashboard. Retrying shortly.", transport=True) from error
       raise CursorError("Cursor's dashboard returned malformed JSON.") from error
     if not isinstance(parsed, dict):
       raise CursorError("Cursor's dashboard returned malformed JSON.")
@@ -284,6 +251,9 @@ class CursorClient:
     payload = {"startDate": str(start_millis), "endDate": str(end_millis)}
     rows = self.call("GetAggregatedUsageEvents", payload).get("aggregations")
     return rows if isinstance(rows, list) else []
+
+
+# ------------------------------------------------------------------ tokens
 
 
 def day_windows(today: date, count: int) -> list[tuple[str, int, int]]:
@@ -307,6 +277,8 @@ def summarize_day(rows: list[Any]) -> dict[str, dict[str, int]]:
       continue
     model = str(row.get("modelIntent") or "cursor")
     bucket = usage.setdefault(model, empty_bucket())
+    # Connect's JSON writes 64-bit counts as strings, so number() rather than
+    # the strict token_count().
     bucket["inputTokens"] += number(row.get("inputTokens"))
     bucket["outputTokens"] += number(row.get("outputTokens"))
     bucket["cacheReadInputTokens"] += number(row.get("cacheReadTokens"))
@@ -344,8 +316,10 @@ def summarize_usage(days: list[tuple[str, dict[str, dict[str, int]]]]) -> dict[s
   }
 
 
+# The token scan is cached per account rather than per data path: Cursor's
+# numbers live on its dashboard, and the account is who they belong to.
 def stats_cache(key: str) -> Path:
-  return cache_root() / f"cursor-stats-{key}.json"
+  return scan_cache_paths(AGENT_ID, [key])[0]
 
 
 def carried_stats(key: str, today: date) -> dict[str, Any]:
@@ -355,7 +329,7 @@ def carried_stats(key: str, today: date) -> dict[str, Any]:
   earlier day is moved onto this week's dates, and its today figures are
   cleared, since nothing in it happened today.
   """
-  stats = empty_stats()
+  stats = {"hasLocalStats": False, **empty_stats()}
   cached = read_json(stats_cache(key))
   previous = cached.get("stats")
   if not isinstance(previous, dict):
@@ -365,7 +339,7 @@ def carried_stats(key: str, today: date) -> dict[str, Any]:
       stats[name] = previous[name]
   if cached.get("scanDate") != today.isoformat():
     week = [window[0] for window in day_windows(today, RECENT_DAYS)]
-    kept_days = {str(day): usage for day, usage in cached.get("days") or [] if isinstance(usage, dict)}
+    kept_days = {str(day): usage for day, usage in previous.get("days") or [] if isinstance(usage, dict)}
     if kept_days:
       # Summed again over the new week, so the day that fell out leaves the
       # model totals and active days along with the chart.
@@ -380,37 +354,26 @@ def carried_stats(key: str, today: date) -> dict[str, Any]:
   return stats
 
 
-def carried_stats_fresh(key: str, today: date, max_age_seconds: float) -> bool:
-  cached = read_json(stats_cache(key))
-  age = now_ms() - number(cached.get("scannedAtMs"))
-  return cached.get("scanDate") == today.isoformat() and 0 <= age < max_age_seconds * 1000
-
-
-def collect_stats(client: CursorClient, today: date, key: str) -> dict[str, Any]:
-  windows = day_windows(today, RECENT_DAYS)
-  with ThreadPoolExecutor(max_workers=4) as pool:
-    rows = list(pool.map(lambda window: client.aggregations(window[1], window[2]), windows))
-  days = [(window[0], summarize_day(day_rows)) for window, day_rows in zip(windows, rows)]
-  stats = summarize_usage(days)
-  # The cache only spares later runs a fetch; failing to keep it never costs
-  # this run's answer. Each day's usage is kept too, so a scan carried past
-  # midnight can be summed again over the new week.
-  try:
-    write_json(stats_cache(key), {"scanDate": today.isoformat(), "scannedAtMs": now_ms(), "stats": stats, "days": days})
-  except OSError:
-    pass
-  return stats
-
-
 # This week's tokens: a scan of this account recent enough to reuse, else a
 # fresh one, else the last one when the fetch fails.
 def week_stats(client: CursorClient, today: date, key: str, max_age_seconds: float) -> dict[str, Any]:
-  if max_age_seconds > 0 and carried_stats_fresh(key, today, max_age_seconds):
-    return carried_stats(key, today)
+  def scan() -> tuple[dict[str, Any], bool]:
+    windows = day_windows(today, RECENT_DAYS)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+      rows = list(pool.map(lambda window: client.aggregations(window[1], window[2]), windows))
+    days = [(window[0], summarize_day(day_rows)) for window, day_rows in zip(windows, rows)]
+    # Each day's usage is kept too, so a scan carried past midnight can be
+    # summed again over the new week.
+    return {**empty_stats(), **summarize_usage(days), "days": days}, True
+
   try:
-    return collect_stats(client, today, key)
+    stats = cached_scan(AGENT_ID, [key], max_age_seconds, scan)
   except Exception:
     return carried_stats(key, today)
+  return {name: value for name, value in stats.items() if name != "days"}
+
+
+# ------------------------------------------------------------------ limits
 
 
 def summarize_limits(period: dict[str, Any]) -> list[dict[str, Any]]:
@@ -454,70 +417,26 @@ def on_demand_names(used_cents: float, limit_cents: float) -> dict[str, str]:
   return {"label": label, "title": f"{label} Monthly"}
 
 
-def cache_root() -> Path:
-  return Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
+def limits_cache(key: str) -> LimitsCache:
+  return LimitsCache(AGENT_ID, key)
 
 
-def read_json(path: Path) -> dict[str, Any]:
-  try:
-    data = json.loads(path.read_text(encoding="utf-8"))
-  except (OSError, ValueError):
-    return {}
-  return data if isinstance(data, dict) else {}
-
-
-# A temporary file of its own per write, so overlapping runs can't rename
-# each other's away.
-def write_json(path: Path, payload: dict[str, Any]) -> None:
-  path.parent.mkdir(parents=True, exist_ok=True)
-  fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
-  try:
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-      json.dump(payload, handle)
-    os.replace(tmp, path)
-  except Exception:
-    Path(tmp).unlink(missing_ok=True)
-    raise
-
-
-# Who the token signs in as (the JWT's subject), so a machine signed in to
-# someone else never shows the last one's limits or tokens, and a refreshed
-# token keeps the same caches. An opaque API key keys by its own hash.
-def account_key(token: str) -> str:
-  subject = str(jwt_claims(token).get("sub") or "")
-  return hashlib.sha256((subject or token).encode("utf-8")).hexdigest()[:16]
-
-
-def limits_cache(key: str) -> Path:
-  return cache_root() / f"cursor-limits-{key}.json"
-
-
-# A kept limit resets to zero once its billing cycle ends; the next cycle's
-# reset time is unknown until a check succeeds.
-def open_limits(limits: Any) -> list[dict[str, Any]]:
-  now = datetime.now(timezone.utc)
+# The kept limits as they read now: one whose billing cycle has ended is back
+# at zero, with the next cycle's reset unknown until a check succeeds, and an
+# on-demand meter among them is renamed for its spend of zero.
+def kept_limits(cache: LimitsCache) -> list[dict[str, Any]]:
+  raw = cache.data.get("limits")
+  raw = [entry for entry in raw if isinstance(entry, dict)] if isinstance(raw, list) else []
   kept = []
-  for limit in limits if isinstance(limits, list) else []:
-    if not isinstance(limit, dict):
-      continue
-    try:
-      resets_at = datetime.fromisoformat(str(limit.get("resetsAt") or "").replace("Z", "+00:00"))
-    except ValueError:
-      resets_at = None
-    if resets_at is not None and resets_at.tzinfo is None:
-      resets_at = resets_at.replace(tzinfo=timezone.utc)
-    if resets_at is None or resets_at > now:
-      kept.append(limit)
-    else:
-      reset = dict(limit, percent=0.0, resetsAt="")
-      if number(limit.get("onDemandLimitCents")) > 0:
-        reset.update(on_demand_names(0, number(limit["onDemandLimitCents"])))
-      kept.append(reset)
+  for entry, opened in zip(raw, cache.limits):
+    cents = number(entry.get("onDemandLimitCents"))
+    if cents > 0 and entry.get("resetsAt") and not opened.get("resetsAt"):
+      opened = dict(opened, **on_demand_names(0, cents))
+    kept.append(opened)
   return kept
 
 
-def now_ms() -> int:
-  return int(datetime.now(timezone.utc).timestamp() * 1000)
+# ---------------------------------------------------------------- assembly
 
 
 def scan(api_base_url: str, auth_path: Path, limits_only: bool, state_db: Path | None = None, force: bool = False) -> dict[str, Any]:
@@ -530,14 +449,13 @@ def scan(api_base_url: str, auth_path: Path, limits_only: bool, state_db: Path |
   client = CursorClient(token, api_base_url)
   key = account_key(token)
   cache = limits_cache(key)
-  cached = read_json(cache)
-  kept = open_limits(cached.get("limits"))
-  fetched_at = number(cached.get("fetchedAtMs"))
-  kept_tier = str(cached.get("tierLabel") or "")
+  kept = kept_limits(cache)
+  fetched_at = cache.fetched_at
+  kept_tier = str(cache.data.get("tierLabel") or "")
   today = datetime.now().astimezone().date()
   # --limits-only runs while a meter is near its limit, which can last hours,
   # so the tokens it carries are only so old before they are fetched again.
-  scan_age = 0 if force else (LIMITS_ONLY_REUSE_SECONDS if limits_only else SCAN_REUSE_SECONDS)
+  scan_age = scan_max_age(force, limits_only)
 
   # A failed check keeps the last good limits, marked stale so the panel
   # gives their age on hover, and the week of tokens already on disk.
@@ -563,9 +481,8 @@ def scan(api_base_url: str, auth_path: Path, limits_only: bool, state_db: Path |
     )
 
   # A panel opened and shut repeatedly must not turn into a request per
-  # flick, so an answer this recent is the answer.
-  age = now_ms() - fetched_at
-  if not force and fetched_at > 0 and isinstance(cached.get("limits"), list) and 0 <= age < PROBE_MIN_INTERVAL_SECONDS * 1000:
+  # flick, so an answer this recent is the answer, even one with no meters.
+  if not force and isinstance(cache.data.get("limits"), list) and cache.younger_than(PROBE_MIN_INTERVAL_SECONDS):
     record = base_record(ready=True, tierLabel=kept_tier, limits=kept, limitsFetchedAt=fetched_at)
     record.update(week_stats(client, today, key, scan_age))
     return record
@@ -581,18 +498,10 @@ def scan(api_base_url: str, auth_path: Path, limits_only: bool, state_db: Path |
     return failed("" if kept else "Cursor limits unavailable", "Cursor's usage check failed.")
 
   plan = client.plan_name()
-  record = base_record(
-    ready=True,
-    tierLabel=kept_tier if plan is None else plan,
-    limits=limits,
-    limitsFetchedAt=now_ms(),
-  )
+  tier = kept_tier if plan is None else plan
   # The cache only backs later runs; failing to keep it never costs this
   # run's live answer.
-  try:
-    write_json(cache, {"fetchedAtMs": record["limitsFetchedAt"], "tierLabel": record["tierLabel"], "limits": limits})
-  except OSError:
-    pass
+  record = base_record(ready=True, tierLabel=tier, limits=limits, limitsFetchedAt=cache.save(limits, tierLabel=tier))
   record.update(week_stats(client, today, key, scan_age))
   return record
 
@@ -613,7 +522,7 @@ def main() -> int:
   except Exception as error:
     record = base_record(usageStatusText="Cursor limits unavailable", authHelpText="Cursor's usage check failed.")
     print(f"omarchy-agent-usage-cursor: {type(error).__name__}", file=sys.stderr)
-  print(json.dumps(record, separators=(",", ":")))
+  emit(record)
   return 0
 
 
