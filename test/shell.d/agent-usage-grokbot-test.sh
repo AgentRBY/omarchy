@@ -181,10 +181,16 @@ pass "a limit with no known reset is kept as it is through a failed check"
 # The same account the Cursor collector reads: an exported key, then the CLI's
 # sign-in, then the editor's, with all three present and each asked with its
 # own token. A lapsed CLI sign-in gives way to a live editor one.
-cli_signed_in p-cli
+# Each token is made once: jwt stamps its expiry from the clock, so making it
+# again a second later would give a token the dashboard refuses.
+expiry=$(( $(date +%s) + 3600 ))
+cli_token=$(jwt p-cli "$expiry")
+editor_token=$(jwt p-editor "$expiry")
+key_token=$(jwt p-key "$expiry")
+cli_signed_in p-cli "$expiry"
 state_db="$XDG_CONFIG_HOME/Cursor/User/globalStorage/state.vscdb"
 mkdir -p "$(dirname "$state_db")"
-python3 - "$state_db" "$(jwt p-editor)" <<'PY'
+python3 - "$state_db" "$editor_token" <<'PY'
 import sqlite3, sys
 conn = sqlite3.connect(sys.argv[1])
 conn.execute("CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
@@ -193,18 +199,18 @@ conn.commit()
 PY
 answer=$(jq -nc --arg at "$reset_at" '{usagePercent: 7, nextResetTimestampUtc: $at, hasNonZeroIncludedLimit: true}')
 live='{"ready":true,"stale":false,"percent":0.07}'
-record=$(CURSOR_API_KEY="$(jwt p-key)" EXPECT="$(jwt p-key)" ANSWER="$answer" collect)
+record=$(CURSOR_API_KEY="$key_token" EXPECT="$key_token" ANSWER="$answer" collect)
 [[ $(jq -c '{ready, stale: .limitsStale, percent: .limits[0].percent}' <<<"$record") == "$live" ]] ||
   fail "an exported CURSOR_API_KEY wins over both sign-ins" "$record"
-record=$(EXPECT="$(jwt p-cli)" ANSWER="$answer" collect)
+record=$(EXPECT="$cli_token" ANSWER="$answer" collect)
 [[ $(jq -c '{ready, stale: .limitsStale, percent: .limits[0].percent}' <<<"$record") == "$live" ]] ||
   fail "the Cursor CLI's sign-in wins over the editor's" "$record"
 cli_signed_in p-cli "$(( $(date +%s) - 60 ))"
-record=$(EXPECT="$(jwt p-editor)" ANSWER="$answer" collect)
+record=$(EXPECT="$editor_token" ANSWER="$answer" collect)
 [[ $(jq -c '{ready, stale: .limitsStale, percent: .limits[0].percent}' <<<"$record") == "$live" ]] ||
   fail "a live editor sign-in stands in for a lapsed CLI one" "$record"
 rm -f "$XDG_CONFIG_HOME/cursor/auth.json"
-record=$(EXPECT="$(jwt p-editor)" ANSWER="$answer" collect)
+record=$(EXPECT="$editor_token" ANSWER="$answer" collect)
 [[ $(jq -c '{ready, stale: .limitsStale, percent: .limits[0].percent}' <<<"$record") == "$live" ]] ||
   fail "the Cursor editor's sign-in stands in for the CLI's" "$record"
 pass "the sign-in is the one the Cursor collector reads, in the same order"
