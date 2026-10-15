@@ -281,6 +281,60 @@ pass "Codex collector counts OpenAI usage, reasoning included, from opencode ses
   fail "Codex collector ignores prefix-colliding providers, user messages, and malformed rows" "$result"
 pass "Codex collector ignores prefix-colliding providers, user messages, and malformed rows"
 
+# OpenCode V2 nests the provider under `model` and spends tokens on
+# compactions too. A message migrated into both stores counts once, and a
+# fork's copies of its source's messages don't count again. OPENCODE_DB
+# points at the database the way opencode itself reads it.
+V2_HOME=$(signed_in_home)
+cp "$TEST_HOME/bin/codex" "$V2_HOME/bin/codex"
+
+python3 - "$V2_HOME/elsewhere/opencode-dev.db" <<'PY'
+import json
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+db = Path(sys.argv[1])
+db.parent.mkdir(parents=True, exist_ok=True)
+conn = sqlite3.connect(db)
+conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
+conn.execute("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, time_created integer NOT NULL, data text NOT NULL)")
+conn.execute("CREATE TABLE session_v2 (id text PRIMARY KEY, fork_session_id text, time_created integer NOT NULL)")
+now_ms = int(time.time() * 1000)
+forked_ms = now_ms - 1000
+
+def v2(id, session, kind, provider, model, input, created=now_ms):
+  return (id, session, kind, created, json.dumps({
+    "model": {"providerID": provider, "id": model},
+    "tokens": {"input": input, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+    "time": {"created": created},
+  }))
+
+conn.executemany("INSERT INTO session_v2 VALUES (?, ?, ?)", [("ses_a", None, now_ms - 5000), ("ses_b", "ses_a", forked_ms)])
+conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?)", [
+  v2("msg_1", "ses_a", "assistant", "openai", "gpt-5.2-codex", 100, now_ms - 4000),
+  v2("msg_2", "ses_a", "compaction", "openai", "gpt-5.2-codex", 10, now_ms - 3000),
+  v2("msg_3", "ses_a", "assistant", "openai-local", "gpt-5.2-codex", 999),
+  v2("msg_4", "ses_b", "assistant", "openai", "gpt-5.2-codex", 100, forked_ms - 4000),
+  v2("msg_5", "ses_b", "assistant", "openai", "gpt-5.2-codex", 1),
+])
+conn.execute("INSERT INTO message VALUES ('msg_1', 'ses_a', ?, ?, ?)", (now_ms, now_ms, json.dumps({
+  "role": "assistant", "providerID": "openai", "modelID": "gpt-5.2-codex",
+  "tokens": {"input": 100, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+  "time": {"created": now_ms - 4000},
+})))
+conn.commit()
+conn.close()
+PY
+
+result=$(HOME="$V2_HOME" CODEX_HOME="$V2_HOME/.codex" XDG_CACHE_HOME="$V2_HOME/.cache" XDG_DATA_HOME="$V2_HOME/.local/share" \
+  OPENCODE_DB="$V2_HOME/elsewhere/opencode-dev.db" PATH="$V2_HOME/bin:$PATH" "$collector")
+
+[[ $(jq -c '{todayTotalTokens, totalPrompts, totalSessions, models: (.modelUsage | keys)}' <<<"$result") == '{"todayTotalTokens":111,"totalPrompts":3,"totalSessions":2,"models":["gpt-5.2-codex"]}' ]] ||
+  fail "Codex collector reads opencode's V2 records once each, without fork copies" "$result"
+pass "Codex collector reads opencode's V2 records once each, without fork copies"
+
 # A warm cache makes --limits-only cheap: local stats come from the last scan
 # instead of another walk over the opencode database, and --force bypasses it.
 CACHE_HOME=$(signed_in_home)
@@ -688,19 +742,9 @@ pass "Codex collector still prints a complete record when the cache is unwritabl
 INTERRUPTED_HOME=$(signed_in_home)
 cp "$TEST_HOME/bin/codex" "$INTERRUPTED_HOME/bin/codex"
 
-# A database without the message table makes the scan fail mid-flight.
-python3 - "$INTERRUPTED_HOME/.local/share/opencode/opencode.db" <<'PY'
-import sqlite3
-import sys
-from pathlib import Path
-
-db = Path(sys.argv[1])
-db.parent.mkdir(parents=True, exist_ok=True)
-conn = sqlite3.connect(db)
-conn.execute("CREATE TABLE unrelated (id text PRIMARY KEY)")
-conn.commit()
-conn.close()
-PY
+# A file that isn't a database makes the scan fail mid-flight.
+mkdir -p "$INTERRUPTED_HOME/.local/share/opencode"
+printf 'not a sqlite database, just bytes in the way\n' >"$INTERRUPTED_HOME/.local/share/opencode/opencode.db"
 
 result=$(HOME="$INTERRUPTED_HOME" CODEX_HOME="$INTERRUPTED_HOME/.codex" XDG_CACHE_HOME="$INTERRUPTED_HOME/.cache" XDG_DATA_HOME="$INTERRUPTED_HOME/.local/share" \
   PATH="$INTERRUPTED_HOME/bin:$PATH" "$collector")
@@ -720,6 +764,7 @@ import time
 from pathlib import Path
 
 db = Path(sys.argv[1])
+db.unlink()
 conn = sqlite3.connect(db)
 conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
 now_ms = int(time.time() * 1000)

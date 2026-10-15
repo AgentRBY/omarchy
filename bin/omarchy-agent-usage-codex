@@ -369,6 +369,126 @@ def scan_pi_sessions():
       today_sessions.add(path)
 
 
+def opencode_db():
+  # OPENCODE_DB points opencode at another database, as the CLI itself reads
+  # it; a relative name lives beside the default one. Only a build whose
+  # channel was literally "v2" wrote opencode-v2.db, so it is a fallback for
+  # those installs alone.
+  root = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode"
+  configured = os.environ.get("OPENCODE_DB", "").strip()
+  if configured:
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else root / path
+  normal = root / "opencode.db"
+  legacy = root / "opencode-v2.db"
+  return legacy if not normal.is_file() and legacy.is_file() else normal
+
+
+def table_columns(conn, table):
+  try:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+  except sqlite3.Error:
+    return set()
+
+
+def opencode_row(message_id, session_id, entry, row_type, created, seen):
+  # Shared by both message stores. The original `message` table keeps the
+  # role, provider and model at the top level; the V2 `session_message` table
+  # nests the provider and model under `model` and keeps the role in its
+  # `type` column, with a compaction's tokens spent like any reply's.
+  if not isinstance(entry, dict):
+    return
+  if (entry.get("role") or row_type) not in ("assistant", "compaction"):
+    return
+  model = entry.get("model") if isinstance(entry.get("model"), dict) else {}
+  provider = entry.get("providerID") or model.get("providerID")
+  # Exact match: opencode provider ids are free-form, and a custom
+  # "openai-local" gateway is not this subscription.
+  if str(provider or "") != "openai":
+    return
+  tokens = entry.get("tokens") if isinstance(entry.get("tokens"), dict) else {}
+  cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+  input_tokens = number(tokens.get("input"))
+  # opencode keeps thinking tokens out of output; both are generated.
+  output_tokens = number(tokens.get("output")) + number(tokens.get("reasoning"))
+  cache_read = number(cache.get("read"))
+  cache_write = number(cache.get("write"))
+  if not (input_tokens or output_tokens or cache_read or cache_write):
+    return
+  # A migrated message can sit in both stores under the same id.
+  if message_id in seen:
+    return
+  seen.add(message_id)
+  times = entry.get("time") if isinstance(entry.get("time"), dict) else {}
+  day = local_day(times.get("created") or created)
+  model_id = entry.get("modelID") or model.get("id")
+  add_usage(day, "opencode:" + str(session_id), model_name(str(model_id or "").rstrip("/").split("/")[-1]), input_tokens, output_tokens, cache_read, cache_write)
+
+
+def scan_opencode_session_messages(conn, tables, seen):
+  # The V2 store. The LIKE gate skips rows whose JSON cannot name the
+  # provider before any parse.
+  columns = table_columns(conn, "session_message")
+  if not {"id", "session_id", "type", "data"} <= columns:
+    return
+  created = "m.time_created" if "time_created" in columns else "NULL"
+  source = "session_message m"
+  fork_filter = ""
+  if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= table_columns(conn, "session_v2"):
+    # A fork copies its source session's messages under new ids; only what
+    # came after the fork was spent in it.
+    source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
+    fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
+  for message_id, session_id, row_type, time_created, raw in conn.execute(
+    f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
+    " WHERE m.type IN ('assistant', 'compaction')"
+    " AND m.data LIKE '%\"providerID\"%:%\"openai\"%'" + fork_filter
+  ):
+    # One malformed row must not abort the scan.
+    try:
+      opencode_row(str(message_id), session_id, json.loads(raw), str(row_type or ""), time_created, seen)
+    except Exception:
+      continue
+
+
+def scan_opencode_messages(conn, seen):
+  # The original store. OpenCode DBs grow huge (every historical message,
+  # JSON included), and Python-side json.loads of every row wasted ~600 MB of
+  # RSS on machines whose subscription never ran on OpenAI. The json_extract
+  # conditions are the authority for the rows that reach them: role ==
+  # "assistant" and providerID == "openai", the same exact-match values the
+  # Python filter checks. The guards in front are pure acceleration, not a
+  # perfect proxy for the Python filter:
+  #   - The LIKE gates skip rows whose JSON cannot contain the two key/value
+  #     pairs, avoiding the JSON parse of tens-of-MB blobs. They can differ
+  #     from json.loads on duplicate keys (Python keeps the last, SQLite
+  #     json_extract keeps the first) and ASCII-escaped values
+  #     (\"ass\\u0069stant\" decodes for Python but not for LIKE), so a row
+  #     the authority would accept can be gated out. Both cases are
+  #     vanishingly rare in real opencode data.
+  #   - json_valid guards the parse itself: json_extract() RAISES on
+  #     malformed JSON instead of returning NULL, and one such row would
+  #     otherwise abort the whole scan. SQLite does not promise that AND
+  #     terms evaluate left to right, so the guard is a CASE around each
+  #     json_extract rather than a separate AND term.
+  columns = table_columns(conn, "message")
+  if not {"session_id", "data"} <= columns:
+    return
+  message_id = "id" if "id" in columns else "rowid"
+  for row_id, session_id, raw in conn.execute(
+    f"SELECT {message_id}, session_id, data FROM message"
+    " WHERE data LIKE '%\"role\"%:%\"assistant\"%'"
+    " AND data LIKE '%\"providerID\"%:%\"openai\"%'"
+    " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END = 'assistant'"
+    " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.providerID') END = 'openai'"
+  ):
+    # One row that still fails json.loads must not abort the scan.
+    try:
+      opencode_row(str(row_id), session_id, json.loads(raw), "", None, seen)
+    except Exception:
+      continue
+
+
 def scan_opencode_sessions():
   # A subscription burned entirely through opencode leaves no native session
   # files, but opencode records per-message provider, model, and token usage
@@ -376,7 +496,7 @@ def scan_opencode_sessions():
   # Returns whether the scan ran to completion: a scan cut short by a
   # database error still contributes what it read, but must not be cached
   # as if it were the whole story.
-  db = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode" / "opencode.db"
+  db = opencode_db()
   if not db.is_file():
     return True
   try:
@@ -385,59 +505,14 @@ def scan_opencode_sessions():
     return False
   try:
     conn.execute("PRAGMA query_only = ON")
-    # OpenCode DBs grow huge (every historical message, JSON included), and
-    # Python-side json.loads of every row wasted ~600 MB of RSS on machines
-    # whose subscription never ran on OpenAI. The json_extract conditions are
-    # the authority for the rows that reach them: role == "assistant" and
-    # providerID == "openai", the same exact-match values the Python filter
-    # below checks. The guards in front are pure acceleration, not a perfect
-    # proxy for the Python filter:
-    #   - The LIKE gates skip rows whose JSON cannot contain the two
-    #     key/value pairs, avoiding the JSON parse of tens-of-MB blobs. They
-    #     can differ from json.loads on duplicate keys (Python keeps the
-    #     last, SQLite json_extract keeps the first) and ASCII-escaped
-    #     values (\"ass\\u0069stant\" decodes for Python but not for LIKE),
-    #     so a row the authority would accept can be gated out. Both cases
-    #     are vanishingly rare in real opencode data.
-    #   - json_valid guards the parse itself: json_extract() RAISES on
-    #     malformed JSON instead of returning NULL, and one such row would
-    #     otherwise abort the whole scan. SQLite does not promise that AND
-    #     terms evaluate left to right, so the guard is a CASE around each
-    #     json_extract rather than a separate AND term. Rows that are not
-    #     well-formed JSON are skipped here; the per-row try/except below
-    #     stays as the final safety net for rows that pass the SQL filter
-    #     but fail json.loads.
-    for session_id, raw in conn.execute(
-      "SELECT session_id, data FROM message"
-      " WHERE data LIKE '%\"role\"%:%\"assistant\"%'"
-      " AND data LIKE '%\"providerID\"%:%\"openai\"%'"
-      " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END = 'assistant'"
-      " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.providerID') END = 'openai'"
-    ):
-      # One malformed row must not abort the scan, so every shape assumption
-      # lives inside the try.
-      try:
-        entry = json.loads(raw)
-        # Exact match: opencode provider ids are free-form, and a custom
-        # "openai-local" gateway is not this subscription.
-        if not isinstance(entry, dict) or entry.get("role") != "assistant":
-          continue
-        if str(entry.get("providerID") or "") != "openai":
-          continue
-        tokens = entry.get("tokens") or {}
-        cache = tokens.get("cache") or {}
-        input_tokens = number(tokens.get("input"))
-        # opencode keeps thinking tokens out of output; both are generated.
-        output_tokens = number(tokens.get("output")) + number(tokens.get("reasoning"))
-        cache_read = number(cache.get("read"))
-        cache_write = number(cache.get("write"))
-        if not (input_tokens or output_tokens or cache_read or cache_write):
-          continue
-        day = local_day((entry.get("time") or {}).get("created"))
-        model = model_name(str(entry.get("modelID") or "").rstrip("/").split("/")[-1])
-      except Exception:
-        continue
-      add_usage(day, "opencode:" + str(session_id), model, input_tokens, output_tokens, cache_read, cache_write)
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    # Both stores, V2 first, deduplicated by message id: a build that
+    # migrated keeps counting, and a message in both counts once.
+    seen = set()
+    if "session_message" in tables:
+      scan_opencode_session_messages(conn, tables, seen)
+    if "message" in tables:
+      scan_opencode_messages(conn, seen)
   except sqlite3.Error:
     # Transient lock, schema migration, corruption: the numbers stop here,
     # incomplete.
@@ -559,7 +634,7 @@ def cache_root():
 
 def scan_cache_digest():
   codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
-  db = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode" / "opencode.db"
+  db = opencode_db()
   # The digest covers every data path the scan reads: the codex session
   # roots, the opencode DB, and the pi/omp session roots (under Path.home(),
   # or wherever pi's own overrides moved them).
