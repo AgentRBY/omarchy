@@ -725,55 +725,137 @@ def scan_pi(stats: Stats) -> bool:
   return complete
 
 
+def opencode_db() -> Path:
+  # OPENCODE_DB points opencode at another database, as the CLI itself reads
+  # it; a relative name lives beside the default one. Only a build whose
+  # channel was literally "v2" wrote opencode-v2.db, so it is a fallback for
+  # those installs alone.
+  root = opencode_data_dir()
+  configured = os.environ.get("OPENCODE_DB", "").strip()
+  if configured:
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else root / path
+  normal = root / "opencode.db"
+  legacy = root / "opencode-v2.db"
+  return legacy if not normal.is_file() and legacy.is_file() else normal
+
+
+def opencode_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+  try:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+  except sqlite3.Error:
+    return set()
+
+
+def opencode_row(stats: Stats, message_id: str, session_id: Any, entry: Any, row_type: str, created: Any, seen: set[str]) -> None:
+  # Shared by both message stores. The original `message` table keeps the
+  # provider and model at the top level; the V2 `session_message` table nests
+  # them under `model` and keeps the role in its `type` column, with a
+  # compaction's tokens spent like any reply's.
+  if not isinstance(entry, dict):
+    return
+  if (entry.get("role") or row_type) not in ("assistant", "compaction"):
+    return
+  model = entry.get("model")
+  provider = entry.get("providerID") or (model.get("providerID") if isinstance(model, dict) else "")
+  if str(provider or "") not in PROVIDERS:
+    return
+  tokens = entry.get("tokens") if isinstance(entry.get("tokens"), dict) else {}
+  cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+  inp = token_count(tokens.get("input"))
+  # opencode keeps thinking tokens out of output; both are generated.
+  out = token_count(tokens.get("output")) + token_count(tokens.get("reasoning"))
+  cread = token_count(cache.get("read"))
+  cwrite = token_count(cache.get("write"))
+  if not (inp or out or cread or cwrite):
+    return
+  # A migrated message can sit in both stores under the same id.
+  if message_id in seen:
+    return
+  seen.add(message_id)
+  timing = entry.get("time") if isinstance(entry.get("time"), dict) else {}
+  day = local_day(timing.get("created") or created)
+  if day is None:
+    return
+  session = "opencode:" + str(session_id)
+  raw_model = entry.get("modelID") or ((model.get("modelID") or model.get("id")) if isinstance(model, dict) else model)
+  name = str(raw_model or "").rstrip("/").split("/")[-1] or "minimax"
+  stats.prompt(session, day)
+  stats.tokens(session, day, name, inp, out, cread, cwrite)
+
+
+def scan_opencode_session_messages(stats: Stats, conn: sqlite3.Connection, tables: set[str], seen: set[str]) -> None:
+  # The V2 store. The LIKE gate skips rows whose JSON cannot name a MiniMax
+  # provider before any parse.
+  columns = opencode_columns(conn, "session_message")
+  if not {"id", "session_id", "type", "data"} <= columns:
+    return
+  created = "m.time_created" if "time_created" in columns else "NULL"
+  source = "session_message m"
+  fork_filter = ""
+  if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= opencode_columns(conn, "session_v2"):
+    # A fork copies its source session's messages under new ids; only what
+    # came after the fork was spent in it.
+    source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
+    fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
+  for message_id, session_id, row_type, time_created, raw in conn.execute(
+    f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
+    " WHERE m.type IN ('assistant', 'compaction')"
+    " AND m.data LIKE '%\"providerID\"%:%\"minimax%'" + fork_filter
+  ):
+    # One row that still fails must not take the scan down with it.
+    try:
+      opencode_row(stats, str(message_id), session_id, json.loads(raw), str(row_type or ""), time_created, seen)
+    except Exception:
+      continue
+
+
+def scan_opencode_messages(stats: Stats, conn: sqlite3.Connection, seen: set[str]) -> None:
+  # The original store, one row per chat message. The json_extract
+  # conditions are the authority; the LIKE gates are pure acceleration that
+  # skip rows whose JSON cannot name a MiniMax provider.
+  columns = opencode_columns(conn, "message")
+  if not {"session_id", "data"} <= columns:
+    return
+  message_id = "id" if "id" in columns else "rowid"
+  placeholders = ",".join("?" for _ in PROVIDERS)
+  rows = conn.execute(
+    f"SELECT {message_id}, session_id, data FROM message"
+    " WHERE data LIKE '%\"role\"%:%\"assistant\"%'"
+    " AND data LIKE '%\"providerID\"%:%\"minimax%'"
+    " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END = 'assistant'"
+    f" AND CASE WHEN json_valid(data) THEN json_extract(data, '$.providerID') END IN ({placeholders})",
+    PROVIDERS,
+  )
+  for row_id, session_id, raw in rows:
+    try:
+      opencode_row(stats, str(row_id), session_id, json.loads(raw), "", None, seen)
+    except Exception:
+      continue
+
+
 def scan_opencode(stats: Stats) -> bool:
-  """Add opencode messages on a MiniMax provider.
+  """Add opencode messages on a MiniMax provider, from both of its stores.
 
   Read-only: opencode may be writing right now.
   """
-  db = opencode_data_dir() / "opencode.db"
+  db = opencode_db()
   if not db.is_file():
     return True
-  placeholders = ",".join("?" for _ in PROVIDERS)
   try:
     conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
   except sqlite3.Error:
     return False
   try:
     conn.execute("PRAGMA query_only = ON")
-    # The json_extract conditions are the authority; the LIKE gates are pure
-    # acceleration that skip rows whose JSON cannot name a MiniMax provider.
-    rows = conn.execute(
-      "SELECT session_id, data FROM message"
-      " WHERE data LIKE '%\"role\"%:%\"assistant\"%'"
-      " AND data LIKE '%\"providerID\"%:%\"minimax%'"
-      " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END = 'assistant'"
-      f" AND CASE WHEN json_valid(data) THEN json_extract(data, '$.providerID') END IN ({placeholders})",
-      PROVIDERS,
-    )
-    for session_id, raw in rows:
-      try:
-        entry = json.loads(raw)
-      except (TypeError, ValueError):
-        continue
-      if not isinstance(entry, dict) or str(entry.get("providerID") or "") not in PROVIDERS:
-        continue
-      tokens = entry.get("tokens") if isinstance(entry.get("tokens"), dict) else {}
-      cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
-      inp = token_count(tokens.get("input"))
-      # opencode keeps thinking tokens out of output; both are generated.
-      out = token_count(tokens.get("output")) + token_count(tokens.get("reasoning"))
-      cread = token_count(cache.get("read"))
-      cwrite = token_count(cache.get("write"))
-      if not (inp or out or cread or cwrite):
-        continue
-      created = entry.get("time").get("created") if isinstance(entry.get("time"), dict) else None
-      day = local_day(created)
-      if day is None:
-        continue
-      session = "opencode:" + str(session_id)
-      model = str(entry.get("modelID") or "").rstrip("/").split("/")[-1] or "minimax"
-      stats.prompt(session, day)
-      stats.tokens(session, day, model, inp, out, cread, cwrite)
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    # Both stores, V2 first, deduplicated by message id: a build that
+    # migrated keeps reading, and a message in both counts once.
+    seen: set[str] = set()
+    if "session_message" in tables:
+      scan_opencode_session_messages(stats, conn, tables, seen)
+    if "message" in tables:
+      scan_opencode_messages(stats, conn, seen)
   except sqlite3.Error:
     return False
   finally:
@@ -790,7 +872,7 @@ def scan_sessions() -> tuple[dict[str, Any], bool]:
 
 def cached_local_stats(max_age_seconds: float) -> dict[str, Any]:
   """Local stats, with the cache as a pure optimization."""
-  sources = [mcode_data_dir(), opencode_data_dir(), *pi_session_roots()]
+  sources = [mcode_data_dir(), opencode_db(), *pi_session_roots()]
   digest = hashlib.sha1("\0".join(str(path) for path in sources).encode("utf-8")).hexdigest()[:16]
   try:
     root = cache_root()

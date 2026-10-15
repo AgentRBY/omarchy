@@ -54,7 +54,7 @@ conn.commit()
 PY
 
 run() {
-  env -u MINIMAX_API_KEY -u MINIMAX_DATA_DIR -u MAVIS_DATA_DIR -u PI_CODING_AGENT_DIR -u MINIMAX_BASE_URL \
+  env -u MINIMAX_API_KEY -u MINIMAX_DATA_DIR -u MAVIS_DATA_DIR -u PI_CODING_AGENT_DIR -u MINIMAX_BASE_URL -u OPENCODE_DB \
     HOME="$TEST_HOME" XDG_DATA_HOME="$TEST_HOME/.local/share" XDG_CACHE_HOME="$TEST_HOME/.cache" \
     MMX_CONFIG_DIR="$TEST_HOME/missing" "$@"
 }
@@ -107,3 +107,71 @@ if (( EUID != 0 )); then
 else
   skip "MiniMax collector does not cache a scan that missed a file (root reads anything)"
 fi
+
+# OpenCode V2 nests the provider under `model` and spends tokens on
+# compactions too, for every MiniMax provider id. A message migrated into
+# both stores counts once, and a fork's copies of its source's messages don't
+# count again. OPENCODE_DB points at the database the way opencode reads it.
+V2_HOME=$(mktemp -d)
+trap 'rm -rf "$TEST_HOME" "$V2_HOME"' EXIT
+python3 - "$V2_HOME/elsewhere/opencode-dev.db" <<'PY'
+import json
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+db = Path(sys.argv[1])
+db.parent.mkdir(parents=True, exist_ok=True)
+conn = sqlite3.connect(db)
+conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
+conn.execute("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, time_created integer NOT NULL, data text NOT NULL)")
+conn.execute("CREATE TABLE session_v2 (id text PRIMARY KEY, fork_session_id text, time_created integer NOT NULL)")
+now_ms = int(time.time() * 1000)
+forked_ms = now_ms - 1000
+
+def v2(id, session, kind, provider, input, created=now_ms):
+  return (id, session, kind, created, json.dumps({
+    "model": {"providerID": provider, "id": "MiniMax-M3"},
+    "tokens": {"input": input, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+    "time": {"created": created},
+  }))
+
+conn.executemany("INSERT INTO session_v2 VALUES (?, ?, ?)", [("ses_a", None, now_ms - 5000), ("ses_b", "ses_a", forked_ms)])
+conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?)", [
+  v2("msg_1", "ses_a", "assistant", "minimax", 100, now_ms - 4000),
+  v2("msg_2", "ses_a", "compaction", "minimax-cn", 10, now_ms - 3000),
+  v2("msg_3", "ses_a", "assistant", "minimax-coding-plan", 20),
+  v2("msg_4", "ses_a", "assistant", "minimax-cn-coding-plan", 30),
+  v2("msg_5", "ses_a", "assistant", "minimax-proxy", 999),
+  v2("msg_6", "ses_b", "assistant", "minimax", 100, forked_ms - 4000),
+  v2("msg_7", "ses_b", "assistant", "minimax", 1),
+])
+conn.execute("INSERT INTO message VALUES ('msg_1', 'ses_a', ?, ?, ?)", (now_ms, now_ms, json.dumps({
+  "role": "assistant", "providerID": "minimax", "modelID": "MiniMax-M3",
+  "tokens": {"input": 100, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+  "time": {"created": now_ms - 4000},
+})))
+conn.commit()
+conn.close()
+PY
+
+v2_run() {
+  env -u MINIMAX_API_KEY -u MINIMAX_DATA_DIR -u MAVIS_DATA_DIR -u PI_CODING_AGENT_DIR -u MINIMAX_BASE_URL -u OPENCODE_DB \
+    HOME="$V2_HOME" XDG_DATA_HOME="$V2_HOME/.local/share" XDG_CACHE_HOME="$V2_HOME/.cache" \
+    MMX_CONFIG_DIR="$V2_HOME/missing" "$@"
+}
+
+result=$(v2_run env OPENCODE_DB="$V2_HOME/elsewhere/opencode-dev.db" "$ROOT/bin/omarchy-agent-usage-minimax")
+[[ $(jq -c '{todayTotalTokens, totalPrompts, totalSessions, models: (.modelUsage | keys)}' <<<"$result") == '{"todayTotalTokens":161,"totalPrompts":5,"totalSessions":2,"models":["MiniMax-M3"]}' ]] ||
+  fail "MiniMax collector reads opencode V2 records once each, without fork copies" "$result"
+pass "MiniMax collector reads opencode V2 records once each, without fork copies"
+
+# Only a build whose channel was "v2" wrote opencode-v2.db; it is read when
+# the usual database is missing.
+mkdir -p "$V2_HOME/.local/share/opencode"
+cp "$V2_HOME/elsewhere/opencode-dev.db" "$V2_HOME/.local/share/opencode/opencode-v2.db"
+result=$(v2_run "$ROOT/bin/omarchy-agent-usage-minimax" --force)
+[[ $(jq -r '.todayTotalTokens' <<<"$result") == "161" ]] ||
+  fail "MiniMax collector falls back to opencode-v2.db" "$result"
+pass "MiniMax collector falls back to opencode-v2.db"
