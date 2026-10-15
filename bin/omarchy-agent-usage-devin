@@ -807,14 +807,47 @@ def user_status_dir():
   return Path(os.environ.get("DEVIN_CACHE_DIR") or (xdg_cache_home() / "devin" / "cli"))
 
 
+# The CLI rewrites credentials.toml on sign-in, so a status fetched before
+# that write describes the account signed in before. The new account's first
+# fetch can land a beat before the file is flushed, hence the allowance.
+SIGN_IN_ALLOWANCE_SECONDS = 30
+
+
 def sign_in_time():
-  # The CLI rewrites credentials.toml on sign-in, so a status fetched before
-  # that write describes the account signed in before. The fetch can land a
-  # beat before the file is flushed, hence the small allowance.
   try:
-    return credentials_path().stat().st_mtime - 30
+    return credentials_path().stat().st_mtime
   except OSError:
     return None
+
+
+def sign_in_state_path():
+  return cache_root() / "devin-sign-in.json"
+
+
+def sign_in_state(signed_in_at):
+  """Which status caches belonged to the sign-in before this one.
+
+  The allowance alone can't tell the old account's last fetch from the new
+  one's first: both can land in the seconds before the rewrite. The cache
+  this collector served under the previous sign-in is known to be the old
+  account's, so it is remembered and kept out of that gap.
+  """
+  state = obj(read_json(sign_in_state_path()))
+  current = [name for name in state.get("current") or [] if isinstance(name, str)]
+  previous = [name for name in state.get("previous") or [] if isinstance(name, str)]
+  if state.get("signedInAt") != signed_in_at:
+    return {"signedInAt": signed_in_at, "current": [], "previous": current if "signedInAt" in state else []}
+  return {"signedInAt": signed_in_at, "current": current, "previous": previous}
+
+
+def remember_served(state, name):
+  if name in state["current"]:
+    return
+  state["current"] = state["current"] + [name]
+  try:
+    write_json(sign_in_state_path(), state)
+  except OSError as exc:
+    print(f"omarchy-agent-usage-devin: could not write the sign-in state ({exc})", file=sys.stderr)
 
 
 def limit_window_open(entry, now):
@@ -846,7 +879,9 @@ def read_quota():
   previous account's numbers. Without a credentials file to date the sign-in,
   the newest fetch stands.
   """
-  cutoff = sign_in_time()
+  signed_in_at = sign_in_time()
+  cutoff = None if signed_in_at is None else signed_in_at - SIGN_IN_ALLOWANCE_SECONDS
+  state = None if signed_in_at is None else sign_in_state(signed_in_at)
   best = None
   try:
     paths = sorted(user_status_dir().glob("user_status.*.bin"))
@@ -859,6 +894,8 @@ def read_quota():
     fetched_at = epoch_seconds(cache.get("fetched_at_secs"))
     if fetched_at is None or (cutoff is not None and fetched_at < cutoff):
       continue
+    if state and fetched_at < signed_in_at and path.name in state["previous"]:
+      continue
     try:
       quota = parse_user_status(base64.b64decode(cache["payload"], validate=True))
     except ValueError:
@@ -866,10 +903,12 @@ def read_quota():
     if not quota["limits"] and not quota["tierLabel"]:
       continue
     if best is None or fetched_at > best[0]:
-      best = (fetched_at, quota)
+      best = (fetched_at, quota, path.name)
   if best is None:
     return None
-  fetched_at, quota = best
+  fetched_at, quota, name = best
+  if state:
+    remember_served(state, name)
   age = time.time() - fetched_at
   return {
     "tierLabel": quota["tierLabel"],

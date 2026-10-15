@@ -234,6 +234,26 @@ write_status b $((now - 300)) plan=Max daily=0 weekly=0 dailyReset=$((now + 3600
 rm "$STATUS_DIR/user_status.b.bin"
 pass "Devin collector serves the newest fetch under the current sign-in"
 
+# The old account's last fetch can land in the seconds before a switch, inside
+# the allowance for the new account's first fetch. Having been served under
+# the old sign-in, it is known to be the old account's and stays out.
+touch -d "@$((now - 3600))" "$creds"
+write_status a $((now - 100)) plan=Pro daily=69 weekly=53 dailyReset=$((now + 3600)) weeklyReset=$((now + 86400))
+[[ $(jq -r '.tierLabel' <<<"$(run)") == "Pro" ]] ||
+  fail "Devin collector serves the account signed in" "$(run)"
+touch -d "@$((now - 90))" "$creds"
+result=$(run)
+[[ $(jq -c '[.tierLabel, .limits, .usageStatusText]' <<<"$result") == '["",[],"Devin limits unavailable"]' ]] ||
+  fail "Devin collector drops the old account's fetch from just before a switch" "$result"
+write_status b $((now - 95)) plan=Max daily=0 weekly=0 dailyReset=$((now + 3600))
+[[ $(jq -r '.tierLabel' <<<"$(run)") == "Max" ]] ||
+  fail "Devin collector serves the new account's first fetch from just before the switch" "$(run)"
+rm "$STATUS_DIR/user_status.b.bin"
+write_status a "$now" plan=Pro daily=69 weekly=53 dailyReset=$((now + 3600)) weeklyReset=$((now + 86400))
+[[ $(jq -r '.tierLabel' <<<"$(run)") == "Pro" ]] ||
+  fail "Devin collector serves a fetch made after the sign-in" "$(run)"
+pass "Devin collector keeps the old account's quota out across a quick switch"
+
 # A plan can hide a window; credit buckets run to the plan's end; a plan
 # without a name of its own is named by its tier.
 write_status a "$now" tier=16 hideDaily=1 daily=10 weekly=80 dailyReset=$((now + 3600)) weeklyReset=$((now + 86400)) promptLimit=500 promptUsed=125 planEnd=$((now + 20 * 86400))
