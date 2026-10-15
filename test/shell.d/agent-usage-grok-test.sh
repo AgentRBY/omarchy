@@ -43,6 +43,9 @@ end = os.environ["PERIOD_END"]
 # percentage of zero.
 def urlopen(request, timeout=None):
   assert request.full_url == collector.CREDITS_URL
+  if os.environ.get("GROK_PROBES"):
+    with open(os.environ["GROK_PROBES"], "a") as log:
+      log.write("probe\n")
   failure = os.environ.get("GROK_FAIL")
   if failure == "unreachable":
     raise collector.urllib.error.URLError(OSError("Name or service not known"))
@@ -220,8 +223,40 @@ pass "a limits-only refresh reuses the session scan"
 
 # A scan from another day is never reused, so yesterday's sessions don't
 # count as today's after midnight.
-jq '.day = "2000-01-01"' "$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json" >"$test_tmp/stats.json"
+jq '.scanDate = "2000-01-01"' "$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json" >"$test_tmp/stats.json"
 mv "$test_tmp/stats.json" "$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json"
 record=$(COLLECT_ARGS="--limits-only" collect)
 [[ $(jq -r '.totalSessions' <<<"$record") == 4 ]] || fail "a scan from another day is made again" "$record"
 pass "a scan from another day is made again"
+
+# A scan whose time is in the future came from a clock that has since gone
+# back, so it can't say how old it is and is made again.
+mkdir -p "$sessions/future"
+jq -n --arg at "$now" '{last_active_at: $at, num_messages: 1}' >"$sessions/future/summary.json"
+jq '.at = 99999999999' "$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json" >"$test_tmp/stats.json"
+mv "$test_tmp/stats.json" "$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json"
+record=$(COLLECT_ARGS="--limits-only" collect)
+[[ $(jq -r '.totalSessions' <<<"$record") == 5 ]] || fail "a future-dated Grok scan is made again" "$record"
+pass "a future-dated Grok scan is made again"
+
+# A normal run reuses a scan for a few seconds, so overlapping runs read once;
+# --force reads again.
+mkdir -p "$sessions/soon"
+jq -n --arg at "$now" '{last_active_at: $at, num_messages: 1}' >"$sessions/soon/summary.json"
+record=$(COLLECT_ARGS=" " collect)
+[[ $(jq -r '.totalSessions' <<<"$record") == 5 ]] || fail "a normal Grok run reuses a scan this recent" "$record"
+record=$(collect)
+[[ $(jq -r '.totalSessions' <<<"$record") == 6 ]] || fail "--force scans Grok's sessions again" "$record"
+pass "a normal Grok run reuses a recent scan, and --force scans again"
+
+# A probe this recent is reused rather than asking xAI again, until a person
+# presses refresh.
+rm -f "$XDG_STATE_HOME/omarchy/agents/accounts/grok.json" "$test_tmp/probes"
+collect >/dev/null
+record=$(GROK_PROBES="$test_tmp/probes" COLLECT_ARGS="--limits-only" collect)
+[[ ! -e $test_tmp/probes && $(jq -c '{stale: .limitsStale, percent: .limits[0].percent}' <<<"$record") == '{"stale":false,"percent":0.42}' ]] ||
+  fail "a Grok probe this recent is reused" "$record"
+GROK_PROBES="$test_tmp/probes" collect >/dev/null
+[[ $(wc -l <"$test_tmp/probes") == 1 ]] || fail "--force probes Grok past the reuse window" "$(cat "$test_tmp/probes")"
+pass "a recent Grok probe is reused, and --force probes again"
+

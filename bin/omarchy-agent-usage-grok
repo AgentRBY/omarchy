@@ -13,6 +13,7 @@ by model. The agents panel only ever reads the JSON this prints.
 """
 
 import argparse
+import fcntl
 import json
 import math
 import os
@@ -28,14 +29,17 @@ AGENT_ID = "grok"
 AGENT_NAME = "Grok"
 AUTH_HELP = "Start Grok, or run `grok login`, to sign in."
 CREDITS_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
-# Grok's own CLI watches its subscription once a minute; a panel opened and
-# shut repeatedly reuses an answer for about that long.
-PROBE_REUSE_SECONDS = 60
+# A panel opened and shut repeatedly reuses an answer this recent rather than
+# asking xAI again.
+PROBE_MIN_INTERVAL_SECONDS = 15
 # Grok's docs give a saved sign-in 30 days; a refresh token older than that
 # can't renew the access token, so it no longer counts as signed in.
 REFRESH_LIFETIME_SECONDS = 30 * 24 * 3600
-# A limits-only refresh needs fresh limits, not a fresh history scan.
-LIMITS_ONLY_SCAN_REUSE_SECONDS = 900
+# A local scan this recent is reused: a normal run only dedups overlapping
+# collector runs, while a limits-only refresh needs fresh limits, not a fresh
+# history scan.
+SCAN_REUSE_SECONDS = 20
+LIMITS_ONLY_REUSE_SECONDS = 900
 
 
 def read_json(path):
@@ -151,16 +155,40 @@ def local_stats(home):
   }
 
 
-# A scan from before midnight would count yesterday's sessions as today's.
-def cached_local_stats(home, max_age):
-  cache = cache_root() / "grok-stats.json"
-  cached = read_json(cache) or {}
+# A scan from before midnight would count yesterday's sessions as today's,
+# and one from a clock that has since gone back can't say how old it is.
+def fresh_stats(cache, home, max_age):
+  cached = read_json(cache)
+  if not isinstance(cached, dict) or not isinstance(cached.get("stats"), dict):
+    return None
   today = datetime.now().astimezone().date().isoformat()
-  if cached.get("home") == str(home) and cached.get("day") == today and time.time() - float(cached.get("at") or 0) < max_age:
+  try:
+    age = time.time() - float(cached.get("at") or 0)
+  except (TypeError, ValueError):
+    return None
+  if cached.get("home") == str(home) and cached.get("scanDate") == today and 0 <= age < max_age:
     return cached["stats"]
-  stats = local_stats(home)
-  write_json(cache, {"home": str(home), "day": today, "at": time.time(), "stats": stats})
-  return stats
+  return None
+
+
+# Rebuilt under a lock, so overlapping runs (the update command backgrounds
+# one per agent while the panel refreshes on its own) scan once between them.
+def cached_local_stats(home, max_age):
+  root = cache_root()
+  root.mkdir(parents=True, exist_ok=True)
+  cache = root / "grok-stats.json"
+  stats = fresh_stats(cache, home, max_age)
+  if stats is not None:
+    return stats
+  with (root / "grok-stats.lock").open("w") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    stats = fresh_stats(cache, home, max_age)
+    if stats is not None:
+      return stats
+    stats = local_stats(home)
+    today = datetime.now().astimezone().date().isoformat()
+    write_json(cache, {"home": str(home), "scanDate": today, "at": time.time(), "stats": stats})
+    return stats
 
 
 # One login per issuer in auth.json; the first is the CLI's own.
@@ -229,7 +257,11 @@ def collect_limits(home, key, force):
   cached = read_json(cache)
   cached = cached if isinstance(cached, dict) else {}
   fallback = usable_cached_limits(cached)
-  fetched_at = float(cached.get("fetchedAtMs") or 0)
+  try:
+    fetched_at = float(cached.get("fetchedAtMs") or 0)
+  except (TypeError, ValueError):
+    fetched_at = 0
+  fetched_at = round(fetched_at) if math.isfinite(fetched_at) else 0
   result["fetchedAtMs"] = fetched_at
 
   expires = parse_time(entry.get("expires_at"))
@@ -249,7 +281,8 @@ def collect_limits(home, key, force):
       result["authHelpText"] = "Grok's saved sign-in expired. Start Grok to refresh it."
     return result
 
-  if fallback and not force and time.time() - fetched_at / 1000 < PROBE_REUSE_SECONDS:
+  fetched_age = time.time() - fetched_at / 1000
+  if fallback and not force and 0 <= fetched_age < PROBE_MIN_INTERVAL_SECONDS:
     result.update(limits=fallback, live=True, authHelpText="")
     return result
 
@@ -378,7 +411,8 @@ def main():
   }
   if limits.get("retryAdvised"):
     record["retryAdvised"] = True
-  record.update(cached_local_stats(stats_home, LIMITS_ONLY_SCAN_REUSE_SECONDS if args.limits_only and not args.force else 0))
+  scan_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
+  record.update(cached_local_stats(stats_home, scan_age))
   if accounts:
     record["accountSwitch"] = registered[0]["switch"]
     record["accounts"] = accounts
