@@ -385,6 +385,28 @@ result=$(HOME="$CUSTOM_PI_HOME" CLAUDE_CONFIG_DIR="$CUSTOM_PI_HOME/.claude" XDG_
   fail "Claude collector counts a default root reached through a symlinked override once" "$result"
 pass "Claude collector follows pi's agent and session directory overrides"
 
+# A fork repeats its parent's messages with their ids and timestamps, so they
+# count once; a line without an id always counts, even beside an identical one.
+FORK_PI_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
+mkdir -p "$FORK_PI_HOME/.pi/agent/sessions/project"
+cat >"$FORK_PI_HOME/.pi/agent/sessions/project/parent.jsonl" <<EOF
+{"type":"message","id":"shared-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-fork","usage":{"input":6,"output":2}}}
+EOF
+cat >"$FORK_PI_HOME/.pi/agent/sessions/project/fork.jsonl" <<EOF
+{"type":"session","id":"fork","parentSession":"$FORK_PI_HOME/.pi/agent/sessions/project/parent.jsonl"}
+{"type":"message","id":"shared-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-fork","usage":{"input":6,"output":2}}}
+{"type":"message","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-fork","usage":{"input":3,"output":0}}}
+{"type":"message","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-fork","usage":{"input":3,"output":0}}}
+EOF
+
+result=$(HOME="$FORK_PI_HOME" CLAUDE_CONFIG_DIR="$FORK_PI_HOME/.claude" XDG_CACHE_HOME="$FORK_PI_HOME/.cache" \
+  XDG_DATA_HOME="$FORK_PI_HOME/.local/share" XDG_STATE_HOME="$FORK_PI_HOME/.local/state" \
+  PI_CODING_AGENT_SESSION_DIR="$FORK_PI_HOME/.pi/agent/sessions/project" "$ROOT/bin/omarchy-agent-usage-claude" --force)
+
+[[ $(jq -c '[.todayTotalTokens,.todayPrompts]' <<<"$result") == "[14,3]" ]] ||
+  fail "Claude collector counts a forked pi message once and every line without an id" "$result"
+pass "Claude collector counts a forked pi message once and every line without an id"
+
 # Collectors overlap in practice: the update command backgrounds one per agent
 # while the panel refreshes on its own. Two writers aiming at one cache file
 # must both land, not trip over a shared temp path.

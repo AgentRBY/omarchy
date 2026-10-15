@@ -569,7 +569,7 @@ def scan_pi_usage(max_age_seconds: float) -> dict[str, Any] | None:
   today_sessions: set[str] = set()
   today_tokens: dict[str, int] = {}
   usage_by_model: dict[str, dict[str, int]] = {}
-  seen: set[str] = set()
+  seen: set[tuple[str, str, Any]] = set()
   prompts = 0
   today_prompt_count = 0
   today_token_total = 0
@@ -590,7 +590,18 @@ def scan_pi_usage(max_age_seconds: float) -> dict[str, Any] | None:
               provider = str(message.get("provider") or "")
               if provider != "anthropic":
                 continue
-              unique_key = f"{path}:{entry.get('id') or line_number}"
+              # A fork repeats its parent's messages with their ids and
+              # timestamps, so the pair counts a message once across the
+              # tree; an id alone can collide between sessions. A line
+              # without an id always counts.
+              message_id = str(entry.get("id") or "")
+              stamp = str(entry.get("timestamp") or "")
+              if message_id and stamp:
+                unique_key = ("entry", message_id, stamp)
+              elif message_id:
+                unique_key = ("path", str(path), message_id)
+              else:
+                unique_key = ("line", str(path), line_number)
               if unique_key in seen:
                 continue
               seen.add(unique_key)
