@@ -579,6 +579,36 @@ def pi_style_tokens(usage: dict[str, Any]) -> tuple[int, int, int, int]:
   return inp, out, cread, cwrite
 
 
+# pi, omp, and the harnesses that copy their format spell usage camelCase or
+# snake_case; the first spelling present wins.
+def usage_tokens(usage: dict[str, Any], *keys: str) -> int:
+  for key in keys:
+    if key in usage:
+      return token_count(usage.get(key))
+  return 0
+
+
+def pi_tokens(usage: dict[str, Any]) -> tuple[int, int, int, int]:
+  # Read under every spelling the other collectors reading pi accept, with
+  # thinking, which pi keeps in its own field, counted as output.
+  inp = usage_tokens(usage, "input", "inputTokens", "input_tokens")
+  out = usage_tokens(usage, "output", "outputTokens", "output_tokens") + usage_tokens(usage, "reasoning", "reasoningTokens", "reasoning_tokens")
+  cread = usage_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens")
+  cwrite = usage_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens")
+  if not (inp or out):
+    # Only a total: MiniMax's input excludes the cache tokens, which keep
+    # their own buckets.
+    inp = max(0, usage_tokens(usage, "totalTokens", "total_tokens") - cread - cwrite)
+  return inp, out, cread, cwrite
+
+
+# A pi or opencode row's day, read as every collector reading those sources
+# reads it: a row with no time at all is today's, and an untrusted time is
+# None, so the caller skips that row alone.
+def source_day(value: Any) -> str | None:
+  return datetime.now().strftime("%Y-%m-%d") if value is None else local_day(value)
+
+
 def mcode_data_dir() -> Path:
   for name in ("MINIMAX_DATA_DIR", "MAVIS_DATA_DIR"):
     value = os.environ.get(name, "").strip()
@@ -625,23 +655,30 @@ def scan_mcode(stats: Stats) -> bool:
   return complete
 
 
-# `omp --profile=<name>` (and pi's equivalent) relocates the whole agent tree
-# under <base>/profiles/<name>/, and PI_CODING_AGENT_DIR moves pi's, so usage
-# driven through either would otherwise go uncounted.
+# pi's and omp's session trees, each profile's too: `--profile=<name>` moves
+# the whole agent tree under <base>/profiles/<name>/. pi moves its agent tree
+# with PI_CODING_AGENT_DIR and its sessions alone with
+# PI_CODING_AGENT_SESSION_DIR, both expanding a leading ~; either is read as
+# well as the default trees, which keep whatever was written before the move.
 def pi_session_roots() -> list[Path]:
-  roots = [pi_agent_dir() / "sessions", Path.home() / ".omp" / "agent" / "sessions"]
+  roots: list[Path] = []
   for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    roots.append(base / "agent" / "sessions")
     try:
       # Sorted so the scan order does not depend on directory order.
       roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
     except OSError:
-      # No profiles directory, or it is unreadable: the default roots stand.
+      # No profiles directory, or it is unreadable: the default root stands.
       pass
-  unique: list[Path] = []
-  for root in roots:
-    if root not in unique:
-      unique.append(root)
-  return unique
+  if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
+  if os.environ.get("PI_CODING_AGENT_SESSION_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_SESSION_DIR"].strip()).expanduser())
+  # Canonical roots, so an override that aliases a default root through a
+  # symlink is scanned under one spelling. A root inside another is already
+  # read with it, so it is dropped rather than counted twice.
+  canonical = list(dict.fromkeys(root.resolve() for root in roots))
+  return [root for root in canonical if not any(other != root and root.is_relative_to(other) for other in canonical)]
 
 
 def matching_lines(root: Path, pattern: str) -> tuple[list[tuple[str, str]], bool]:
@@ -706,10 +743,13 @@ def scan_pi(stats: Stats) -> bool:
       usage = message.get("usage")
       if not isinstance(usage, dict):
         continue
-      inp, out, cread, cwrite = pi_style_tokens(usage)
+      inp, out, cread, cwrite = pi_tokens(usage)
       if not (inp or out or cread or cwrite):
         continue
-      day = local_day(entry.get("timestamp")) or local_day(message.get("timestamp"))
+      # The first time present decides: none at all is today's, and an
+      # untrusted one, zero included, skips only this line.
+      stamp = entry.get("timestamp")
+      day = source_day(message.get("timestamp") if stamp is None else stamp)
       if day is None:
         continue
       message_id = entry.get("id")
@@ -773,8 +813,11 @@ def opencode_row(stats: Stats, message_id: str, session_id: Any, entry: Any, row
   if message_id in seen:
     return
   seen.add(message_id)
+  # The message's own time, else the row's: none at all is today's, and an
+  # untrusted one, zero included, skips only this row.
   timing = entry.get("time") if isinstance(entry.get("time"), dict) else {}
-  day = local_day(timing.get("created") or created)
+  stamp = timing.get("created")
+  day = source_day(created if stamp is None else stamp)
   if day is None:
     return
   session = "opencode:" + str(session_id)
