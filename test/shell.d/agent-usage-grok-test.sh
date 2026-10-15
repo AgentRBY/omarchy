@@ -243,9 +243,11 @@ record=$(COLLECT_ARGS="--limits-only" collect)
 pass "a limits-only refresh reuses the session scan"
 
 # A scan from another day is never reused, so yesterday's sessions don't
-# count as today's after midnight.
-jq '.scanDate = "2000-01-01"' "$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json" >"$test_tmp/stats.json"
-mv "$test_tmp/stats.json" "$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json"
+# count as today's after midnight. Each home has its own scan; ~/.grok's was
+# the last one made.
+stats_cache=$(ls -t "$XDG_CACHE_HOME"/omarchy/agent-usage/grok-scan-*.json | head -1)
+jq '.scanDate = "2000-01-01"' "$stats_cache" >"$test_tmp/stats.json"
+mv "$test_tmp/stats.json" "$stats_cache"
 record=$(COLLECT_ARGS="--limits-only" collect)
 [[ $(jq -r '.totalSessions' <<<"$record") == 4 ]] || fail "a scan from another day is made again" "$record"
 pass "a scan from another day is made again"
@@ -254,8 +256,8 @@ pass "a scan from another day is made again"
 # back, so it can't say how old it is and is made again.
 mkdir -p "$sessions/future"
 jq -n --arg at "$now" '{last_active_at: $at, num_messages: 1}' >"$sessions/future/summary.json"
-jq '.at = 99999999999' "$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json" >"$test_tmp/stats.json"
-mv "$test_tmp/stats.json" "$XDG_CACHE_HOME/omarchy/agent-usage/grok-stats.json"
+jq '.scannedAtMs = 99999999999999' "$stats_cache" >"$test_tmp/stats.json"
+mv "$test_tmp/stats.json" "$stats_cache"
 record=$(COLLECT_ARGS="--limits-only" collect)
 [[ $(jq -r '.totalSessions' <<<"$record") == 5 ]] || fail "a future-dated Grok scan is made again" "$record"
 pass "a future-dated Grok scan is made again"
