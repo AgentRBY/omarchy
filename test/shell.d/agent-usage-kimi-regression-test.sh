@@ -80,13 +80,21 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 local_url = f"http://127.0.0.1:{server.server_port}"
 real_opener = urllib.request.build_opener
 
+# Hands the fixture's answer back unprocessed, so a redirect or an error
+# status is handled by the collector's own opener, not this one.
+class PassThrough(urllib.request.HTTPErrorProcessor):
+  def http_response(self, request, response):
+    return response
+
 # Keep real urllib request/redirect behavior; only TLS transport goes to the fixture.
 class LocalTLS(urllib.request.HTTPSHandler):
   def https_open(self, request):
     mapped = urllib.request.Request(local_url + urllib.parse.urlsplit(request.full_url).path,
                                    data=request.data, headers=dict(request.header_items()), method=request.get_method())
-    return real_opener(scanner.NoRedirectHandler()).open(mapped, timeout=10)
+    return real_opener(PassThrough()).open(mapped, timeout=10)
 
+# The shared module installs its redirect-refusing opener with build_opener
+# when the first collector imports it, so the fixture's transport rides in it.
 urllib.request.build_opener = lambda *handlers: real_opener(LocalTLS(), *handlers)
 
 def load(root):
@@ -317,10 +325,8 @@ def refused_refresh(root):
 
 def elapsed_window(root):
   os.environ["KIMI_API_KEY"] = "AT_env"
-  path = scanner.probe_cache("AT_env")
-  path.parent.mkdir(parents=True, exist_ok=True)
-  # The pre-fetchedAtMs cache shape, read once and carried forward.
-  path.write_text(json.dumps({"fetchedAt": 1_700_000_000_000, "limits": [
+  path = scanner.limits_cache("AT_env").path
+  path.write_text(json.dumps({"fetchedAtMs": 1_700_000_000_000, "limits": [
     {"label": "Session (5-hour)", "percent": 0.9, "resetsAt": "2020-01-01T00:00:00Z"},
     {"label": "Weekly limit", "percent": 0.4, "resetsAt": "2999-01-01T00:00:00Z"},
     {"label": "Monthly total", "percent": 0.2, "resetsAt": ""}]}))
@@ -338,11 +344,11 @@ def probe_reuse(root):
   second = run("--limits-only")
   assert len(requests) == 1 and second["limits"] == first["limits"], "a recent probe was not reused"
   assert second["limitsFetchedAt"] == first["limitsFetchedAt"] and not second["limitsStale"]
-  cache = json.loads(scanner.probe_cache("AT_env").read_text())
+  cache = json.loads(scanner.limits_cache("AT_env").path.read_text())
   assert cache["fetchedAtMs"] == first["limitsFetchedAt"] and "fetchedAt" not in cache
   run("--force")
   assert len(requests) == 2, "--force reused a recent probe"
-  assert scanner.PROBE_MIN_INTERVAL_SECONDS == 15
+  assert sys.modules["collectors"].PROBE_MIN_INTERVAL_SECONDS == 15
 
 def unreachable(root):
   os.environ["KIMI_API_KEY"] = "AT_env"
