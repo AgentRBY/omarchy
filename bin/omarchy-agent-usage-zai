@@ -10,8 +10,8 @@ token windows. That endpoint only answers for keys that carry a Coding Plan; a
 generic pay-as-you-go key gets "no coding plan" and the record shows local
 stats alone, which is no trouble.
 
-Local stats come from pi/omp sessions that ran through the Z.ai provider (the
-`glm-*` models). Both the local scan and the network probe are cached: the
+Local stats come from pi/omp sessions and from opencode's message database
+(both of its stores) that ran through the Z.ai provider (the `glm-*` models). Both the local scan and the network probe are cached: the
 panel fires `--limits-only` on every open, so a repeated open must reuse a
 recent scan and must not re-probe Z.ai more than once every few seconds. The
 agents panel only ever reads the JSON this prints.
@@ -27,6 +27,7 @@ import hashlib
 import json
 import math
 import os
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -686,12 +687,129 @@ def scan_sessions() -> tuple[dict[str, Any], bool]:
         seen.add(key)
       stats.add(path, day, str(message.get("model") or "glm"), inp, out, cread, cwrite)
 
+  complete = scan_opencode_db(stats) and complete
   return stats.record(), complete
 
 
+def opencode_db() -> Path:
+  # The database opencode itself reads, as the opencode collector finds it:
+  # OPENCODE_DB when set (a relative name lives beside the default one), and
+  # opencode-v2.db only for the builds that wrote nothing else.
+  root = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode"
+  configured = os.environ.get("OPENCODE_DB", "").strip()
+  if configured:
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else root / path
+  normal = root / "opencode.db"
+  legacy = root / "opencode-v2.db"
+  return legacy if not normal.is_file() and legacy.is_file() else normal
+
+
+def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+  try:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+  except sqlite3.Error:
+    return set()
+
+
+def provider_gate(column: str) -> str:
+  # Pure acceleration: keeps other providers' rows out of the parse. The
+  # Python filter stays the authority for the rows that reach it.
+  return "(" + " OR ".join(f"{column} LIKE '%\"providerID\"%:%\"{provider}\"%'" for provider in PROVIDERS) + ")"
+
+
+def add_opencode_row(stats: Stats, message_id: str, session_id: Any, entry: Any, row_type: str, created: Any, seen: set[str]) -> None:
+  # The original `message` table keeps the provider and model at the top
+  # level; V2's `session_message` nests them under `model` and keeps the role
+  # in its `type` column, with a compaction's tokens spent like a reply's.
+  if not isinstance(entry, dict) or (entry.get("role") or row_type) not in ("assistant", "compaction"):
+    return
+  nested = entry.get("model") if isinstance(entry.get("model"), dict) else {}
+  if str(entry.get("providerID") or nested.get("providerID") or "").lower() not in PROVIDERS:
+    return
+  tokens = entry.get("tokens") if isinstance(entry.get("tokens"), dict) else {}
+  cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+  inp = token_count(tokens.get("input"))
+  # opencode keeps thinking tokens out of output; both are generated.
+  out = token_count(tokens.get("output")) + token_count(tokens.get("reasoning"))
+  cread = token_count(cache.get("read"))
+  cwrite = token_count(cache.get("write"))
+  if not (inp or out or cread or cwrite):
+    return
+  # A message migrated into both stores counts once.
+  if message_id in seen:
+    return
+  seen.add(message_id)
+  stamped = entry.get("time")
+  day = local_day(stamped.get("created") if isinstance(stamped, dict) else None) or local_day(created)
+  if day is None:
+    return
+  model = entry.get("modelID") or nested.get("id") or nested.get("modelID")
+  stats.add("opencode:" + str(session_id), day, str(model or "glm"), inp, out, cread, cwrite)
+
+
+def scan_opencode_db(stats: Stats) -> bool:
+  """Z.ai rows from both of opencode's message stores, deduplicated by
+  message id. Returns whether the scan ran to completion (safe to cache)."""
+  db = opencode_db()
+  if not db.is_file():
+    return True
+  try:
+    # Read-only: opencode may be writing right now.
+    conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+  except sqlite3.Error:
+    return False
+  try:
+    conn.execute("PRAGMA query_only = ON")
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    seen: set[str] = set()
+    # V2 first: a build that migrated keeps reading, and a message in both
+    # stores counts once.
+    columns = table_columns(conn, "session_message") if "session_message" in tables else set()
+    if {"id", "session_id", "type", "data"} <= columns:
+      created = "m.time_created" if "time_created" in columns else "NULL"
+      source = "session_message m"
+      fork_filter = ""
+      if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= table_columns(conn, "session_v2"):
+        # A fork copies its source session's messages under new ids; only
+        # what came after the fork was spent in it.
+        source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
+        fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
+      for message_id, session_id, row_type, time_created, raw in conn.execute(
+        f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
+        " WHERE m.type IN ('assistant', 'compaction')"
+        f" AND {provider_gate('m.data')}" + fork_filter
+      ):
+        # One row that still fails must not take the scan down with it.
+        try:
+          add_opencode_row(stats, str(message_id), session_id, json.loads(raw), str(row_type or ""), time_created, seen)
+        except Exception:
+          continue
+    columns = table_columns(conn, "message") if "message" in tables else set()
+    if {"session_id", "data"} <= columns:
+      row_id = "id" if "id" in columns else "rowid"
+      for message_id, session_id, raw in conn.execute(
+        f"SELECT {row_id}, session_id, data FROM message"
+        " WHERE data LIKE '%\"role\"%:%\"assistant\"%'"
+        f" AND {provider_gate('data')}"
+      ):
+        try:
+          add_opencode_row(stats, str(message_id), session_id, json.loads(raw), "", None, seen)
+        except Exception:
+          continue
+  except sqlite3.Error:
+    # Transient lock, schema migration, corruption: the numbers stop here,
+    # incomplete.
+    return False
+  finally:
+    conn.close()
+  return True
+
+
 def scan_cache_paths() -> tuple[Path, Path]:
-  # The digest covers every data path the scan reads.
-  identity = "\0".join(str(root) for root in pi_session_roots())
+  # The digest covers every data path the scan reads: the pi/omp session
+  # roots and the opencode DB.
+  identity = "\0".join([str(root) for root in pi_session_roots()] + [str(opencode_db())])
   digest = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:16]
   root = cache_root()
   return root / f"zai-scan-{digest}.json", root / f"zai-scan-{digest}.lock"
