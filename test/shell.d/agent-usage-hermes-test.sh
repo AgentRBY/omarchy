@@ -103,7 +103,10 @@ pass "Hermes collector prints a record the panel skips without Hermes"
 [[ $(jq -c '{ready, usageStatusText, authHelpText, limitsStale, limitsFetchedAt, hasLocalStats}' <<<"$record") == '{"ready":false,"usageStatusText":"","authHelpText":"","limitsStale":false,"limitsFetchedAt":0,"hasLocalStats":false}' ]] ||
   fail "Hermes collector reports no trouble without Hermes state" "$record"
 pass "Hermes collector reports no trouble without Hermes state"
-[[ $(jq -c '[.todayPrompts, .todaySessions, .todayTotalTokens, .todayTokensByModel, .recentDays, .totalPrompts, .totalSessions, .activeDays, .activeDates, .modelUsage]' <<<"$record") == '[0,0,0,{},[],0,0,0,[],{}]' ]] ||
+# The last seven local days ending today, none with messages: an unused
+# record still carries the full week, zeroed.
+empty_week=$(for offset in 6 5 4 3 2 1 0; do date -d "$(date +%F) 12:00 $offset days ago" +%F; done | jq -Rsc 'split("\n")[:-1] | map({date: ., messageCount: 0})')
+[[ $(jq -c '[.todayPrompts, .todaySessions, .todayTotalTokens, .todayTokensByModel, .recentDays, .totalPrompts, .totalSessions, .activeDays, .activeDates, .modelUsage]' <<<"$record") == "[0,0,0,{},$empty_week,0,0,0,[],{}]" ]] ||
   fail "Hermes collector prints the full empty stats block without Hermes state" "$record"
 pass "Hermes collector prints the full empty stats block without Hermes state"
 

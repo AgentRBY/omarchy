@@ -226,6 +226,12 @@ def cached_stats(paths, max_age):
     return collect_stats(paths)
 
 
+def empty_recent_days():
+  """The last seven local days ending today, each with no messages."""
+  today = datetime.now().astimezone().date()
+  return [{"date": (today - timedelta(days=offset)).isoformat(), "messageCount": 0} for offset in range(RECENT_DAYS - 1, -1, -1)]
+
+
 def collect(force=False, limits_only=False):
   record = {
     "schemaVersion": 1,
@@ -245,7 +251,7 @@ def collect(force=False, limits_only=False):
     "todaySessions": 0,
     "todayTotalTokens": 0,
     "todayTokensByModel": {},
-    "recentDays": [],
+    "recentDays": empty_recent_days(),
     "totalPrompts": 0,
     "totalSessions": 0,
     "activeDays": 0,
