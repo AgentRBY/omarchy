@@ -94,6 +94,22 @@ def token_count(value: Any) -> int:
   return int(value)
 
 
+# A pi or opencode row's day, read as every collector reading those sources
+# reads it: a row with no time at all is today's, and an untrusted time is
+# None, so the caller skips that row alone.
+def source_day(value: Any) -> str | None:
+  return datetime.now().strftime("%Y-%m-%d") if value is None else local_day(value)
+
+
+# pi, omp, and the harnesses that copy their format spell usage camelCase or
+# snake_case; the first spelling present wins.
+def usage_tokens(usage: dict[str, Any], *keys: str) -> int:
+  for key in keys:
+    if key in usage:
+      return token_count(usage.get(key))
+  return 0
+
+
 def local_day(value: Any) -> str | None:
   """The local date of an untrusted timestamp, or None when it isn't one."""
   if isinstance(value, bool):
@@ -580,23 +596,30 @@ class Stats:
     }
 
 
-# `omp --profile=<name>` (and pi's equivalent) relocates the whole agent tree
-# under <base>/profiles/<name>/, and PI_CODING_AGENT_DIR moves pi's, so a
-# subscription driven through either would otherwise go uncounted.
+# pi's and omp's session trees, each profile's too: `--profile=<name>` moves
+# the whole agent tree under <base>/profiles/<name>/. pi moves its agent tree
+# with PI_CODING_AGENT_DIR and its sessions alone with
+# PI_CODING_AGENT_SESSION_DIR, both expanding a leading ~; either is read as
+# well as the default trees, which keep whatever was written before the move.
 def pi_session_roots() -> list[Path]:
-  roots = [pi_agent_dir() / "sessions", Path.home() / ".omp" / "agent" / "sessions"]
+  roots: list[Path] = []
   for base in (Path.home() / ".pi", Path.home() / ".omp"):
+    roots.append(base / "agent" / "sessions")
     try:
       # Sorted so the scan order does not depend on directory order.
       roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
     except OSError:
-      # No profiles directory, or it is unreadable: the default roots stand.
+      # No profiles directory, or it is unreadable: the default root stands.
       pass
-  unique: list[Path] = []
-  for root in roots:
-    if root not in unique:
-      unique.append(root)
-  return unique
+  if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
+  if os.environ.get("PI_CODING_AGENT_SESSION_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_SESSION_DIR"].strip()).expanduser())
+  # Canonical roots, so an override that aliases a default root through a
+  # symlink is scanned under one spelling. A root inside another is already
+  # read with it, so it is dropped rather than counted twice.
+  canonical = list(dict.fromkeys(root.resolve() for root in roots))
+  return [root for root in canonical if not any(other != root and root.is_relative_to(other) for other in canonical)]
 
 
 def matching_lines(root: Path, pattern: str) -> tuple[list[tuple[str, str]], bool]:
@@ -665,16 +688,20 @@ def scan_sessions() -> tuple[dict[str, Any], bool]:
       usage = message.get("usage")
       if not isinstance(usage, dict):
         continue
-      inp = token_count(usage.get("input"))
+      inp = usage_tokens(usage, "input", "inputTokens", "input_tokens")
       # pi reports reasoning tokens apart from output; both are generated.
-      out = token_count(usage.get("output")) + token_count(usage.get("reasoning"))
-      cread = token_count(usage.get("cacheRead"))
-      cwrite = token_count(usage.get("cacheWrite"))
+      out = usage_tokens(usage, "output", "outputTokens", "output_tokens") + usage_tokens(usage, "reasoning", "reasoningTokens", "reasoning_tokens")
+      cread = usage_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens")
+      cwrite = usage_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens")
       if not (inp or out or cread or cwrite):
-        inp = token_count(usage.get("totalTokens"))
+        # Some writers keep only the total; it was still spent.
+        inp = usage_tokens(usage, "totalTokens", "total_tokens")
       if not (inp or out or cread or cwrite):
         continue
-      day = local_day(entry.get("timestamp")) or local_day(message.get("timestamp"))
+      # The first time present decides: none at all is today's, and an
+      # untrusted one, zero included, skips only this line.
+      stamp = entry.get("timestamp")
+      day = source_day(message.get("timestamp") if stamp is None else stamp)
       if day is None:
         continue
 
@@ -740,8 +767,11 @@ def add_opencode_row(stats: Stats, message_id: str, session_id: Any, entry: Any,
   if message_id in seen:
     return
   seen.add(message_id)
+  # The message's own time, else the row's: none at all is today's, and an
+  # untrusted one, zero included, skips only this row.
   stamped = entry.get("time")
-  day = local_day(stamped.get("created") if isinstance(stamped, dict) else None) or local_day(created)
+  stamp = stamped.get("created") if isinstance(stamped, dict) else None
+  day = source_day(created if stamp is None else stamp)
   if day is None:
     return
   model = entry.get("modelID") or nested.get("id") or nested.get("modelID")
