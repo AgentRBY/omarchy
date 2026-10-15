@@ -18,7 +18,7 @@ mkdir -p "$test_tmp/bin" "$test_tmp/home"
 
 # Leave the desktop untouched. Any attempt to reboot fails the test even if
 # a later command masks the exit status.
-for command in sudo omarchy-system-reboot omarchy-state; do
+for command in sudo omarchy-system omarchy-state; do
   cat >"$test_tmp/bin/$command" <<'STUB'
 #!/bin/bash
 echo "$0 $*" >>"$TEST_TMP/unexpected"
