@@ -232,6 +232,25 @@ result=$(HOME="$IDLESS_PI_HOME" CODEX_HOME="$IDLESS_PI_HOME/.codex" XDG_CACHE_HO
   fail "Codex collector counts every pi line without an id, once per line" "$result"
 pass "Codex collector counts every pi line without an id, once per line"
 
+# Timestamps and token counts on disk are untrusted: a time out of range
+# dates its row today, and a negative, boolean or non-numeric count is no
+# count, without losing the rest of the record.
+ODD_PI_HOME=$(signed_in_home)
+cp "$TEST_HOME/bin/codex" "$ODD_PI_HOME/bin/codex"
+mkdir -p "$ODD_PI_HOME/.pi/agent/sessions/project"
+cat >"$ODD_PI_HOME/.pi/agent/sessions/project/odd.jsonl" <<EOF
+{"type":"message","id":"odd-1","timestamp":1e300,"message":{"role":"assistant","provider":"openai-codex","model":"gpt-odd","usage":{"input":4,"output":1}}}
+{"type":"message","id":"odd-2","timestamp":"$timestamp","message":{"role":"assistant","provider":"openai-codex","model":"gpt-odd","usage":{"input":-50,"output":true,"cacheRead":"lots","cacheWrite":2}}}
+{"type":"message","id":"odd-3","timestamp":true,"message":{"role":"assistant","provider":"openai-codex","model":"gpt-odd","usage":{"input":3}}}
+EOF
+
+result=$(HOME="$ODD_PI_HOME" CODEX_HOME="$ODD_PI_HOME/.codex" XDG_CACHE_HOME="$ODD_PI_HOME/.cache" \
+  XDG_DATA_HOME="$ODD_PI_HOME/.local/share" PATH="$ODD_PI_HOME/bin:$PATH" "$ROOT/bin/omarchy-agent-usage-codex" --force)
+
+[[ $(jq -c '[.todayTotalTokens,.todayPrompts,.modelUsage["gpt-odd"]]' <<<"$result") == '[10,3,{"inputTokens":7,"outputTokens":1,"cacheReadInputTokens":0,"cacheCreationInputTokens":2}]' ]] ||
+  fail "Codex collector skips untrusted pi timestamps and counts, not the record" "$result"
+pass "Codex collector skips untrusted pi timestamps and counts, not the record"
+
 # A subscription burned entirely through opencode has no native session files;
 # usage must come from opencode's message database, filtered to OpenAI.
 OPENCODE_HOME=$(signed_in_home)

@@ -67,14 +67,19 @@ TRANSPORT_ERRORS = (
 FILE_CACHE_SCHEMA = 1
 
 
+# Timestamps on disk are untrusted: one that is no time at all (a boolean,
+# NaN, or out of range) dates its row today rather than stopping the scan.
 def local_day(value):
-  if value is None:
+  if value is None or isinstance(value, bool):
     return datetime.now().strftime("%Y-%m-%d")
   if isinstance(value, (int, float)):
     # pi message timestamps are milliseconds; Codex timestamps are usually seconds.
     if value > 10_000_000_000:
       value = value / 1000
-    return datetime.fromtimestamp(value).strftime("%Y-%m-%d")
+    try:
+      return datetime.fromtimestamp(value).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError):
+      return datetime.now().strftime("%Y-%m-%d")
   text = str(value)
   try:
     if text.endswith("Z"):
@@ -88,11 +93,16 @@ def local_day(value):
     return datetime.now().strftime("%Y-%m-%d")
 
 
+# Counts from disk and the app-server are untrusted: a boolean, a negative,
+# or a value that isn't a finite number counts as nothing.
 def number(value):
-  try:
-    return int(value or 0)
-  except Exception:
+  if isinstance(value, bool):
     return 0
+  try:
+    n = float(value or 0)
+  except (TypeError, ValueError, OverflowError):
+    return 0
+  return int(n) if math.isfinite(n) and n > 0 else 0
 
 
 def model_name(raw):
