@@ -197,11 +197,13 @@ rm -rf "$cache_home"
 dates_home=$(mktemp -d)
 make_state "$dates_home/.hermes/state.db"
 python3 - "$dates_home/.hermes/state.db" <<'PY'
-import sqlite3, sys, time
+import datetime as dt, sqlite3, sys
 conn = sqlite3.connect(sys.argv[1])
-day = 86400
-now = time.time()
-conn.executemany("INSERT INTO sessions VALUES (?, ?)", [(f"old-{n}", now - (n + 1) * day) for n in range(450)])
+# Local noon on each earlier day, so a daylight-saving change can't put two
+# sessions on one date the way fixed 86400-second steps can near midnight.
+today = dt.date.today()
+noons = [dt.datetime.combine(today - dt.timedelta(days=n + 1), dt.time(12)).timestamp() for n in range(450)]
+conn.executemany("INSERT INTO sessions VALUES (?, ?)", [(f"old-{n}", noons[n]) for n in range(450)])
 conn.execute("INSERT INTO sessions VALUES ('broken', 'not a time')")
 conn.executemany("INSERT INTO session_model_usage VALUES (?, ?, ?, ?, ?, ?)", [
   ("old-1", "negative", -500, 0, 0, 0),
