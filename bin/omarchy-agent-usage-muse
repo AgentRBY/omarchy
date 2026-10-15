@@ -34,7 +34,6 @@ only ever reads the JSON this prints.
 """
 
 import argparse
-import base64
 import hashlib
 import json
 import math
@@ -54,13 +53,13 @@ from collectors import (  # noqa: E402
   HttpError,
   LimitsCache,
   Stats,
+  account_key,
   base_record,
   cache_root,
   cached_scan,
   config_home,
   data_home,
   emit,
-  empty_bucket,
   now_ms,
   number,
   open_json,
@@ -90,10 +89,6 @@ MAX_SESSION_BYTES = 512 * 1024 * 1024
 # index. 4: pi/omp sessions counted. 5: native sessions the index hasn't seen
 # counted. 6: today's prompts from what each session's count grew by today.
 CACHE_SCHEMA_VERSION = 6
-
-# Subscription probe reuse: minting is idempotent and cheap (the same key
-# comes back every call), so this only absorbs repeated panel opens.
-PROBE_MIN_INTERVAL_SECONDS = 15
 
 
 def key_endpoint() -> str:
@@ -170,50 +165,6 @@ def local_day(value):
     return None
 
 
-class MuseStats(Stats):
-  """The shared totals, plus what Muse's own stores record apart."""
-
-  # `counted` is False for native completions of a session the index has a
-  # row for, since the index supplied its real prompt and session counts:
-  # their tokens still count, but a completion is a model call, not a prompt.
-  # An undated row (day None) counts in the totals only.
-  def add_usage(self, day, session_key, model, input_tokens, output_tokens, cache_read, cache_write, counted=True):
-    total = input_tokens + output_tokens + cache_read + cache_write
-    if total <= 0:
-      return
-    if counted and day is not None:
-      self.add(day, session_key, model, input_tokens, output_tokens, cache_read, cache_write)
-      return
-    if counted:
-      self.total_prompts += 1
-      self.sessions.add(session_key)
-    if day is not None:
-      self.active_dates.add(day)
-    bucket = self.model_usage.setdefault(model, empty_bucket())
-    bucket["inputTokens"] += input_tokens
-    bucket["outputTokens"] += output_tokens
-    bucket["cacheReadInputTokens"] += cache_read
-    bucket["cacheCreationInputTokens"] += cache_write
-    if day in self.recent:
-      self.recent[day] += total
-    if day == self.today:
-      self.today_tokens += total
-      self.today_by_model[model] = self.today_by_model.get(model, 0) + total
-
-  # A session's prompts from the index: `day` is when it was created, which
-  # may be unknown, and today's prompts arrive apart, through add_today.
-  def add_indexed(self, session_key, day, prompts):
-    self.total_prompts += prompts
-    self.sessions.add(session_key)
-    if day is not None:
-      self.active_dates.add(day)
-
-  def add_today(self, session_key, prompts):
-    self.today_prompts += prompts
-    self.today_sessions.add(session_key)
-    self.active_dates.add(self.today)
-
-
 def muse_data_dir():
   override = (os.environ.get("MUSE_DATA_DIR") or "").strip()
   if override:
@@ -248,7 +199,7 @@ def scan_session_index(stats):
     except Exception:
       pass
   indexed = {str(session_id) for session_id, _, _ in rows}
-  counts, created_today = {}, set()
+  counts, created = {}, {}
   for session_id, created_at_us, prompt_count in rows:
     prompts = token_count(prompt_count)
     if not prompts:
@@ -256,12 +207,15 @@ def scan_session_index(stats):
     session_id = str(session_id)
     counts[session_id] = prompts
     # created_at_us is microseconds, which local_day recognises by size.
-    day = local_day(created_at_us)
-    stats.add_indexed("muse-index:" + session_id, day, prompts)
-    if day == stats.today:
-      created_today.add(session_id)
-  for session_id, prompts in prompts_today(database, counts, created_today, stats.today).items():
-    stats.add_today("muse-index:" + session_id, prompts)
+    created[session_id] = local_day(created_at_us)
+  grown = prompts_today(database, counts, {key for key, day in created.items() if day == stats.today}, stats.today)
+  for session_id, prompts in counts.items():
+    # A session's prompts land on the day it was created, which may be
+    # unknown, apart from today's, which are what its count grew by today.
+    today_prompts = grown.get(session_id, 0)
+    stats.add_prompts(created[session_id], "muse-index:" + session_id, prompts - today_prompts)
+    if today_prompts:
+      stats.add_prompts(stats.today, "muse-index:" + session_id, today_prompts)
   return indexed, True
 
 
@@ -452,9 +406,13 @@ def scan_native_muse_sessions(stats, indexed=frozenset()):
       session_dir = re.sub(r"(/subagent/.*)?/session\.jsonl$", "", str(path))
       # The session directory is named by the index's session id. One the
       # index has no row for yet counts its completions as prompts, as it
-      # would with no index at all.
-      stats.add_usage(day, "muse:" + session_dir, model,
-                input_tokens, output_tokens, cache_read, cache_write, Path(session_dir).name not in indexed)
+      # would with no index at all. One it has a row for supplied its real
+      # prompt and session counts already: its tokens still count, but a
+      # completion is a model call, not a prompt, and its session is the
+      # index's. An undated completion counts in the totals only.
+      counted = Path(session_dir).name not in indexed
+      stats.add(day, "muse:" + session_dir if counted else None, model,
+                input_tokens, output_tokens, cache_read, cache_write, prompts=1 if counted else 0)
 
 
 # pi, omp, and opencode alike: the meta provider is Meta's own Muse Spark API
@@ -604,21 +562,6 @@ def probe_key(access_token: str) -> dict:
   return {"ok": True, "limits": limits, "tierLabel": tier}
 
 
-# Keyed by who the token signs in as (the JWT's subject when it is one), so a
-# machine signed in to someone else never shows the last one's windows, and a
-# refreshed token keeps the same cache.
-def limits_identity(access_token: str) -> str:
-  subject = ""
-  parts = access_token.split(".")
-  if len(parts) == 3:
-    try:
-      claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
-      subject = str(claims.get("sub") or "") if isinstance(claims, dict) else ""
-    except Exception:
-      subject = ""
-  return subject or access_token
-
-
 def collect_limits(force: bool) -> dict:
   result = {"limits": [], "tierLabel": "", "usageStatusText": "", "authHelpText": "", "stale": False, "fetchedAtMs": 0}
 
@@ -633,10 +576,13 @@ def collect_limits(force: bool) -> dict:
     return result
   result["signedIn"] = True
 
-  # A window kept from an earlier check whose reset has passed comes back at
-  # zero: the period it measured is over.
+  # Keyed by who the token signs in as (the JWT's subject when it is one), so
+  # a machine signed in to someone else never shows the last one's windows,
+  # and a refreshed token keeps the same cache. A window kept from an earlier
+  # check whose reset has passed comes back at zero: the period it measured
+  # is over.
   try:
-    probe_cache = LimitsCache(AGENT_ID, limits_identity(access_token))
+    probe_cache = LimitsCache(AGENT_ID, account_key(access_token))
     cached, fallback, fetched_at = probe_cache.data, probe_cache.limits, probe_cache.fetched_at
   except Exception as exc:
     warn(f"could not read limits cache ({exc})")
@@ -649,8 +595,10 @@ def collect_limits(force: bool) -> dict:
     result["stale"] = True
     result["fetchedAtMs"] = fetched_at if fallback else 0
 
-  # A plan without windows is an answer too, and stands in like any other.
-  if (fallback or cached.get("tierLabel") or cached.get("noWindows")) and not force and probe_cache.younger_than(PROBE_MIN_INTERVAL_SECONDS):
+  # Minting is idempotent and cheap (the same key comes back every call), so
+  # the reuse only absorbs repeated panel opens. A plan without windows is an
+  # answer too, and stands in like any other.
+  if probe_cache is not None and probe_cache.fresh(force, allow_empty=True):
     result["limits"] = fallback
     result["fetchedAtMs"] = fetched_at if fallback else 0
     return result
@@ -693,7 +641,7 @@ def scan_sources():
 
 
 def run_local_scans():
-  stats = MuseStats()
+  stats = Stats()
   indexed, index_read = scan_session_index(stats)
   scan_native_muse_sessions(stats, indexed)
   complete = scan_shared_stores(stats)
