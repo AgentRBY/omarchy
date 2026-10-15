@@ -322,9 +322,9 @@ pass "Muse collector honors --limits-only cache reuse"
 # A microsecond epoch emitted as a string still lands on its real day (8 days
 # ago, outside the 7-day window); a boolean timestamp falls back to the
 # file's own time (today) instead of 1970; a non-dict opencode time object
-# keeps its row's tokens in the totals but on no day, rather than guessing
-# today; a non-dict tokens object skips just that row; and a non-dict cache
-# object keeps the row's input. Today: 5 + 11 = 16.
+# reads as no time at all, so the row is today's, as every collector reading
+# opencode files it; a non-dict tokens object skips just that row; and a
+# non-dict cache object keeps the row's input. Today: 5 + 44 + 11 = 60.
 odd_home="$TEST_HOME/odd-shapes"
 mkdir -p "$odd_home/muse-data/sessions/sess-odd" "$odd_home/data/opencode"
 cat >"$odd_home/muse-data/sessions/sess-odd/session.jsonl" <<EOF
@@ -338,7 +338,7 @@ INSERT INTO message VALUES ('odd-2', '{"role":"assistant","providerID":"meta","m
 INSERT INTO message VALUES ('odd-3', '{"role":"assistant","providerID":"meta","modelID":"odd-cache-model","tokens":{"input":11,"output":0,"reasoning":0,"cache":"nope"},"time":{"created":$now_ms}}');
 EOF
 result_odd=$(HOME="$odd_home" XDG_DATA_HOME="$odd_home/data" XDG_CACHE_HOME="$odd_home/cache" MUSE_DATA_DIR="$odd_home/muse-data" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_odd") == "16" ]] ||
+[[ $(jq -r '.todayTotalTokens' <<<"$result_odd") == "60" ]] ||
   fail "Muse collector totals odd shapes without misfiling" "$result_odd"
 [[ $(jq -r '.totalPrompts' <<<"$result_odd") == "4" ]] ||
   fail "Muse collector counts prompts across odd shapes" "$result_odd"

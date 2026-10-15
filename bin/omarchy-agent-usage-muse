@@ -476,10 +476,15 @@ def add_opencode_row(message_id, session_id, entry, row_type, created, seen):
   if message_id in seen:
     return
   seen.add(message_id)
-  # A malformed time object must not drop the row's valid tokens: non-dict
-  # shapes fall back to the row's own time, then leave the row undated.
+  # Dated as every collector dates opencode: the message's own time, else
+  # the row's; a row with neither is today's, and an untrusted time (zero
+  # included) skips only this row.
   stamped = entry.get("time")
-  day = local_day(stamped.get("created") if isinstance(stamped, dict) else None) or local_day(created)
+  stamp = stamped.get("created") if isinstance(stamped, dict) else None
+  stamp = created if stamp is None else stamp
+  day = today if stamp is None else local_day(stamp)
+  if day is None:
+    return
   add_usage(day, "opencode:" + str(session_id), model, input_tokens, output_tokens, cache_read, cache_write)
 
 
@@ -545,12 +550,12 @@ def scan_opencode_sessions():
 
 
 # pi's and omp's session trees, each profile's too: `--profile=<name>` moves
-# the whole agent tree under <base>/profiles/<name>/, and PI_CODING_AGENT_DIR
-# moves pi's.
+# the whole agent tree under <base>/profiles/<name>/. pi moves its agent tree
+# with PI_CODING_AGENT_DIR and its sessions alone with
+# PI_CODING_AGENT_SESSION_DIR, both expanding a leading ~; either is read as
+# well as the default trees, which keep whatever was written before the move.
 def pi_session_roots():
   roots = []
-  if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
-    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
   for base in (Path.home() / ".pi", Path.home() / ".omp"):
     roots.append(base / "agent" / "sessions")
     try:
@@ -559,7 +564,24 @@ def pi_session_roots():
     except OSError:
       # No profiles directory, or it is unreadable: the default root stands.
       pass
-  return list(dict.fromkeys(roots))
+  if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
+  if os.environ.get("PI_CODING_AGENT_SESSION_DIR", "").strip():
+    roots.append(Path(os.environ["PI_CODING_AGENT_SESSION_DIR"].strip()).expanduser())
+  # Canonical roots, so an override that aliases a default root through a
+  # symlink is scanned under one spelling. A root inside another is already
+  # read with it, so it is dropped rather than counted twice.
+  canonical = list(dict.fromkeys(root.resolve() for root in roots))
+  return [root for root in canonical if not any(other != root and root.is_relative_to(other) for other in canonical)]
+
+
+# pi, omp, and the harnesses that copy their format spell usage camelCase or
+# snake_case; the first spelling present wins.
+def usage_tokens(usage, *keys):
+  for key in keys:
+    if key in usage:
+      return token_number(usage.get(key))
+  return 0
 
 
 def add_pi_entry(entry, path, seen):
@@ -575,21 +597,25 @@ def add_pi_entry(entry, path, seen):
   usage = message.get("usage")
   if not isinstance(usage, dict):
     return
-  input_tokens = token_number(usage.get("input"))
+  input_tokens = usage_tokens(usage, "input", "inputTokens", "input_tokens")
   # pi reports reasoning apart from output; both are generated.
-  output_tokens = token_number(usage.get("output")) + token_number(usage.get("reasoning"))
-  cache_read = token_number(usage.get("cacheRead"))
-  cache_write = token_number(usage.get("cacheWrite"))
+  output_tokens = usage_tokens(usage, "output", "outputTokens", "output_tokens") + usage_tokens(usage, "reasoning", "reasoningTokens", "reasoning_tokens")
+  cache_read = usage_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens")
+  cache_write = usage_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens")
   if not (input_tokens or output_tokens or cache_read or cache_write):
     # Some writers keep only the total; it was still spent.
-    input_tokens = token_number(usage.get("totalTokens"))
+    input_tokens = usage_tokens(usage, "totalTokens", "total_tokens")
     if not input_tokens:
       return
   model = model_name(message.get("model"))
   if model is None:
     return
   timestamp = entry.get("timestamp")
-  day = local_day(timestamp) or local_day(message.get("timestamp"))
+  # Dated as every collector dates pi: the first time present decides, a
+  # line with no time at all is today's, and an untrusted one (zero
+  # included) skips only this line.
+  stamp = timestamp if timestamp is not None else message.get("timestamp")
+  day = today if stamp is None else local_day(stamp)
   if day is None:
     return
   # A fork copies its parent's entries with their id and timestamp, so the
