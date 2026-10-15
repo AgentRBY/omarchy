@@ -18,12 +18,14 @@ import time
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 requests = []
 state = {}
-payload = {"usages": {"limit_5h": {"used_ratio": 0.25, "reset_time": "2026-10-15T12:00:00Z"},
+# A day out, so the window is still open whenever the test runs.
+RESET_AT = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+payload = {"usages": {"limit_5h": {"used_ratio": 0.25, "reset_time": RESET_AT},
                       "limit_7d": {"used_ratio": "0.8"}, "limit_month_total": {"used_ratio": 1},
                       "limit_month_code": {"used_ratio": 0}}}
 
@@ -203,7 +205,7 @@ def modern_quota(root):
   os.environ["KIMI_API_KEY"] = "AT_env"
   data = record()
   assert [row["percent"] for row in data["limits"]] == [0.25, 0.8, 1, 0], "current CLI quota windows were dropped"
-  assert data["limits"][0]["resetsAt"] == "2026-10-15T12:00:00Z"
+  assert data["limits"][0]["resetsAt"] == RESET_AT
   assert data["limits"][-1].get("title") == "Code Monthly", "monthly code allowance lost its scope"
   assert not data["hasLocalStats"] and not data["hasPromptStats"], "quota was advertised as local history"
   scanner.USAGE_URL = "https://api.kimi.ai/coding/v1/usages"
