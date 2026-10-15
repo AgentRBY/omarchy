@@ -27,7 +27,6 @@ omacom/omarchy#10330 (dedicated pi collector proposal).
 from __future__ import annotations
 
 import argparse
-import hashlib
 import math
 import os
 import sys
@@ -41,16 +40,18 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
 from collectors import (  # noqa: E402
   HttpError,
+  LimitsCache,
   Stats,
   age_below,
   base_record as shared_base_record,
-  cache_root,
+  cache_root,  # noqa: F401 - the tests find the cached answers through it
   cached_scan,
   config_home,
   data_home,
   emit,
   empty_bucket,
   empty_stats,
+  limits_cache_path,
   now_ms,
   number,
   open_json,
@@ -72,11 +73,6 @@ AGENT_NAME = "OpenRouter"
 PROVIDER = "openrouter"
 AUTH_HELP = "Set OPENROUTER_API_KEY, or sign in to OpenRouter in opencode, pi or omp. For the 30-day history, add a management key as OPENROUTER_MANAGEMENT_KEY (openrouter.ai/settings/management-keys)."
 API_BASE = "https://openrouter.ai/api/v1"
-
-# Opening and shutting the panel must not turn into three API calls per flick,
-# so a probe this recent is reused; --force, a person pressing refresh, skips
-# it.
-PROBE_MIN_INTERVAL_SECONDS = 15
 
 
 class OpenRouterError(Exception):
@@ -228,10 +224,6 @@ def summarize_activity(items: list[Any], today: datetime) -> dict[str, Any]:
   }
 
 
-def credential_digest(secret: str) -> str:
-  return hashlib.sha256(secret.encode("utf-8")).hexdigest()[:16]
-
-
 def activity_stats(key: str, today: datetime, max_age: float) -> tuple[dict[str, Any] | None, bool]:
   """Tier 2: 30-day account history via management key, or None.
 
@@ -245,7 +237,7 @@ def activity_stats(key: str, today: datetime, max_age: float) -> tuple[dict[str,
     return None, False
   scan_date = today.strftime("%Y-%m-%d")
   try:
-    cache = cache_root() / f"openrouter-activity-{credential_digest(key)}.json"
+    cache = limits_cache_path(AGENT_ID, key, kind="activity")
     cached = read_json(cache)
   except OSError:
     cache, cached = None, {}
@@ -324,14 +316,13 @@ def cached_local_stats(max_age: float) -> tuple[dict, bool]:
   Concurrent runs (the update command and the panel's own refresh) wait for
   one scan instead of each reading the whole database.
   """
-  complete = [True]
 
   def scan() -> tuple[dict[str, Any], bool]:
     stats = Stats()
-    complete[0] = scan_local(stats)
-    return stats.snapshot(), complete[0]
+    complete = scan_local(stats)
+    return stats.snapshot(), complete
 
-  return cached_scan(AGENT_ID, scan_sources(), max_age, scan), complete[0]
+  return cached_scan(AGENT_ID, scan_sources(), max_age, scan, with_complete=True)
 
 
 # ---------------------------------------------------------------- record
@@ -394,41 +385,32 @@ def credits_balance(credits: dict) -> dict | None:
 
 
 # Each credential keeps its own last good answer, so another key never shows
-# this one's numbers. Refreshes can overlap (the panel's own and a sooner
-# retry), so an answer only replaces one fetched before it.
-def probe_cache(kind: str, secret: str) -> Path:
-  return cache_root() / f"openrouter-{kind}-{credential_digest(secret)}.json"
-
-
-def remember(path: Path, part: dict) -> None:
-  if stamp(read_json(path).get("fetchedAtMs")) <= part["fetchedAtMs"]:
-    write_json(path, part)
-
-
-def probe(endpoint: str, key: str, cache: Path, parse, force: bool) -> tuple[dict | None, OpenRouterError | None]:
+# this one's numbers: the key's meter as openrouter-limits-<key>, the
+# balance beside it as openrouter-credits-<key>.
+def probe(endpoint: str, key: str, kind: str, parse, force: bool) -> tuple[dict | None, OpenRouterError | None]:
   """One endpoint's answer as (part, error).
 
-  A probe this recent is reused, a fresh answer replaces the cached one, and
-  a failed one falls back on it. part is None when nothing was ever fetched.
+  Opening and shutting the panel must not turn into three API calls per
+  flick, so a probe this recent is reused; --force, a person pressing
+  refresh, skips it. A fresh answer replaces the cached one, and a failed one
+  falls back on it. part is None when nothing was ever fetched.
   A key with no credit limit has an empty meter, and its answer is reused
   all the same.
   """
-  cached = read_json(cache)
-  fetched_at = stamp(cached.get("fetchedAtMs"))
-  kept = dict(cached, fetchedAtMs=fetched_at) if fetched_at else None
-  if kept is not None and not force and age_below(fetched_at / 1000, PROBE_MIN_INTERVAL_SECONDS):
+  cache = LimitsCache(AGENT_ID, key, kind=kind)
+  kept = dict(cache.data, fetchedAtMs=cache.fetched_at) if cache.fetched_at else None
+  if kept is not None and cache.fresh(force, allow_empty=True):
     return kept, None
   try:
     payload = api_get(endpoint, key)
     data = payload.get("data")
-    part = dict(parse(data if isinstance(data, dict) else {}), fetchedAtMs=now_ms())
+    part = parse(data if isinstance(data, dict) else {})
   except OpenRouterError as error:
     return kept, error
-  try:
-    remember(cache, part)
-  except OSError as exc:
-    warn(f"could not write {cache.name} ({exc})")
-  return part, None
+  # Refreshes can overlap (the panel's own and a sooner retry), so an answer
+  # only replaces one fetched before it.
+  cache.save(part.pop("limits", []), only_if_newer=True, **part)
+  return dict(cache.data), None
 
 
 def collect_billing(key: str, manager: str, force: bool) -> dict[str, Any]:
@@ -445,11 +427,11 @@ def collect_billing(key: str, manager: str, force: bool) -> dict[str, Any]:
   parts: dict[str, dict | None] = {}
   errors: dict[str, OpenRouterError] = {}
   if key:
-    parts["key"], error = probe("/key", key, probe_cache("limits", key), lambda data: {"limits": key_limit_meter(data)}, force)
+    parts["key"], error = probe("/key", key, "limits", lambda data: {"limits": key_limit_meter(data)}, force)
     if error:
       errors["key"] = error
   credits_key = key or manager
-  parts["credits"], error = probe("/credits", credits_key, probe_cache("credits", credits_key), lambda data: {"balance": credits_balance(data)}, force)
+  parts["credits"], error = probe("/credits", credits_key, "credits", lambda data: {"balance": credits_balance(data)}, force)
   if error:
     errors["credits"] = error
 

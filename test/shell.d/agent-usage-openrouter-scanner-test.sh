@@ -389,7 +389,7 @@ check "$(jq -c '.healthy | {usageStatusText, authHelpText, limitsStale}' <<<"$re
 
 # 13. A kept window whose reset has passed comes back at zero, never dropped.
 elapsed=$(run_py <<'PY'
-cache = mod.probe_cache("limits", "sk-test")
+cache = mod.LimitsCache(mod.AGENT_ID, "sk-test").path
 mod.write_json(cache, {"fetchedAtMs": round(time.time() * 1000) - 3_600_000, "limits": [
   {"label": "Daily key limit", "title": "Daily key limit", "percent": 0.7, "resetsAt": "2020-01-01T00:00:00Z"},
   {"label": "Key limit", "title": "Key limit", "percent": 0.4, "resetsAt": ""},
@@ -403,7 +403,7 @@ check "$(jq -c '[.limits[] | {percent, resetsAt}]' <<<"$elapsed")" '[{"percent":
 # 14. A cache written under a clock that later went back is still the last
 # good answer, but never counts as a recent probe.
 clock=$(run_py <<'PY'
-cache = mod.probe_cache("limits", "sk-test")
+cache = mod.LimitsCache(mod.AGENT_ID, "sk-test").path
 mod.write_json(cache, {"fetchedAtMs": round(time.time() * 1000) + 3_600_000, "limits": [{"label": "Key limit", "title": "Key limit", "percent": 0.4, "resetsAt": ""}]})
 answers.update({"/key": METER, "/credits": CREDITS})
 record = mod.scan(Args())
