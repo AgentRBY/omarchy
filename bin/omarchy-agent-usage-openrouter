@@ -9,7 +9,9 @@ and GET /api/v1/key; token stats come from the local opencode SQLite DB
 (providerID == "openrouter", role == "assistant") and from pi/omp session
 files whose assistant messages ran on the openrouter provider, read-only.
 Each key keeps its own last good meter and balance, shown stale when a
-check fails.
+check fails. The key is OPENROUTER_API_KEY, opencode's or pi/omp's saved
+OpenRouter login, or the config file's. Without any, the local stats still
+show and the record waits for auth.
 
 Tier 2 (management key): when OPENROUTER_MANAGEMENT_KEY (or the management
 key in the config file) is set, the last-30-days token history comes from
@@ -43,7 +45,7 @@ from typing import Any
 
 AGENT_ID = "openrouter"
 AGENT_NAME = "OpenRouter"
-AUTH_HELP = "Set OPENROUTER_API_KEY, or sign in to OpenRouter in opencode. For the 30-day history, add a management key as OPENROUTER_MANAGEMENT_KEY (openrouter.ai/settings/management-keys)."
+AUTH_HELP = "Set OPENROUTER_API_KEY, or sign in to OpenRouter in opencode, pi or omp. For the 30-day history, add a management key as OPENROUTER_MANAGEMENT_KEY (openrouter.ai/settings/management-keys)."
 API_BASE = "https://openrouter.ai/api/v1"
 
 # A scan this recent is only reused to dedup concurrent collector runs;
@@ -116,12 +118,15 @@ def empty_bucket() -> dict[str, int]:
 
 
 def empty_stats() -> dict[str, Any]:
+  # The week is always there, zeroed, so the panel's chart has its seven days
+  # even on a machine with nothing spent.
+  today = datetime.now()
   return {
     "todayPrompts": 0,
     "todaySessions": 0,
     "todayTotalTokens": 0,
     "todayTokensByModel": {},
-    "recentDays": [],
+    "recentDays": [{"date": (today - timedelta(days=offset)).strftime("%Y-%m-%d"), "messageCount": 0} for offset in range(6, -1, -1)],
     "totalPrompts": 0,
     "totalSessions": 0,
     "activeDays": 0,
@@ -160,12 +165,27 @@ def read_opencode_key(path: Path) -> str:
   return str(entry.get("key") or "").strip()
 
 
+def pi_agent_dir() -> Path:
+  # PI_CODING_AGENT_DIR moves pi's agent dir, as pi itself reads it.
+  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
+  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
+
+
+def read_pi_key(path: Path) -> str:
+  # pi/omp keep a key they were given with /login in auth.json. Only a literal
+  # key is taken: a `$VAR` or `!command` entry is resolved by pi alone.
+  key = read_opencode_key(path)
+  return "" if key.startswith(("!", "$")) else key
+
+
 def api_key(config: dict[str, Any]) -> str:
-  # Explicit key or opencode login wins; the config file is the last
-  # resort for headless/refresh-timer runs without either.
+  # Explicit key or an opencode, pi or omp login wins; the config file is
+  # the last resort for headless/refresh-timer runs without any.
   return (
     str(os.environ.get("OPENROUTER_API_KEY", "")).strip()
     or read_opencode_key(opencode_auth_path())
+    or read_pi_key(pi_agent_dir() / "auth.json")
+    or read_pi_key(Path.home() / ".omp" / "agent" / "auth.json")
     or str(config.get("apiKey") or "").strip()
   )
 
@@ -374,7 +394,107 @@ class LocalScan:
 
 
 def opencode_db_path() -> Path:
-  return Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode" / "opencode.db"
+  # OPENCODE_DB points opencode at another database, as the CLI itself reads
+  # it; a relative name lives beside the default one. Only a build whose
+  # channel was literally "v2" wrote opencode-v2.db, so it is a fallback for
+  # those installs alone.
+  root = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "opencode"
+  configured = os.environ.get("OPENCODE_DB", "").strip()
+  if configured:
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else root / path
+  normal = root / "opencode.db"
+  legacy = root / "opencode-v2.db"
+  return legacy if not normal.is_file() and legacy.is_file() else normal
+
+
+def opencode_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+  try:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+  except sqlite3.Error:
+    return set()
+
+
+def opencode_row(scan: LocalScan, message_id: str, session_id: Any, entry: Any, row_type: str, created: Any, seen: set[str]) -> None:
+  # Shared by both message stores. The original `message` table keeps the
+  # provider and model at the top level; the V2 `session_message` table nests
+  # them under `model` and keeps the role in its `type` column, with a
+  # compaction's tokens spent like any reply's.
+  if not isinstance(entry, dict):
+    return
+  if (entry.get("role") or row_type) not in ("assistant", "compaction"):
+    return
+  model = entry.get("model")
+  provider = entry.get("providerID") or (model.get("providerID") if isinstance(model, dict) else "")
+  if str(provider or "") != "openrouter":
+    return
+  tokens = entry.get("tokens") if isinstance(entry.get("tokens"), dict) else {}
+  cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+  in_tok = number(tokens.get("input"))
+  # opencode keeps thinking tokens out of output; both are generated.
+  out_tok = number(tokens.get("output")) + number(tokens.get("reasoning"))
+  cache_read = number(cache.get("read"))
+  cache_write = number(cache.get("write"))
+  if not (in_tok or out_tok or cache_read or cache_write):
+    return
+  # A migrated message can sit in both stores under the same id.
+  if message_id in seen:
+    return
+  seen.add(message_id)
+  timing = entry.get("time") if isinstance(entry.get("time"), dict) else {}
+  day = local_day(timing.get("created") or created)
+  if not day:
+    return
+  raw_model = entry.get("modelID") or ((model.get("modelID") or model.get("id")) if isinstance(model, dict) else model)
+  scan.add_usage(day, "opencode:" + str(session_id), model_name(str(raw_model or "")), in_tok, out_tok, cache_read, cache_write)
+
+
+def scan_opencode_session_messages(scan: LocalScan, conn: sqlite3.Connection, tables: set[str], seen: set[str]) -> None:
+  # The V2 store. The LIKE gate skips rows whose JSON cannot name the
+  # provider before any parse.
+  columns = opencode_columns(conn, "session_message")
+  if not {"id", "session_id", "type", "data"} <= columns:
+    return
+  created = "m.time_created" if "time_created" in columns else "NULL"
+  source = "session_message m"
+  fork_filter = ""
+  if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= opencode_columns(conn, "session_v2"):
+    # A fork copies its source session's messages under new ids; only what
+    # came after the fork was spent in it.
+    source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
+    fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
+  for message_id, session_id, row_type, time_created, raw in conn.execute(
+    f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
+    " WHERE m.type IN ('assistant', 'compaction')"
+    " AND m.data LIKE '%\"providerID\"%:%\"openrouter\"%'" + fork_filter
+  ):
+    # One row that still fails must not take the scan down with it.
+    try:
+      opencode_row(scan, str(message_id), session_id, json.loads(raw), str(row_type or ""), time_created, seen)
+    except Exception:
+      continue
+
+
+def scan_opencode_messages(scan: LocalScan, conn: sqlite3.Connection, seen: set[str]) -> None:
+  # The original store, one row per chat message. The LIKE gates skip rows
+  # whose JSON cannot contain the two key/value pairs, avoiding the JSON
+  # parse of huge message blobs; json_extract is the authority for the rows
+  # that reach Python.
+  columns = opencode_columns(conn, "message")
+  if not {"session_id", "data"} <= columns:
+    return
+  message_id = "id" if "id" in columns else "rowid"
+  for row_id, session_id, raw in conn.execute(
+    f"SELECT {message_id}, session_id, data FROM message"
+    " WHERE data LIKE '%\"role\"%:%\"assistant\"%'"
+    " AND data LIKE '%\"providerID\"%:%\"openrouter\"%'"
+    " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END = 'assistant'"
+    " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.providerID') END = 'openrouter'"
+  ):
+    try:
+      opencode_row(scan, str(row_id), session_id, json.loads(raw), "", None, seen)
+    except Exception:
+      continue
 
 
 def scan_opencode(scan: LocalScan, db: Path | None = None) -> bool:
@@ -390,39 +510,14 @@ def scan_opencode(scan: LocalScan, db: Path | None = None) -> bool:
     return False
   try:
     conn.execute("PRAGMA query_only = ON")
-    # The LIKE gates skip rows whose JSON cannot contain the two
-    # key/value pairs, avoiding the JSON parse of huge message blobs;
-    # json_extract is the authority for the rows that reach Python.
-    rows = conn.execute(
-      "SELECT session_id, data FROM message"
-      " WHERE data LIKE '%\"role\"%:%\"assistant\"%'"
-      " AND data LIKE '%\"providerID\"%:%\"openrouter\"%'"
-      " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END = 'assistant'"
-      " AND CASE WHEN json_valid(data) THEN json_extract(data, '$.providerID') END = 'openrouter'"
-    )
-    for session_id, raw in rows:
-      try:
-        entry = json.loads(raw)
-        if not isinstance(entry, dict) or entry.get("role") != "assistant":
-          continue
-        if str(entry.get("providerID") or "") != "openrouter":
-          continue
-        tokens = entry.get("tokens") or {}
-        cache = tokens.get("cache") or {}
-        in_tok = number(tokens.get("input"))
-        # opencode keeps thinking tokens out of output; both are generated.
-        out_tok = number(tokens.get("output")) + number(tokens.get("reasoning"))
-        cache_read = number(cache.get("read"))
-        cache_write = number(cache.get("write"))
-        if not (in_tok or out_tok or cache_read or cache_write):
-          continue
-        day = local_day((entry.get("time") or {}).get("created"))
-        if not day:
-          continue
-        model = model_name(str(entry.get("modelID") or ""))
-      except Exception:
-        continue
-      scan.add_usage(day, "opencode:" + str(session_id), model, in_tok, out_tok, cache_read, cache_write)
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    # Both stores, V2 first, deduplicated by message id: a build that
+    # migrated keeps reading, and a message in both counts once.
+    seen: set[str] = set()
+    if "session_message" in tables:
+      scan_opencode_session_messages(scan, conn, tables, seen)
+    if "message" in tables:
+      scan_opencode_messages(scan, conn, seen)
   except sqlite3.Error:
     return False
   finally:
@@ -440,8 +535,7 @@ def cache_root() -> Path:
 # moves a whole agent tree under profiles/<name>/. PI_CODING_AGENT_DIR moves
 # pi's default one, as pi itself reads it.
 def pi_session_roots() -> list[Path]:
-  pi_agent = Path(os.environ.get("PI_CODING_AGENT_DIR") or (Path.home() / ".pi" / "agent"))
-  roots = [pi_agent / "sessions", Path.home() / ".omp" / "agent" / "sessions"]
+  roots = [pi_agent_dir() / "sessions", Path.home() / ".omp" / "agent" / "sessions"]
   for base in (Path.home() / ".pi", Path.home() / ".omp"):
     try:
       roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
@@ -807,12 +901,20 @@ def scan(args: Any) -> dict[str, Any]:
   config = read_config()
   key = api_key(config)
   manager = management_key(config)
-  # No key anywhere: OpenRouter isn't used here, and the panel skips it.
-  if not key and not manager:
-    return base_record()
-
   today = datetime.now().astimezone()
   max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
+
+  if not key and not manager:
+    # No key anywhere: there is no balance or meter to read, but what pi,
+    # omp and opencode spent through OpenRouter here is still OpenRouter's
+    # usage, and no other collector counts it. With none, OpenRouter isn't
+    # used here and the panel skips it.
+    stats, complete = cached_local_stats(today, max_age)
+    if number(stats.get("totalPrompts")) <= 0 and not stats.get("modelUsage"):
+      return base_record()
+    record = base_record(ready=True, hasLocalStats=complete, usageStatusText="Waiting for auth", authHelpText=AUTH_HELP)
+    record.update(stats)
+    return record
 
   # Tier 2 first: with a management key the 30-day account history covers
   # every machine and client. Without one (or a refused one) fall back to

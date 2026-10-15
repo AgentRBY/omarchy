@@ -20,6 +20,7 @@ export XDG_CACHE_HOME="$TEST_HOME/.cache"
 export XDG_STATE_HOME="$TEST_HOME/.local/state"
 export OPENROUTER_API_KEY=""
 export OPENROUTER_MANAGEMENT_KEY=""
+unset OPENCODE_DB PI_CODING_AGENT_DIR
 # Bucket dates resolve in local time, so pin the zone or the fixtures below
 # would shift by a day depending on where the test runs.
 export TZ="UTC"
@@ -32,7 +33,9 @@ pass "prints a valid record without credentials"
 [[ $(jq -c '{usageStatusText, authHelpText, limits, balance, limitsStale, limitsFetchedAt}' <<<"$no_key") == '{"usageStatusText":"","authHelpText":"","limits":[],"balance":null,"limitsStale":false,"limitsFetchedAt":0}' ]] ||
   fail "an unused machine reports no trouble" "$no_key"
 pass "an unused machine reports no trouble"
-[[ $(jq -c '[.todayPrompts, .todaySessions, .todayTotalTokens, .todayTokensByModel, .recentDays, .totalPrompts, .totalSessions, .activeDays, .activeDates, .modelUsage]' <<<"$no_key") == '[0,0,0,{},[],0,0,0,[],{}]' ]] ||
+[[ $(jq -c '[.todayPrompts, .todaySessions, .todayTotalTokens, .todayTokensByModel, .totalPrompts, .totalSessions, .activeDays, .activeDates, .modelUsage]' <<<"$no_key") == '[0,0,0,{},0,0,0,[],{}]' ]] ||
+  fail "an unused machine prints the full empty stats block" "$no_key"
+[[ $(jq -c '[.recentDays | length, (map(.messageCount) | add), .[-1].date]' <<<"$no_key") == "[7,0,\"$(date +%Y-%m-%d)\"]" ]] ||
   fail "an unused machine prints the full empty stats block" "$no_key"
 pass "an unused machine prints the full empty stats block"
 
@@ -498,5 +501,110 @@ print(json.dumps({"reusedCalls": len(reused_calls), "reusedScope": reused.get("s
 PY
 )
 check "$(jq -c . <<<"$activity")" '{"reusedCalls":0,"reusedScope":"account","keptScope":"account","keptToday":15,"retry":true}' "the activity history is reused and kept past an unreachable check"
+
+# 20. Without any key, what pi, omp and opencode spent through OpenRouter
+# here still shows, waiting for a key for the balance and meter.
+keyless=$(run_py <<'PY'
+os.environ["OPENROUTER_API_KEY"] = ""
+record = mod.scan(Args(force=True))
+print(json.dumps(dict(pick(record), tierLabel=record["tierLabel"], prompts=record["totalPrompts"], local=record["hasLocalStats"], calls=len(calls))))
+PY
+)
+check "$(jq -c '{ready, usageStatusText, tierLabel, limits, balance, local, calls}' <<<"$keyless")" '{"ready":true,"usageStatusText":"Waiting for auth","tierLabel":"","limits":[],"balance":null,"local":true,"calls":0}' "local usage without a key makes the record ready and waits for auth"
+check "$(jq -r '.prompts > 0 and (.authHelpText | startswith("Set OPENROUTER_API_KEY"))' <<<"$keyless")" "true" "local usage without a key is counted and says how to add one"
+
+# 21. The key pi or omp saved with /login is used, a `$VAR` or `!command`
+# entry is left to pi, and PI_CODING_AGENT_DIR moves pi's.
+saved=$(run_py <<'PY'
+os.environ["OPENROUTER_API_KEY"] = ""
+home = Path(os.environ["HOME"])
+pi_auth = home / ".pi" / "agent" / "auth.json"
+omp_auth = home / ".omp" / "agent" / "auth.json"
+moved_auth = home / "moved" / "auth.json"
+for path in (pi_auth, omp_auth, moved_auth):
+  path.parent.mkdir(parents=True, exist_ok=True)
+pi_auth.write_text(json.dumps({"openrouter": {"type": "api_key", "key": "sk-pi"}}))
+omp_auth.write_text(json.dumps({"openrouter": {"type": "api_key", "key": "sk-omp"}}))
+moved_auth.write_text(json.dumps({"openrouter": {"type": "api_key", "key": "$OPENROUTER_KEY"}}))
+pi = mod.api_key({})
+os.environ["PI_CODING_AGENT_DIR"] = str(moved_auth.parent)
+omp = mod.api_key({})
+del os.environ["PI_CODING_AGENT_DIR"]
+answers.update({"/key": METER, "/credits": CREDITS})
+record = mod.scan(Args(force=True))
+for path in (pi_auth, omp_auth, moved_auth):
+  path.unlink()
+print(json.dumps({"pi": pi, "omp": omp, "probed": sorted(calls), "tier": record["tierLabel"]}))
+PY
+)
+check "$(jq -c . <<<"$saved")" '{"pi":"sk-pi","omp":"sk-omp","probed":["/credits=sk-pi","/key=sk-pi"],"tier":"Prepaid"}' "pi's and omp's saved OpenRouter key is used"
+
+# 22. OpenCode V2 nests the provider under `model` and spends tokens on
+# compactions too. A message migrated into both stores counts once, and a
+# fork's copies of its source's messages don't count again. OPENCODE_DB
+# points at the database the way opencode itself reads it.
+python3 - "$TEST_HOME/elsewhere/opencode-dev.db" <<'PY'
+import json
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+db = Path(sys.argv[1])
+db.parent.mkdir(parents=True, exist_ok=True)
+conn = sqlite3.connect(db)
+conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
+conn.execute("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, time_created integer NOT NULL, data text NOT NULL)")
+conn.execute("CREATE TABLE session_v2 (id text PRIMARY KEY, fork_session_id text, time_created integer NOT NULL)")
+now_ms = int(time.time() * 1000)
+forked_ms = now_ms - 1000
+
+def v2(id, session, kind, provider, input, created=now_ms):
+  return (id, session, kind, created, json.dumps({
+    "model": {"providerID": provider, "id": "qwen/qwen-v2"},
+    "tokens": {"input": input, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+    "time": {"created": created},
+  }))
+
+conn.executemany("INSERT INTO session_v2 VALUES (?, ?, ?)", [("ses_a", None, now_ms - 5000), ("ses_b", "ses_a", forked_ms)])
+conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?)", [
+  v2("msg_1", "ses_a", "assistant", "openrouter", 100, now_ms - 4000),
+  v2("msg_2", "ses_a", "compaction", "openrouter", 10, now_ms - 3000),
+  v2("msg_3", "ses_a", "assistant", "openrouter-proxy", 999),
+  v2("msg_4", "ses_b", "assistant", "openrouter", 100, forked_ms - 4000),
+  v2("msg_5", "ses_b", "assistant", "openrouter", 1),
+])
+conn.execute("INSERT INTO message VALUES ('msg_1', 'ses_a', ?, ?, ?)", (now_ms, now_ms, json.dumps({
+  "role": "assistant", "providerID": "openrouter", "modelID": "qwen/qwen-v2",
+  "tokens": {"input": 100, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+  "time": {"created": now_ms - 4000},
+})))
+conn.commit()
+conn.close()
+PY
+v2=$(OPENCODE_DB="$TEST_HOME/elsewhere/opencode-dev.db" run_py <<'PY'
+from datetime import datetime
+scan = mod.LocalScan(datetime.now().astimezone())
+complete = mod.scan_opencode(scan)
+stats = scan.snapshot()
+print(json.dumps({"complete": complete, "today": stats["todayTotalTokens"], "prompts": stats["totalPrompts"], "sessions": stats["totalSessions"], "models": sorted(stats["modelUsage"])}))
+PY
+)
+check "$(jq -c . <<<"$v2")" '{"complete":true,"today":111,"prompts":3,"sessions":2,"models":["qwen-v2"]}' "opencode V2 records count once each, without fork copies"
+
+# Only a build whose channel was "v2" wrote opencode-v2.db; it is read when
+# the usual database is missing.
+legacy=$(run_py <<'PY'
+from datetime import datetime
+home = Path(os.environ["HOME"])
+os.environ["XDG_DATA_HOME"] = str(home / "legacy")
+(home / "legacy" / "opencode").mkdir(parents=True)
+shutil.copy(home / "elsewhere" / "opencode-dev.db", home / "legacy" / "opencode" / "opencode-v2.db")
+scan = mod.LocalScan(datetime.now().astimezone())
+mod.scan_opencode(scan)
+print(scan.snapshot()["todayTotalTokens"])
+PY
+)
+check "$legacy" "111" "opencode-v2.db is read when opencode.db is missing"
 
 pass "ALL OPENROUTER SCANNER TESTS PASSED"
