@@ -42,7 +42,6 @@ import argparse
 import calendar
 import datetime as dt
 import hashlib
-import http.client
 import json
 import os
 import shutil
@@ -58,7 +57,6 @@ from typing import Any
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
 from collectors import (  # noqa: E402
-  PROBE_MIN_INTERVAL_SECONDS,
   HttpError,
   LimitsCache,
   Stats,
@@ -71,7 +69,6 @@ from collectors import (  # noqa: E402
   empty_stats,
   find_command,
   local_day,
-  now_ms,
   number,
   open_json,
   read_json,
@@ -275,26 +272,9 @@ class UsageTally(Stats):
     self.current_utc_month = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m")
     self.month_credits = 0.0
 
-  def prompt(self, session_key: str, day: str) -> None:
-    self.total_prompts += 1
-    self.sessions.add(session_key)
-    self.active_dates.add(day)
-    if day == self.today:
-      self.today_prompts += 1
-      self.today_sessions.add(session_key)
-
   def usage(self, model: str, day: str, tokens: dict[str, int]) -> None:
-    total = sum(tokens[key] for key in TOKEN_KEYS)
-    if total <= 0:
-      return
-    bucket = self.model_usage.setdefault(model, empty_bucket())
-    for key in TOKEN_KEYS:
-      bucket[key] += tokens[key]
-    if day in self.recent:
-      self.recent[day] += total
-    if day == self.today:
-      self.today_tokens += total
-      self.today_by_model[model] = self.today_by_model.get(model, 0) + total
+    # Tokens no prompt and no one session is known for: a segment's spend.
+    self.add(day, None, model, *(tokens[key] for key in TOKEN_KEYS), prompts=0)
 
   def spend(self, month_key: str, credits: float) -> None:
     # The allowance window is the current UTC month, matching the reset
@@ -328,7 +308,7 @@ def scan_store(conn: sqlite3.Connection) -> dict[str, Any]:
       day = local_day(row["created_at"])
       if day is None:
         continue
-      tally.prompt(session_id or "unknown", day)
+      tally.add_prompts(day, session_id or "unknown")
       tally.spend(
         utc_month_key(row["created_at"]),
         credits_from_nano(row["total_nano_aiu"]),
@@ -484,7 +464,7 @@ def scan_transcript(event_file: Path, session_key: str, tally: UsageTally) -> No
       )
 
       if is_prompt(event_type, data):
-        tally.prompt(session_key, day)
+        tally.add_prompts(day, session_key)
       elif event_type == "assistant.message":
         model = clean_name(data.get("model")) or "copilot"
         replies.append(
@@ -646,7 +626,7 @@ def ask_quota(token: str) -> dict[str, Any]:
     if error.status:
       return {"available": False, "reason": f"http-{error.status}"}
     # No route, no DNS, refused, reset or timed out: nothing answered.
-    if error.transport and not isinstance(error.__cause__, http.client.HTTPException):
+    if error.transport:
       return {"available": False, "reason": "unreachable"}
     # A reply that came back cut short or unreadable is still an answer from
     # GitHub.
@@ -708,7 +688,7 @@ def fetch_remote_quota(force: bool = False) -> dict[str, Any]:
   cached = cache.data
   # A panel opened and shut repeatedly must not turn into a request (and a
   # gh process) per flick, so an answer this recent is the answer.
-  if not force and cached.get("available") and cache.younger_than(PROBE_MIN_INTERVAL_SECONDS):
+  if cached.get("available") and cache.fresh(force, allow_empty=True):
     return open_quota(dict(cached, stale=False))
 
   # hosts.yml still naming the account while `gh auth token` fails is gh or
@@ -723,11 +703,8 @@ def fetch_remote_quota(force: bool = False) -> dict[str, Any]:
       cached = adopt_legacy_cache(cache.path, token)
     quota = ask_quota(token)
   if quota.get("available"):
-    quota.update(stale=False, fetchedAtMs=now_ms())
-    try:
-      write_json(cache.path, quota)
-    except OSError:
-      pass
+    quota["stale"] = False
+    quota["fetchedAtMs"] = cache.save([], **quota)
     return quota
 
   if cached.get("available"):
