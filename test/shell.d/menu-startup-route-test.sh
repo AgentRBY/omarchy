@@ -34,6 +34,7 @@ function handler(fileId, signal) {
 const defaultLoaded = handler('defaultMenuFile', 'onLoaded')
 const userLoaded = handler('userMenuFile', 'onLoaded')
 const userLoadFailed = handler('userMenuFile', 'onLoadFailed')
+const defaultLoadFailed = handler('defaultMenuFile', 'onLoadFailed')
 
 // The menu's own initial values for the properties this path reads.
 function initial(name) {
@@ -100,6 +101,7 @@ const summon = (menu, payload) => menu.open(JSON.stringify(payload))
 const loadDefault = menu => load(menu, defaultLoaded, defaultJsonc)
 const loadUser = (menu, raw) => load(menu, userLoaded, raw)
 const noUserFile = menu => load(menu, userLoadFailed, '')
+const noDefaultFile = menu => load(menu, defaultLoadFailed, '')
 
 let menu = startMenu()
 summon(menu, { menu: 'system' })
@@ -136,6 +138,21 @@ summon(menu, { menu: 'personal' })
 loadUser(menu, personalJsonc)
 loadDefault(menu)
 assertEqual(menu.activeMenu, 'personal', 'a user-defined menu summoned during startup opens when the user file loads first')
+
+menu = startMenu()
+summon(menu, { menu: 'personal.notes' })
+loadUser(menu, personalJsonc)
+noDefaultFile(menu)
+assertDeepEqual(menu.actions, ['notes'], 'a route summoned during startup gets its one try when the default file fails after the user file loads')
+
+menu = startMenu()
+summon(menu, { menu: 'system' })
+loadUser(menu, personalJsonc)
+noDefaultFile(menu)
+assertEqual(menu.activeMenu, 'root', 'a route the failed default file would have defined stays on root')
+menu.rebuildItemsFromSources(true)
+loadDefault(menu)
+assertEqual(menu.activeMenu, 'root', 'a route already tried is not opened by a catalog load or a default file that reappears')
 
 menu = startMenu()
 summon(menu, { menu: 'reminder-set' })
