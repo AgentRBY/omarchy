@@ -146,6 +146,12 @@ chmod +x "$collector"
 
 mkdir -p "$test_tmp/bin" "$test_tmp/empty-bin"
 
+# A machine that never ran Codex prints an empty record the panel skips.
+unused=$(PATH="$test_tmp/empty-bin:/usr/bin:/bin" "$collector" --force)
+[[ $(jq -c '{ready, limits, limitsStale, limitsFetchedAt, totalPrompts, todayTotalTokens, recentDays: (.recentDays | length), modelUsage, retry: (.retryAdvised // false)}' <<<"$unused") == '{"ready":false,"limits":[],"limitsStale":true,"limitsFetchedAt":0,"totalPrompts":0,"todayTotalTokens":0,"recentDays":7,"modelUsage":{},"retry":false}' ]] ||
+  fail "a machine that never ran Codex prints an empty record" "$unused"
+pass "a machine that never ran Codex prints an empty record"
+
 mkdir -p "$HOME/.codex/sessions"
 
 # Signs ~/.codex in as a user of a workspace, the way Codex writes it: the
@@ -219,7 +225,7 @@ starts() {
 }
 
 fresh=$(collect ok)
-[[ $(jq -c '{limitsStale, fresh: (.limitsFetchedAt > 0), used: [.limits[].percent], tierLabel, usageStatusText, authHelpText}' <<<"$fresh") == '{"limitsStale":false,"fresh":true,"used":[0.4,0.7],"tierLabel":"pro","usageStatusText":"","authHelpText":""}' ]] ||
+[[ $(jq -c '{ready, limitsStale, fresh: (.limitsFetchedAt > 0), used: [.limits[].percent], tierLabel, usageStatusText, authHelpText}' <<<"$fresh") == '{"ready":true,"limitsStale":false,"fresh":true,"used":[0.4,0.7],"tierLabel":"pro","usageStatusText":"","authHelpText":""}' ]] ||
   fail "fresh Codex limits are live and say when they were measured" "$fresh"
 pass "fresh Codex limits are live and say when they were measured"
 fetched_at=$(jq '.limitsFetchedAt' <<<"$fresh")

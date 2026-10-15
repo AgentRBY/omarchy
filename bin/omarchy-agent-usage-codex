@@ -1375,7 +1375,9 @@ def main():
     "id": AGENT_ID,
     "name": AGENT_NAME,
     "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": True,
+    # In use here once it has local usage or limits to show; a machine that
+    # never ran Codex prints an empty record the panel skips.
+    "ready": number(stats.get("totalPrompts")) > 0 or bool(rpc["limits"]) or bool(accounts),
     "hasLocalStats": True,
   }
   record.update(stats)
