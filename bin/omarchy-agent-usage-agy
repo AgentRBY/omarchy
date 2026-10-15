@@ -16,6 +16,9 @@ Secret Service keyring. The agents panel only ever reads the JSON this prints.
 
 import argparse
 import base64
+import fcntl
+import hashlib
+import http.client
 import json
 import os
 import re
@@ -31,11 +34,13 @@ from pathlib import Path
 AGENT_ID = "agy"
 AGENT_NAME = "Antigravity"
 AUTH_HELP = "Run `agy` to sign in."
-EXPIRED_HELP = "Antigravity's saved sign-in expired. Start `agy` to refresh it."
-# A panel opened and shut repeatedly reuses an answer for about a minute.
-PROBE_REUSE_SECONDS = 60
+# How each source of a sign-in is named when it needs attention.
+SOURCE_NAMES = {"agy": "`agy`"}
+PROBE_MIN_INTERVAL_SECONDS = 15
+SCAN_REUSE_SECONDS = 20
 # A limits-only refresh needs fresh limits, not a fresh history scan.
-LIMITS_ONLY_SCAN_REUSE_SECONDS = 900
+LIMITS_ONLY_REUSE_SECONDS = 900
+DEFAULT_CLOUD_CODE_URL = "https://daily-cloudcode-pa.googleapis.com"
 # More tokens than any one step could hold is a damaged field, not usage.
 MAX_TOKENS = 1e12
 
@@ -104,7 +109,7 @@ def local_day(value):
 
 
 # The sign-in agy keeps in the keyring: its access token, when that lapses,
-# and which kind of account it is.
+# whether a refresh token stands behind it, and which kind of account it is.
 def login():
   try:
     raw = subprocess.check_output(
@@ -120,11 +125,18 @@ def login():
   token = data.get("token") if isinstance(data.get("token"), dict) else {}
   expires = parse_time(token.get("expiry") or data.get("expiry"))
   return {
+    "source": "agy",
     "accessToken": str(token.get("access_token") or data.get("access_token") or ""),
     "expiresAt": expires.timestamp() if expires else 0,
+    "refresh": str(token.get("refresh_token") or data.get("refresh_token") or ""),
     "authMethod": str(data.get("auth_method") or "consumer"),
     "email": email_of(data.get("id_token")),
   }
+
+
+def logins():
+  entry = login()
+  return [entry] if entry else []
 
 
 def email_of(id_token):
@@ -133,6 +145,21 @@ def email_of(id_token):
     return str(json.loads(base64.urlsafe_b64decode(claims + "=" * (-len(claims) % 4))).get("email") or "")
   except Exception:
     return ""
+
+
+# Which Google account a sign-in belongs to, so the limits kept for it are
+# its own: the email when the sign-in names one, otherwise its refresh token,
+# which outlives the access tokens it mints. Only a digest of either names
+# the cache file.
+def limits_cache(entry):
+  identity = entry.get("email") or entry.get("refresh") or entry.get("accessToken")
+  if not identity:
+    return None
+  return cache_root() / f"agy-limits-{hashlib.sha256(identity.encode()).hexdigest()[:16]}.json"
+
+
+def token_fresh(entry, now):
+  return bool(entry["accessToken"]) and (not entry["expiresAt"] or entry["expiresAt"] > now)
 
 
 def normalize_tier_label(name, tier_id=""):
@@ -147,7 +174,7 @@ def normalize_tier_label(name, tier_id=""):
 # A paid tier names the plan; without one, the current tier does.
 def extract_tier(data):
   for key in ("paidTier", "currentTier"):
-    tier = data.get(key)
+    tier = data.get(key) if isinstance(data, dict) else None
     if isinstance(tier, dict):
       name = str(tier.get("name") or "").strip()
       tier_id = str(tier.get("id") or "").strip()
@@ -156,20 +183,35 @@ def extract_tier(data):
   return ""
 
 
+# How much of a bucket is spent, or None when its fraction isn't a number.
 def used(bucket):
-  return round(max(0.0, min(1.0, 1.0 - float(bucket.get("remainingFraction", 1.0)))), 4)
+  remaining = bucket.get("remainingFraction", bucket.get("remaining_fraction", 1.0))
+  if isinstance(remaining, bool):
+    return None
+  try:
+    remaining = float(remaining)
+  except (TypeError, ValueError):
+    return None
+  if remaining != remaining:
+    return None
+  return round(max(0.0, min(1.0, 1.0 - remaining)), 4)
 
 
 def reset_of(bucket):
-  parsed = parse_time(bucket.get("resetTime"))
+  parsed = parse_time(bucket.get("resetTime") or bucket.get("reset_time"))
   return parsed.isoformat() if parsed else ""
 
 
 # The Gemini group's 5-hour and weekly buckets are the plan's own limits; the
 # other groups (Claude and GPT models) are scoped allowances, shown once
-# they have been touched.
+# they have been touched. An answer that lists its buckets without groups
+# lists the Gemini ones.
 def extract_limits(data):
+  if not isinstance(data, dict):
+    return []
   groups = [g for g in data.get("groups") or [] if isinstance(g, dict)]
+  if not groups and isinstance(data.get("buckets"), list):
+    groups = [{"displayName": "Gemini", "buckets": data["buckets"]}]
   if not groups:
     return []
   gemini = next((g for g in groups if "gemini" in str(g.get("displayName") or "").lower()), groups[0])
@@ -177,7 +219,7 @@ def extract_limits(data):
   limits = []
   session = weekly = None
   for bucket in gemini.get("buckets") or []:
-    if not isinstance(bucket, dict):
+    if not isinstance(bucket, dict) or used(bucket) is None:
       continue
     window = str(bucket.get("window") or "").lower()
     bucket_id = str(bucket.get("bucketId") or "").lower()
@@ -197,14 +239,18 @@ def extract_limits(data):
     group_name = str(group.get("displayName") or "").strip()
     short = "Claude/GPT" if "claude" in group_name.lower() else (group_name or "3P")
     for bucket in group.get("buckets") or []:
-      if isinstance(bucket, dict) and used(bucket) > 0:
+      if isinstance(bucket, dict) and (used(bucket) or 0) > 0:
         title = f"{short} {'Weekly' if 'week' in str(bucket.get('window') or '').lower() else 'Session'}"
         limits.append({"label": title, "title": title, "percent": used(bucket), "resetsAt": reset_of(bucket)})
   return limits
 
 
+# The bearer token goes wherever CLOUD_CODE_URL points, so a destination
+# named there is taken only over https, and anything else is Google's own.
 def post(endpoint, token):
-  base = (os.environ.get("CLOUD_CODE_URL") or "https://daily-cloudcode-pa.googleapis.com").rstrip("/")
+  base = (os.environ.get("CLOUD_CODE_URL") or DEFAULT_CLOUD_CODE_URL).rstrip("/")
+  if not base.startswith("https://"):
+    base = DEFAULT_CLOUD_CODE_URL
   request = urllib.request.Request(
     f"{base}/v1internal:{endpoint}", data=b"{}",
     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": "antigravity"},
@@ -213,58 +259,124 @@ def post(endpoint, token):
     return json.loads(response.read().decode("utf-8", errors="replace"))
 
 
-# A window kept from an earlier check is dropped once it has reset, since
-# what it said no longer holds.
-def open_windows(limits):
+# A window kept from an earlier check whose reset has passed is back to
+# untouched, not unknown, so it reads zero until Google names the next reset.
+# A damaged cache entry is skipped rather than taking the collector down.
+def usable_cached_limits(cached):
+  limits = cached.get("limits") if isinstance(cached, dict) else None
   now = datetime.now(timezone.utc)
-  return [limit for limit in limits or [] if not parse_time(limit.get("resetsAt")) or parse_time(limit.get("resetsAt")) > now]
+  kept = []
+  for limit in limits if isinstance(limits, list) else []:
+    if not isinstance(limit, dict):
+      continue
+    resets = parse_time(limit.get("resetsAt"))
+    kept.append(dict(limit, percent=0.0, resetsAt="") if resets and resets <= now else limit)
+  return kept
 
 
-def collect_limits(entry, force):
-  result = {"limits": [], "tierLabel": "", "usageStatusText": "", "authHelpText": AUTH_HELP, "live": False, "fetchedAtMs": 0}
-  if not entry:
-    result["usageStatusText"] = "Waiting for auth"
-    return result
+def cached_answer(entry):
+  path = limits_cache(entry)
+  cached = (read_json(path) if path else None) or {}
+  return cached if isinstance(cached, dict) else {}
 
-  cache = cache_root() / "agy-limits.json"
-  cached = read_json(cache) or {}
-  fetched_at = int(cached.get("fetchedAtMs") or 0)
-  kept = open_windows(cached.get("limits"))
-  result.update(fetchedAtMs=fetched_at, tierLabel=str(cached.get("tierLabel") or ""))
 
-  if not entry["accessToken"]:
-    result.update(limits=kept, usageStatusText="Waiting for auth")
+def fetched_at_ms(cached):
+  try:
+    return max(0, int(cached.get("fetchedAtMs") or 0))
+  except (TypeError, ValueError, OverflowError):
+    return 0
+
+
+def lapsed_help(entry, kept):
+  name = SOURCE_NAMES[entry["source"]]
+  shown = " — showing the last known limits." if kept else "."
+  if entry["refresh"]:
+    return f"The Antigravity access token {name} keeps has lapsed{shown} Start {name} to refresh it; signing in again is not needed."
+  return f"The Antigravity sign-in {name} keeps expired{shown} Start {name} to sign in again."
+
+
+def refused_help(entry):
+  name = SOURCE_NAMES[entry["source"]]
+  return f"Google refused the Antigravity sign-in {name} keeps. Start {name} to sign in again."
+
+
+# The plan and limits, asked of Google with one sign-in after another until
+# one answers. Each account keeps its own last good answer, which stands in,
+# marked stale, when its check fails.
+def collect_limits(entries, force):
+  result = {"limits": [], "tierLabel": "", "usageStatusText": "", "authHelpText": "", "live": False, "fetchedAtMs": 0, "retryAdvised": False}
+  now = time.time()
+  # Each harness refreshes its own token while it runs, so the one lapsing
+  # last was refreshed most recently. A token of unknown expiry comes after
+  # those, since only Google can say whether it still holds, and a lapsed
+  # one last.
+  ordered = sorted(entries, key=lambda e: (not token_fresh(e, now), -e["expiresAt"]))
+  fresh = [e for e in ordered if token_fresh(e, now)]
+  lead = next(iter(fresh or [e for e in ordered if e["accessToken"]] or ordered), None)
+
+  def keep(entry):
+    cached = cached_answer(entry) if entry else {}
+    result.update(limits=usable_cached_limits(cached), tierLabel=str(cached.get("tierLabel") or ""), fetchedAtMs=fetched_at_ms(cached))
+
+  keep(lead)
+  if not lead or not lead["accessToken"]:
+    result.update(usageStatusText="Waiting for auth", authHelpText=AUTH_HELP)
     return result
 
   # agy refreshes its token while it runs; one left to lapse can't be used
-  # until agy starts again.
-  if entry["expiresAt"] and entry["expiresAt"] <= time.time():
-    result.update(limits=kept, usageStatusText="Sign-in expired", authHelpText=EXPIRED_HELP)
+  # until agy starts again, which needs no new sign-in while a refresh token
+  # stands behind it.
+  if not fresh:
+    result.update(usageStatusText="Limits paused" if lead["refresh"] else "Sign-in expired", authHelpText=lapsed_help(lead, result["limits"]))
     return result
 
-  if kept and not force and time.time() - fetched_at / 1000 < PROBE_REUSE_SECONDS:
-    result.update(limits=kept, live=True)
+  # A panel that is opened and shut repeatedly must not turn into a request
+  # per flick; --force is a person asking for fresh numbers.
+  if not force:
+    for entry in fresh:
+      cached = cached_answer(entry)
+      if cached and 0 <= now - fetched_at_ms(cached) / 1000 < PROBE_MIN_INTERVAL_SECONDS:
+        keep(entry)
+        result["live"] = True
+        return result
+
+  refused, failure = [], None
+  for entry in fresh:
+    try:
+      tier = extract_tier(post("loadCodeAssist", entry["accessToken"]))
+      limits = extract_limits(post("retrieveUserQuotaSummary", entry["accessToken"]))
+    except urllib.error.HTTPError as error:
+      # A refused sign-in gives way to the next one; any other status is
+      # Google answering for every sign-in alike.
+      if error.code in (401, 403):
+        refused.append(entry)
+        continue
+      failure = entry, f"Google's quota service answered with status {error.code}.", False
+      break
+    except (urllib.error.URLError, OSError, http.client.HTTPException):
+      failure = entry, "Couldn't reach Google's quota service. Retrying shortly.", True
+      break
+    except ValueError:
+      failure = entry, "Google's quota service sent an answer that couldn't be read.", False
+      break
+    # A plan with no quota windows to report is healthy, with no meters.
+    fetched = round(time.time() * 1000)
+    result.update(limits=limits, tierLabel=tier, live=True, fetchedAtMs=fetched)
+    path = limits_cache(entry)
+    if path:
+      write_json(path, {"fetchedAtMs": fetched, "limits": limits, "tierLabel": tier})
     return result
 
-  tier, limits = "", None
-  try:
-    tier = extract_tier(post("loadCodeAssist", entry["accessToken"]))
-    limits = extract_limits(post("retrieveUserQuotaSummary", entry["accessToken"])) or None
-  except urllib.error.HTTPError as error:
-    if error.code in (401, 403):
-      result.update(usageStatusText="Sign-in expired", authHelpText=EXPIRED_HELP)
-  except Exception:
-    pass
-
-  if tier:
-    result["tierLabel"] = tier
-  if limits:
-    result.update(limits=limits, live=True, fetchedAtMs=round(time.time() * 1000))
-    write_json(cache, {"fetchedAtMs": result["fetchedAtMs"], "limits": limits, "tierLabel": result["tierLabel"]})
-  else:
-    result["limits"] = kept
-    if not result["usageStatusText"] and not kept:
+  if failure:
+    entry, help_text, transport = failure
+    keep(entry)
+    result.update(authHelpText=help_text, retryAdvised=transport)
+    if not result["limits"]:
       result["usageStatusText"] = "Antigravity limits unavailable"
+    return result
+
+  keep(refused[0])
+  result.update(usageStatusText="Sign-in expired", authHelpText=refused_help(refused[0]))
   return result
 
 
@@ -333,10 +445,13 @@ def selected_model(step):
   return model_key(match.group(1)) if match else ""
 
 
-def history_entries(root):
+def history_entries(root, problems):
   try:
     lines = (root / "history.jsonl").read_text(encoding="utf-8", errors="ignore").splitlines()
+  except FileNotFoundError:
+    return
   except OSError:
+    problems.append("history")
     return
   for line in lines:
     try:
@@ -349,7 +464,7 @@ def history_entries(root):
 
 # Each conversation in the summaries with when it last changed and, where
 # agy records it, the conversation it was spawned from.
-def conversation_summaries(root):
+def conversation_summaries(root, problems):
   summaries = root / "conversation_summaries.db"
   if not summaries.is_file():
     return []
@@ -362,6 +477,7 @@ def conversation_summaries(root):
     finally:
       conn.close()
   except sqlite3.Error:
+    problems.append("summaries")
     return []
 
 
@@ -369,7 +485,8 @@ def conversation_summaries(root):
 # conversation summaries, and the tokens each model step in a transcript
 # reports. Steps that report no usage add no tokens; steps without a usable
 # date still count toward the lifetime totals.
-def local_stats(root):
+def local_stats(root, problems=None):
+  problems = [] if problems is None else problems
   today = datetime.now().astimezone().date()
   week = [(today - timedelta(days=offset)).isoformat() for offset in range(6, -1, -1)]
   today = today.isoformat()
@@ -380,7 +497,7 @@ def local_stats(root):
 
   # A subagent's conversation is part of the one that spawned it, so it
   # counts toward that conversation rather than as a session of its own.
-  summaries = conversation_summaries(root)
+  summaries = conversation_summaries(root, problems)
   parents = {str(conversation): str(parent) for conversation, _, parent in summaries if conversation and parent}
 
   def session_of(conversation):
@@ -390,7 +507,7 @@ def local_stats(root):
       conversation = parents[conversation]
     return conversation
 
-  for entry in history_entries(root):
+  for entry in history_entries(root, problems):
     day = local_day(entry.get("timestamp"))
     if not day:
       continue
@@ -414,6 +531,7 @@ def local_stats(root):
     try:
       lines = transcript.read_text(encoding="utf-8", errors="ignore").splitlines()
     except OSError:
+      problems.append(str(transcript))
       continue
     # The model a conversation runs on carries from step to step until a
     # step names another one.
@@ -460,16 +578,39 @@ def local_stats(root):
   }
 
 
-# A scan from before midnight would count yesterday's prompts as today's.
+# A scan is reused for max_age seconds, and only on the day it was made: one
+# from before midnight would count yesterday's prompts as today's. The scan
+# is rebuilt under a lock so overlapping runs don't each walk the history,
+# and one that couldn't read every source isn't kept.
 def cached_local_stats(root, max_age):
-  cache = cache_root() / "agy-stats.json"
-  cached = read_json(cache) or {}
+  digest = hashlib.sha256(str(root).encode()).hexdigest()[:16]
+  cache = cache_root() / f"agy-scan-{digest}.json"
   today = datetime.now().astimezone().date().isoformat()
-  if cached.get("root") == str(root) and cached.get("day") == today and time.time() - float(cached.get("at") or 0) < max_age:
-    return cached["stats"]
-  stats = local_stats(root)
-  write_json(cache, {"root": str(root), "day": today, "at": time.time(), "stats": stats})
-  return stats
+
+  def reusable():
+    cached = read_json(cache)
+    if not isinstance(cached, dict) or cached.get("scanDate") != today or not isinstance(cached.get("stats"), dict):
+      return None
+    try:
+      age = time.time() - float(cached.get("at"))
+    except (TypeError, ValueError):
+      return None
+    return cached["stats"] if 0 <= age < max_age else None
+
+  stats = reusable() if max_age > 0 else None
+  if stats is not None:
+    return stats
+  cache.parent.mkdir(parents=True, exist_ok=True)
+  with open(cache.with_suffix(".lock"), "w") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    stats = reusable() if max_age > 0 else None
+    if stats is not None:
+      return stats
+    problems = []
+    stats = local_stats(root, problems)
+    if not problems:
+      write_json(cache, {"scanDate": today, "at": time.time(), "stats": stats})
+    return stats
 
 
 def main():
@@ -478,14 +619,26 @@ def main():
   parser.add_argument("--limits-only", action="store_true")
   args = parser.parse_args()
 
-  # Nobody signed in to Antigravity here: no limits and no plan, so without
-  # local history the panel skips the record.
-  entry = login()
-  limits = collect_limits(entry, args.force)
+  if args.force:
+    scan_age = 0
+  elif args.limits_only:
+    scan_age = LIMITS_ONLY_REUSE_SECONDS
+  else:
+    scan_age = SCAN_REUSE_SECONDS
+  stats = cached_local_stats(app_root(), scan_age)
+
+  # Nobody signed in to Antigravity here and no local history: no limits and
+  # no plan, and the panel skips the record.
+  entries = logins()
+  ready = bool(entries) or bool(stats.get("hasLocalStats"))
+  limits = collect_limits(entries, args.force) if ready else {
+    "limits": [], "tierLabel": "", "usageStatusText": "", "authHelpText": "", "live": False, "fetchedAtMs": 0, "retryAdvised": False,
+  }
   tier = limits["tierLabel"]
-  if not tier and entry and entry["authMethod"] == "enterprise":
+  agy = next((e for e in entries if e["source"] == "agy"), None)
+  if not tier and agy and agy["authMethod"] == "enterprise":
     tier = "Enterprise"
-  elif not tier and entry and entry["authMethod"] in ("cloud", "vertex"):
+  elif not tier and agy and agy["authMethod"] in ("cloud", "vertex"):
     tier = "Cloud"
 
   record = {
@@ -493,15 +646,16 @@ def main():
     "id": AGENT_ID,
     "name": AGENT_NAME,
     "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": entry is not None,
+    "ready": ready,
     "tierLabel": tier,
     "usageStatusText": limits["usageStatusText"],
     "authHelpText": limits["authHelpText"],
     "limits": limits["limits"],
     "limitsStale": not limits["live"],
     "limitsFetchedAt": limits["fetchedAtMs"],
+    "retryAdvised": limits["retryAdvised"],
   }
-  record.update(cached_local_stats(app_root(), LIMITS_ONLY_SCAN_REUSE_SECONDS if args.limits_only and not args.force else 0))
+  record.update(stats)
   print(json.dumps(record, separators=(",", ":")))
 
 

@@ -198,7 +198,9 @@ class TimestampTests(unittest.TestCase):
           record = json.loads(result.stdout)
           self.assertEqual(result.stderr, '')
           self.assertEqual(record['id'], 'agy')
-          self.assertFalse(record['ready'])
+          # Local history alone puts Antigravity in use here, waiting for a sign-in.
+          self.assertTrue(record['ready'])
+          self.assertEqual(record['usageStatusText'], 'Waiting for auth')
           self.assertEqual(record['limits'], [])
           self.assertEqual(record['totalPrompts'], 3)
           self.assertEqual(record['totalSessions'], 4)
