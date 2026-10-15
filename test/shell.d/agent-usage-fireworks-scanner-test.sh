@@ -49,6 +49,7 @@ pass "Fireworks collector prints the full empty stats block on an unused machine
 result=$(python3 - "$ROOT/bin/omarchy-agent-usage-fireworks" "$auth_file" "$TEST_HOME/.config" "$TEST_HOME/.local/share" "$TEST_HOME/.pi/agent" <<'PY'
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -196,6 +197,25 @@ summary["paginationMerges"] = (
   and paging_queries[0]["startTime"] == "2026-07-01T00:00:00Z"
 )
 
+# A reply that isn't an object, or usage rows that aren't a list, fail the
+# check rather than passing for an idle account; a missing list is an idle
+# month, since the API leaves empty lists out.
+def raises_fireworks_error(call):
+  try:
+    call()
+  except scanner.FireworksError:
+    return True
+  return False
+real_urlopen = scanner.urllib.request.urlopen
+scanner.urllib.request.urlopen = lambda request, timeout=None: io.BytesIO(b"[]")
+odd_client = RealFireworksClient("fw_test", "https://example.invalid")
+summary["oddShapes"] = [raises_fireworks_error(lambda: odd_client.request("/v1/accounts"))]
+scanner.urllib.request.urlopen = real_urlopen
+odd_pages = iter([{"serverlessCosts": "rows"}, {}])
+odd_client.request = lambda path, query=None, body=None: next(odd_pages)
+summary["oddShapes"].append(raises_fireworks_error(lambda: odd_client.usage("example", date(2026, 7, 1), date(2026, 8, 1))))
+summary["oddShapes"].append(odd_client.usage("example", date(2026, 7, 1), date(2026, 8, 1)) == {"serverlessCosts": []})
+
 scanner.FireworksClient = LiveBalanceClient
 live = scanner.scan("https://example.invalid", auth_path, force=True)
 summary["liveBalance"] = live["balance"]
@@ -264,6 +284,10 @@ pass "Fireworks collector prints the display-ready record contract"
 [[ $(jq -r '.paginationMerges' <<<"$result") == "true" ]] ||
   fail "Fireworks collector follows billingUsage continuation tokens" "$result"
 pass "Fireworks collector follows billingUsage continuation tokens"
+
+[[ $(jq -c '.oddShapes' <<<"$result") == "[true,true,true]" ]] ||
+  fail "Fireworks collector fails a reply of the wrong shape, and reads a missing usage list as idle" "$result"
+pass "Fireworks collector fails a reply of the wrong shape, and reads a missing usage list as idle"
 
 [[ $(jq -r '.windowIsLocalMidnight' <<<"$result") == "true" ]] ||
   fail "Fireworks collector requests local-midnight windows in UTC" "$result"

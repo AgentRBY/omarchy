@@ -407,7 +407,11 @@ class FireworksClient:
     try:
       with urllib.request.urlopen(request, timeout=15) as response:
         decoded = json.load(response)
-        return decoded if isinstance(decoded, dict) else {}
+        # Every answer is an object; anything else would read as an account
+        # with nothing in it and replace the last good numbers.
+        if not isinstance(decoded, dict):
+          raise FireworksError("Fireworks returned an invalid billing response")
+        return decoded
     except urllib.error.HTTPError as error:
       if error.code == 401:
         raise FireworksAuthError("Fireworks rejected the API key")
@@ -453,9 +457,12 @@ class FireworksClient:
     rows: list[Any] = []
     for _ in range(20):
       payload = self.request(f"/v1/accounts/{quoted}/billingUsage", query=query)
-      page = payload.get("serverlessCosts")
-      if isinstance(page, list):
-        rows.extend(page)
+      # The API leaves out a list with nothing in it, so a missing one is an
+      # idle month; one that is there but isn't a list is a broken answer.
+      page = payload.get("serverlessCosts", [])
+      if not isinstance(page, list):
+        raise FireworksError("Fireworks returned an invalid billing response")
+      rows.extend(page)
       token = str(payload.get("nextPageToken") or "")
       if not token:
         break
