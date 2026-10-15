@@ -37,15 +37,14 @@ from pathlib import Path
 # The shared collector plumbing ships with the agents panel.
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
-import collectors  # noqa: E402
 from collectors import (  # noqa: E402
   HttpError,
   LimitsCache,
   Stats,
   base_record,
   cached_scan,
+  canonical_roots,
   emit,
-  empty_bucket,
   now_ms,
   number,
   open_json,
@@ -62,7 +61,6 @@ AGENT_NAME = "Antigravity"
 AUTH_HELP = "Run `agy` to sign in, or sign in to Antigravity in omp, pi, or opencode."
 # How each source of a sign-in is named when it needs attention.
 SOURCE_NAMES = {"agy": "`agy`", "omp": "omp", "pi": "pi", "opencode": "opencode"}
-PROBE_MIN_INTERVAL_SECONDS = 15
 DEFAULT_CLOUD_CODE_URL = "https://daily-cloudcode-pa.googleapis.com"
 
 
@@ -383,7 +381,7 @@ def collect_limits(entries, force):
     for entry in fresh + [e for e in omp_entries if e not in fresh]:
       # An answer with no windows is an answer too: a plan without quotas.
       cache = limits_cache(entry)
-      if cache and cache.data and cache.younger_than(PROBE_MIN_INTERVAL_SECONDS):
+      if cache and cache.fresh(force, allow_empty=True):
         keep(entry)
         result["live"] = True
         return result
@@ -581,10 +579,9 @@ def session_roots():
     roots.extend(sorted(child / "sessions" for child in (openclaw / "agents").iterdir() if child.is_dir()))
   except OSError:
     pass
-  # Canonical roots, so an alias is scanned under one spelling, and a root
-  # inside another is dropped rather than counted twice.
-  canonical = list(dict.fromkeys(root.resolve() for root in roots))
-  return [root for root in canonical if not any(other != root and root.is_relative_to(other) for other in canonical)]
+  # An alias is scanned under one spelling, and a root inside another is
+  # dropped rather than counted twice.
+  return canonical_roots(roots)
 
 
 # pi, omp, and OpenClaw answers through their google-antigravity provider.
@@ -603,56 +600,15 @@ def opencode_billed_here(provider, model, entry):
 # itself, so its sign-in and transcripts are agy's own, which local_stats
 # reads already.
 def harness_rows(problems):
-  # The shared reader walks pi's and omp's trees; OpenClaw's go along with
-  # them, so a message copied between any of them is still counted once.
-  default_roots = collectors.pi_session_roots
-  collectors.pi_session_roots = session_roots
-  try:
-    pi_rows, pi_complete = scan_pi_sessions(r'"provider"\s*:\s*"google-antigravity"', pi_billed_here)
-  finally:
-    collectors.pi_session_roots = default_roots
+  # OpenClaw's trees are read along with pi's and omp's, so a message copied
+  # between any of them is still counted once.
+  pi_rows, pi_complete = scan_pi_sessions(r'"provider"\s*:\s*"google-antigravity"', pi_billed_here, session_roots())
   db_rows, db_complete = scan_opencode(["google"], opencode_billed_here)
   if not pi_complete:
     problems.append("sessions")
   if not db_complete:
     problems.append("opencode")
   return pi_rows + db_rows
-
-
-class AgyStats(Stats):
-  """The shared totals, plus what only agy's own stores record apart: a
-  prompt with no tokens (history), a conversation with no prompt in sight
-  (summaries), and tokens with no prompt and maybe no date (transcripts)."""
-
-  def add_prompt(self, day, session):
-    self.total_prompts += 1
-    self.active_dates.add(day)
-    if session:
-      self.sessions.add(session)
-    if day == self.today:
-      self.today_prompts += 1
-      if session:
-        self.today_sessions.add(session)
-
-  def add_session(self, session, today):
-    self.sessions.add(session)
-    if today:
-      self.today_sessions.add(session)
-
-  def add_tokens(self, day, model, tokens):
-    bucket = self.model_usage.setdefault(model, empty_bucket())
-    bucket["inputTokens"] += tokens[0]
-    bucket["outputTokens"] += tokens[1]
-    bucket["cacheReadInputTokens"] += tokens[2]
-    bucket["cacheCreationInputTokens"] += tokens[3]
-    total = sum(tokens)
-    if day:
-      self.active_dates.add(day)
-    if day in self.recent:
-      self.recent[day] += total
-    if day == self.today:
-      self.today_tokens += total
-      self.today_by_model[model] = self.today_by_model.get(model, 0) + total
 
 
 # Every prompt from history.jsonl, every conversation from it and from the
@@ -663,7 +619,7 @@ class AgyStats(Stats):
 # Codex collector counts them, with every token it reports.
 def local_stats(root, problems=None):
   problems = [] if problems is None else problems
-  stats = AgyStats()
+  stats = Stats()
 
   # A subagent's conversation is part of the one that spawned it, so it
   # counts toward that conversation rather than as a session of its own.
@@ -682,11 +638,13 @@ def local_stats(root, problems=None):
     if not day:
       continue
     conversation = entry.get("conversationId") or entry.get("conversation_id") or entry.get("sessionId")
-    stats.add_prompt(day, session_of(conversation) if conversation else None)
+    stats.add_prompts(day, session_of(conversation) if conversation else None)
 
+  # A conversation with no prompt in sight is a session all the same, and
+  # today's when it was last touched today.
   for conversation, modified, _ in summaries:
     if conversation:
-      stats.add_session(session_of(conversation), local_day(modified) == stats.today)
+      stats.add_prompts(stats.today if local_day(modified) == stats.today else None, session_of(conversation), 0)
 
   for transcript in (root / "brain").glob("*/.system_generated/logs/transcript.jsonl"):
     try:
@@ -708,7 +666,8 @@ def local_stats(root, problems=None):
       tokens = step_tokens(step)
       if not tokens or not any(tokens):
         continue
-      stats.add_tokens(local_day(step.get("created_at") or step.get("timestamp")), current or "unknown", tokens)
+      # Tokens with no prompt, and maybe no date.
+      stats.add(local_day(step.get("created_at") or step.get("timestamp")) or None, None, current or "unknown", *tokens, prompts=0)
 
   for row in harness_rows(problems):
     stats.add_row(row, model_key(row.model) or "unknown")
