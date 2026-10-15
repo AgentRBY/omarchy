@@ -147,7 +147,6 @@ PROVIDERS = [
   ("google", "antigravity-pt", "", "-", "agy"),
   ("devin", "devin-pt", "", "devin", "devin"),
   ("synthetic", "synthetic-pt", "", "synthetic", "synthetic"),
-  ("litellm", "litellm-pt", "", "litellm", "litellm"),
   ("mistral", "devstral-pt", "", "vibe", "vibe"),
   ("meta", "muse-spark-pt", "", "muse", "muse"),
   ("acme-unclaimed", "acme-pt", "", None, None),

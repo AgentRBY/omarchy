@@ -82,8 +82,6 @@ Adding an agent needs no QML changes: ship a collector that follows the contract
 | `hermes` | None (Hermes has no subscription of its own) | `state.db` in Hermes' home and in each named profile under `~/.hermes/profiles`, read-only, scanned once per refresh window |
 | `devin` | The daily and weekly quota (plus credit buckets on credit plans) from the GetUserStatus answer the Devin CLI caches in `$XDG_CACHE_HOME/devin/cli/user_status.*.bin`; no network call | the CLI's `$XDG_DATA_HOME/devin/cli/sessions.db` (per-message metrics and `prompt_history`), plus pi/omp and opencode sessions on the `devin` provider |
 | `vibe` | None (Mistral publishes no usage limits) | Vibe's per-session `meta.json` under `~/.vibe/logs/session` (`VIBE_HOME`), only sessions on a Mistral-served model, plus pi/omp and opencode sessions on the `mistral` provider |
-| `kiro` | None (Kiro keeps its monthly credit allowance off disk) | Kiro CLI session files under `~/.kiro/sessions/cli`: a prompt per user turn, with the token counts Kiro recorded for it |
-| `freebuff` | None | Chat files under `~/.config/manicode/projects` (`FREEBUFF_CONFIG_DIR`): prompts, sessions, and days only, since no token usage is kept on disk |
 | `qwen` | None (Qwen Code reads no quota) | Session transcripts under `~/.qwen/projects/*/chats` (`QWEN_HOME`, `QWEN_RUNTIME_DIR`, `advanced.runtimeOutputDir`): billed API responses and typed prompts |
 | `opencode` | OpenCode Go's usage endpoint (rolling + weekly + monthly), with an API key or the Console session; a key without a Go plan shows local usage alone | pi and omp sessions (profiles included) on the Zen and Go providers, plus opencode's own `message` and `session_message` stores |
 | `zai` | Z.ai's coding-plan monitor endpoint (5-hour session + 7-day weekly), for keys that carry a GLM Coding Plan | pi, omp, and opencode sessions on the `zai` and `zhipu` providers (`glm-*` models) |
@@ -93,7 +91,6 @@ Adding an agent needs no QML changes: ship a collector that follows the contract
 | `deepseek` | Live prepaid balance from `GET https://api.deepseek.com/user/balance`, kept stale past a failed check, with the optional `fundedAmount` estimate for the funded-versus-spent line | pi/omp session files (profiles included) whose assistant messages ran on the deepseek provider, opencode sessions on a deepseek provider, and DeepSeek Harness (`dsh`) session logs on its DeepSeek routes |
 | `fireworks` | Prepaid balance: the live ledger when the key can read it, else configured funding minus rated account costs; kept stale past a failed check | Fireworks billing API, grouped by day and model for the last 30 days, cached per key and account |
 | `synthetic` | Synthetic's `GET /v2/quotas`: rolling five-hour requests, weekly credits, hourly search, free tool calls | pi/omp sessions and opencode messages on the `synthetic` provider |
-| `litellm` | The key's budget from the proxy's `/key/info` (`max_budget` minus `spend`) as a balance | pi/omp sessions and opencode messages on the `litellm` provider |
 | `local` | None (self-hosted work has no meter) | Codex rollouts, pi/omp sessions and opencode messages on a local runtime, a provider named in `local.json`, or a Codex provider whose `base_url` is on the LAN, never a provider id another collector counts |
 
 Every collector follows the same rules, so the same situation reads the same for every agent: a recent answer is reused for 15 seconds unless refresh is pressed, each credential or account keeps its own last good answer, a failed check keeps it with its age on hover and windows that have since reset back at zero, an endpoint that can't be reached is retried soon, and an agent the machine doesn't use stays out of the panel. Tokens are counted once, under the provider that bills them: pi, omp, and opencode sessions are split by provider into the matching collector. pi and omp sessions are read from every profile, and from `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR` as well as the defaults when set, a forked session's copied messages once; opencode is read from both its `message` and V2 `session_message` stores in the database `OPENCODE_DB` names, a message migrated into both once and a fork's copied history not at all. A machine with none of an agent's home, CLI, or usage prints an empty record the panel skips; one that has them but no sign-in says it is waiting for one. The sections below cover where each agent's sign-in and data come from.
@@ -183,14 +180,6 @@ Local stats come from the CLI's `$XDG_DATA_HOME/devin/cli/sessions.db` (`DEVIN_D
 
 Vibe writes a `meta.json` per session under `~/.vibe/logs/session` (moved by `VIBE_HOME`, or by `session_logging.save_dir` in Vibe's `config.toml`) with the session's running token totals and the config it ran with. Vibe drives other providers too, a local llama.cpp server out of the box, so a session only counts when the model it resolved to is served by Mistral's API: a provider with Vibe's `mistral` backend or a mistral.ai host. Totals are booked on the day a session started, a subagent's on the session that spawned it, and prompts are the user messages Vibe didn't inject itself. pi, omp, and opencode sessions on the `mistral` provider count here too. The plan is the one Vibe last cached from Mistral's whoami answer in `whoami_cache.json`, named as Vibe names it. Mistral publishes no usage limits, so the section shows local stats only.
 
-### Kiro
-
-Kiro CLI keeps one JSON document per session under `~/.kiro/sessions/cli` with a row per user turn: the model, when the turn ended, and the token counts the service reported. Each turn is a prompt and each file a session. Kiro's Auto agent often stores zero tokens, and such turns count as prompts with no tokens rather than estimates. Kiro bills credits against a monthly allowance, but neither the allowance nor the month's use is kept on disk, so there is no meter.
-
-### Freebuff
-
-Freebuff keeps each chat as a `chat-messages.json` under `~/.config/manicode/projects/<project>/chats/` (`FREEBUFF_CONFIG_DIR` moves the whole directory). Prompts, sessions, and active days are exact, dated from the time in each message id. Freebuff meters usage on its servers and writes no token counts, so the token figures stay empty rather than guessed. The section appears once there are chats or a sign-in in `credentials.json`, including one whose token Freebuff moved to the keychain. Freebuff has no limits to read, and its plan isn't named since nothing on disk says whether it is Freebuff or Freebuff Pro.
-
 ### Qwen Code
 
 Qwen Code writes each session to `projects/<project>/chats/<session>.jsonl` under `~/.qwen` (`QWEN_HOME`), or under `QWEN_RUNTIME_DIR` or the `advanced.runtimeOutputDir` setting when either moves it. Every billed API response is a telemetry line there with the model and the provider's token counts, the same lines Qwen Code's own usage statistics are rebuilt from, read by the same rules: the prompt count includes its cached part, and thinking is added to output only where the provider counts it apart. Typed prompts come from the user lines, and a branched session's repeated lines count once. Qwen Code reads no quota of its own, so there is no meter.
@@ -266,19 +255,6 @@ Each API key keeps its account's last good usage rows and balance; another key o
 ### Synthetic
 
 Synthetic reads `SYNTHETIC_API_KEY` first, then the key pi stores in `~/.pi/agent/auth.json` (honoring `PI_CODING_AGENT_DIR` and `$ENV_VAR` keys), then omp's `~/.omp/agent/auth.json`, then opencode's `auth.json`. The collector asks the documented `GET https://api.synthetic.new/v2/quotas`, which doesn't count against the quotas. The rolling five-hour request limit and the weekly credits regenerate a little at a time, so they show how much is used with no reset time; hourly search and free tool calls reset when Synthetic says they renew. An account without the credit system shows the documented subscription request bucket instead. Local stats count pi and omp sessions and opencode messages on the `synthetic` provider.
-
-### LiteLLM
-
-LiteLLM reads `LITELLM_BASE_URL` and `LITELLM_API_KEY` (or `LITELLM_MASTER_KEY`) first, then `baseUrl` and `apiKey` in `~/.config/omarchy/agents/litellm.json`:
-
-```json
-{
-  "baseUrl": "https://litellm.example.com",
-  "apiKey": "sk-..."
-}
-```
-
-A key with a `max_budget` shows it as a balance: the budget, what the proxy says the key has spent, and what's left, from `GET /key/info`. A key without a budget shows no balance. The request carries the key, so a proxy that redirects to another host is refused. The token stats are this machine's: pi and omp sessions and opencode messages on the `litellm` provider. The proxy's own spend logs are left alone, since the harness and provider collectors already count those requests and an admin key would count every user of the proxy.
 
 ### Local models
 

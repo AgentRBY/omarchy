@@ -32,8 +32,6 @@
         "hermes": { "enabled": true },
         "devin": { "enabled": true },
         "vibe": { "enabled": true },
-        "kiro": { "enabled": true },
-        "freebuff": { "enabled": true },
         "qwen": { "enabled": true },
         "opencode": { "enabled": true },
         "zai": { "enabled": true },
@@ -43,7 +41,6 @@
         "deepseek": { "enabled": true },
         "fireworks": { "enabled": true },
         "synthetic": { "enabled": true },
-        "litellm": { "enabled": true },
         "local": { "enabled": true }
       },
       "refreshIntervalSec": 900,
