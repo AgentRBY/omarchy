@@ -14,6 +14,7 @@ by model. The agents panel only ever reads the JSON this prints.
 
 import argparse
 import json
+import math
 import os
 import re
 import tempfile
@@ -186,9 +187,16 @@ def plan(home):
 def credits_limit(data):
   config = data["config"]
   period = config["currentPeriod"]
+  used = config.get("creditUsagePercent") or 0
+  if isinstance(used, bool):
+    raise ValueError("creditUsagePercent is not a number")
+  used = float(used)
+  # NaN would pass any clamp as 100%; a percentage that isn't one is no answer.
+  if not math.isfinite(used):
+    raise ValueError("creditUsagePercent is not a number")
   return {
     "label": "Weekly" if "WEEK" in str(period.get("type")) else "Monthly",
-    "percent": max(0.0, min(1.0, float(config.get("creditUsagePercent") or 0) / 100)),
+    "percent": max(0.0, min(1.0, used / 100)),
     "resetsAt": parse_time(period["end"]).isoformat(),
   }
 
@@ -246,15 +254,30 @@ def collect_limits(home, key, force):
     return result
 
   request = urllib.request.Request(CREDITS_URL, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+  limit = None
   try:
     with urllib.request.urlopen(request, timeout=8) as response:
-      limit = credits_limit(json.loads(response.read()))
+      body = response.read()
   except urllib.error.HTTPError as error:
-    limit = None
+    body = None
     if error.code in (401, 403):
-      result["usageStatusText"] = "Waiting for auth"
-  except Exception:
-    limit = None
+      # The token was turned away before it lapsed: a sign-in to redo.
+      result["usageStatusText"] = "Sign-in expired"
+      result["authHelpText"] = "xAI refused Grok's saved sign-in. Start Grok, or run `grok login`, to sign in again."
+    else:
+      result["authHelpText"] = f"Grok's usage endpoint returned status {error.code}. Local Grok stats are still shown."
+  except (urllib.error.URLError, OSError):
+    # No server answered at all (no route, no DNS, a timeout), often a
+    # network not up yet after login, so the panel asks again soon. Any real
+    # answer, an error status included, is a server to stop pestering.
+    body = None
+    result["retryAdvised"] = True
+    result["authHelpText"] = "Couldn't reach Grok's usage endpoint. Retrying shortly. Local Grok stats are still shown."
+  if body is not None:
+    try:
+      limit = credits_limit(json.loads(body))
+    except Exception:
+      result["authHelpText"] = "Grok's usage endpoint answered without a usable limit. Local Grok stats are still shown."
 
   if limit:
     result.update(limits=[limit], live=True, fetchedAtMs=round(time.time() * 1000), authHelpText="")
@@ -313,6 +336,7 @@ def account_limits(account, force):
     "fetchedAt": limits["fetchedAtMs"],
     "usageStatusText": limits["usageStatusText"],
     "authHelpText": limits["authHelpText"],
+    "retryAdvised": bool(limits.get("retryAdvised")),
   }
 
 
@@ -352,6 +376,8 @@ def main():
     "limitsStale": stale,
     "limitsFetchedAt": fetched_at,
   }
+  if limits.get("retryAdvised"):
+    record["retryAdvised"] = True
   record.update(cached_local_stats(stats_home, LIMITS_ONLY_SCAN_REUSE_SECONDS if args.limits_only and not args.force else 0))
   if accounts:
     record["accountSwitch"] = registered[0]["switch"]

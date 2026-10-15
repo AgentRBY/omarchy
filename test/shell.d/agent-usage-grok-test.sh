@@ -52,6 +52,8 @@ def urlopen(request, timeout=None):
   config = {"currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY", "end": end}, "billingPeriodEnd": end}
   if used.get(token):
     config["creditUsagePercent"] = used[token]
+  if os.environ.get("GROK_PERCENT"):
+    config["creditUsagePercent"] = json.loads(os.environ["GROK_PERCENT"])
   return io.BytesIO(json.dumps({"config": config}).encode())
 
 collector.urllib.request.urlopen = urlopen
@@ -145,6 +147,29 @@ record=$(GROK_FAIL=500 collect)
 [[ $(jq -c '{stale: .limitsStale, window: (.limits[0] | {percent, resetsAt})}' <<<"$record") == '{"stale":true,"window":{"percent":0.0,"resetsAt":""}}' ]] ||
   fail "a failed Grok check zeroes a kept window that has reset since" "$record"
 pass "a failed Grok check zeroes a kept window that has reset since"
+
+# Only an endpoint that couldn't be reached at all asks the panel to retry
+# soon; one that answered with an error would only answer the same again.
+record=$(GROK_FAIL=unreachable collect)
+[[ $(jq -c '{retryAdvised, stale: .limitsStale, kept: (.limits | length), status: .usageStatusText}' <<<"$record") == '{"retryAdvised":true,"stale":true,"kept":1,"status":""}' ]] ||
+  fail "an unreachable Grok endpoint advises a retry and keeps the last credits" "$record"
+record=$(GROK_FAIL=500 collect)
+[[ $(jq -r '.retryAdvised // false' <<<"$record") == false ]] ||
+  fail "a Grok endpoint that answered with an error advises no retry" "$record"
+pass "only an unreachable Grok endpoint advises a retry"
+
+# A token turned away before it lapsed is a sign-in to redo.
+record=$(GROK_FAIL=401 collect)
+[[ $(jq -c '{status: .usageStatusText, stale: .limitsStale, retry: (.retryAdvised // false)}' <<<"$record") == '{"status":"Sign-in expired","stale":true,"retry":false}' ]] ||
+  fail "a refused Grok sign-in says it expired" "$record"
+pass "a refused Grok sign-in says it expired"
+
+# A percentage that isn't a number is no answer, not a full allowance.
+rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/grok-limits-*.json
+record=$(GROK_PERCENT=NaN collect)
+[[ $(jq -c '{status: .usageStatusText, limits}' <<<"$record") == '{"status":"Grok limits unavailable","limits":[]}' ]] ||
+  fail "a Grok percentage that isn't a number reads as unavailable" "$record"
+pass "a Grok percentage that isn't a number reads as unavailable"
 
 # A period with nothing used yet comes without a percentage.
 signed_in "$HOME/.grok" token-fresh u-main "$future" "X Premium+"
