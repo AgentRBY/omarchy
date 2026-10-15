@@ -4,14 +4,21 @@
 # omarchy:hidden=true
 """Collect MiniMax Token Plan limits into a display-ready JSON record.
 
-The last good limits are cached, so a failed check keeps showing them, marked
-stale, rather than dropping the section.
+The 5-hour session and weekly windows come from MiniMax's Token Plan API with
+the key MiniMax's own `mmx` CLI or opencode saved. Each credential's last
+good limits are cached, so a failed check keeps showing them, marked stale,
+rather than dropping the section. The agents panel only ever reads the JSON
+this prints.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
+import hashlib
 import json
+import math
 import os
 import sys
 import tempfile
@@ -20,17 +27,37 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 AGENT_ID = "minimax"
 AGENT_NAME = "MiniMax"
 DEFAULT_BASE_URL = "https://api.minimax.io"
+CN_BASE_URL = "https://api.minimaxi.com"
 AUTH_HELP = "Set MINIMAX_API_KEY, or sign in to MiniMax in opencode."
+AUTH_HELP_BAD_KEY = "MiniMax rejected the saved credentials. Set MINIMAX_API_KEY, or sign in to MiniMax again with `mmx` or opencode."
+# The plan the quota endpoint describes: only a Token Plan has these windows.
 TIER_LABEL = "Token Plan"
+# The panel opens and shuts fire a probe each; a recent probe result is reused
+# for this window rather than turning every flick into a request.
+PROBE_MIN_INTERVAL_SECONDS = 15
+# base_resp codes MiniMax answers a bad key with: 1004 is an authentication
+# failure, 2049 an invalid API key.
+AUTH_STATUS_CODES = {1004, 2049}
+# The quota rows for MiniMax's media models ride on allowances of their own
+# (video and image generation, speech, vision) and are not the coding plan.
+MEDIA_MODEL_WORDS = ("video", "image", "audio", "vision")
 
 
 class MiniMaxError(Exception):
-  pass
+  def __init__(self, message: str, transport: bool = False, rejected: bool = False) -> None:
+    super().__init__(message)
+    self.transport = transport
+    self.rejected = rejected
+
+
+def recent_dates() -> list[str]:
+  now = datetime.now()
+  return [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
 
 
 def empty_stats() -> dict[str, Any]:
@@ -39,7 +66,7 @@ def empty_stats() -> dict[str, Any]:
     "todaySessions": 0,
     "todayTotalTokens": 0,
     "todayTokensByModel": {},
-    "recentDays": [],
+    "recentDays": [{"date": day, "messageCount": 0} for day in recent_dates()],
     "totalPrompts": 0,
     "totalSessions": 0,
     "activeDays": 0,
@@ -70,6 +97,12 @@ def base_record(**overrides: Any) -> dict[str, Any]:
   return record
 
 
+def cache_root() -> Path:
+  root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage"
+  root.mkdir(parents=True, exist_ok=True)
+  return root
+
+
 def read_json(path: Path) -> Any:
   try:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -85,14 +118,19 @@ def write_json(path: Path, payload: Any) -> None:
   try:
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
       json.dump(payload, handle)
+    os.chmod(tmp, 0o644)
     os.replace(tmp, path)
   except Exception:
     Path(tmp).unlink(missing_ok=True)
     raise
 
 
-def limits_cache() -> Path:
-  return Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")) / "omarchy" / "agent-usage" / "minimax-limits.json"
+def limits_cache_paths(api_key: str, base_url: str) -> tuple[Path, Path]:
+  # Keyed by the credential and the host it signs in to: another key, or the
+  # same key in the other region, never shows this one's allowance.
+  digest = hashlib.sha256(f"{base_url.rstrip('/')}\0{api_key}".encode("utf-8")).hexdigest()[:16]
+  root = cache_root()
+  return root / f"minimax-limits-{digest}.json", root / f"minimax-limits-{digest}.lock"
 
 
 def mmx_config_dir() -> Path:
@@ -137,12 +175,12 @@ def config_base_url(config: dict[str, Any]) -> str:
     if isinstance(resource_url, str) and resource_url.strip():
       return resource_url.strip()
     if oauth.get("region") == "cn":
-      return "https://api.minimaxi.com"
+      return CN_BASE_URL
   value = config.get("base_url")
   if isinstance(value, str) and value.strip():
     return value.strip()
   if config.get("region") == "cn" or os.environ.get("MINIMAX_REGION") == "cn":
-    return "https://api.minimaxi.com"
+    return CN_BASE_URL
   return DEFAULT_BASE_URL
 
 
@@ -168,20 +206,25 @@ def credentials() -> tuple[str, str]:
 
 
 def number(value: Any) -> float | None:
-  try:
-    result = float(value)
-    return result if result == result else None
-  except Exception:
+  # Booleans are ints to Python; neither they nor NaN or infinity are numbers
+  # the quota API meant.
+  if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
     return None
+  return float(value)
 
 
 def reset_at(entry: dict[str, Any], end_key: str, remains_key: str) -> str:
-  end_ms = number(entry.get(end_key))
-  if end_ms and end_ms > 0:
-    return datetime.fromtimestamp(end_ms / 1000, timezone.utc).isoformat()
-  remains_ms = number(entry.get(remains_key))
-  if remains_ms and remains_ms > 0:
-    return (datetime.now(timezone.utc) + timedelta(milliseconds=remains_ms)).isoformat()
+  try:
+    end_ms = number(entry.get(end_key))
+    if end_ms and end_ms > 0:
+      return datetime.fromtimestamp(end_ms / 1000, timezone.utc).isoformat()
+    # Without an end time MiniMax still says how long the window has left,
+    # which places its own reset rather than guessing one.
+    remains_ms = number(entry.get(remains_key))
+    if remains_ms and remains_ms > 0:
+      return (datetime.now(timezone.utc) + timedelta(milliseconds=remains_ms)).isoformat()
+  except (OverflowError, OSError, ValueError):
+    pass
   return ""
 
 
@@ -192,17 +235,23 @@ def used_fraction(remaining: Any) -> float | None:
   return max(0.0, min(1.0, 1.0 - percent / 100.0))
 
 
+def is_media_row(row: dict[str, Any]) -> bool:
+  name = str(row.get("model_name") or "").strip().lower()
+  return any(word in name for word in MEDIA_MODEL_WORDS)
+
+
 def quota_limits(payload: dict[str, Any]) -> list[dict[str, Any]]:
   rows = payload.get("model_remains")
   if not isinstance(rows, list):
     raise MiniMaxError("MiniMax returned no Token Plan quotas")
 
-  # "general" is the language/agent quota. Other rows describe modalities
-  # whose daily limits do not map to the panel's coding-subscription meters.
-  general = next((row for row in rows if isinstance(row, dict) and row.get("model_name") == "general"), None)
+  # "general" is the language/agent quota. Without it the first row that
+  # isn't a media model's stands for the plan.
+  rows = [row for row in rows if isinstance(row, dict)]
+  general = next((row for row in rows if row.get("model_name") == "general"), None)
   if general is None:
-    general = next((row for row in rows if isinstance(row, dict)), None)
-  if not isinstance(general, dict):
+    general = next((row for row in rows if not is_media_row(row)), None)
+  if general is None:
     raise MiniMaxError("MiniMax returned no usable Token Plan quota")
 
   limits = []
@@ -225,6 +274,16 @@ def quota_limits(payload: dict[str, Any]) -> list[dict[str, Any]]:
   return limits
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+  # A redirect would carry the bearer to whatever host it names.
+  def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+    return None
+
+
+def urlopen(request: urllib.request.Request, timeout: float) -> Any:
+  return urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout)
+
+
 def fetch_quota(api_key: str, base_url: str) -> dict[str, Any]:
   endpoint = base_url.rstrip("/") + "/v1/token_plan/remains"
   request = urllib.request.Request(
@@ -232,29 +291,37 @@ def fetch_quota(api_key: str, base_url: str) -> dict[str, Any]:
     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
   )
   try:
-    with urllib.request.urlopen(request, timeout=12) as response:
+    with urlopen(request, timeout=12) as response:
       payload = json.load(response)
   except urllib.error.HTTPError as error:
     if error.code in (401, 403):
-      raise MiniMaxError("MiniMax rejected the saved credentials") from error
-    raise MiniMaxError(f"MiniMax API returned HTTP {error.code}") from error
-  except urllib.error.URLError as error:
-    raise MiniMaxError("Could not reach the MiniMax API") from error
-  except Exception as error:
-    raise MiniMaxError("MiniMax returned an invalid quota response") from error
+      raise MiniMaxError(AUTH_HELP_BAD_KEY, rejected=True) from error
+    if 300 <= error.code < 400:
+      raise MiniMaxError("MiniMax's quota endpoint redirected elsewhere; the key was not sent on.") from error
+    raise MiniMaxError(f"MiniMax's quota endpoint returned HTTP {error.code}.") from error
+  except OSError as error:
+    # URLError, timeouts and resets alike: no answer from any server.
+    raise MiniMaxError("Couldn't reach the MiniMax API. Retrying shortly.", transport=True) from error
+  except ValueError as error:
+    raise MiniMaxError("MiniMax returned an invalid quota response.") from error
 
   if not isinstance(payload, dict):
-    raise MiniMaxError("MiniMax returned an invalid quota response")
+    raise MiniMaxError("MiniMax returned an invalid quota response.")
   base_response = payload.get("base_resp")
-  if isinstance(base_response, dict) and number(base_response.get("status_code")) not in (None, 0):
-    message = str(base_response.get("status_msg") or "MiniMax rejected the quota request")
-    raise MiniMaxError(message)
+  if isinstance(base_response, dict):
+    code = number(base_response.get("status_code"))
+    if code not in (None, 0):
+      if int(code) in AUTH_STATUS_CODES:
+        raise MiniMaxError(AUTH_HELP_BAD_KEY, rejected=True)
+      message = str(base_response.get("status_msg") or "MiniMax rejected the quota request")[:200]
+      raise MiniMaxError(message)
   return payload
 
 
-# A window kept from an earlier check is dropped once it has reset, since
-# what it said no longer holds; one with no reset time is kept.
-def open_windows(limits: Any) -> list[dict[str, Any]]:
+# A kept window whose reset has passed comes back at zero: the allowance it
+# measured has been renewed, so it is untouched rather than unknown. One with
+# no reset time, or one that will not parse, is kept as it is.
+def usable_cached_limits(limits: Any) -> list[dict[str, Any]]:
   now = datetime.now(timezone.utc)
   kept = []
   for limit in limits if isinstance(limits, list) else []:
@@ -266,44 +333,118 @@ def open_windows(limits: Any) -> list[dict[str, Any]]:
       resets = None
     if resets and resets.tzinfo is None:
       resets = resets.replace(tzinfo=timezone.utc)
-    if not resets or resets > now:
-      kept.append(limit)
+    kept.append(dict(limit, percent=0.0, resetsAt="") if resets and resets <= now else limit)
   return kept
+
+
+def cached_answer(cache_file: Path) -> tuple[list[dict[str, Any]], int]:
+  cached = read_json(cache_file)
+  cached = cached if isinstance(cached, dict) else {}
+  fetched_ms = number(cached.get("fetchedAtMs"))
+  return usable_cached_limits(cached.get("limits")), max(0, int(fetched_ms or 0))
+
+
+def recent_probe(fetched_ms: int) -> bool:
+  # A negative age is a stamp from the future: the clock moved back since it
+  # was written, so it proves nothing about freshness.
+  age = time.time() - fetched_ms / 1000
+  return 0 <= age < PROBE_MIN_INTERVAL_SECONDS
+
+
+@contextlib.contextmanager
+def probe_lock(path: Path) -> Iterator[None]:
+  # One probe at a time per credential; a lock that can't be taken only costs
+  # a duplicate request, so the probe runs unlocked rather than not at all.
+  try:
+    handle = path.open("a")
+  except OSError:
+    yield
+    return
+  with handle:
+    try:
+      fcntl.flock(handle, fcntl.LOCK_EX)
+    except OSError:
+      pass
+    yield
+
+
+def collect_limits(api_key: str, base_url: str, force: bool) -> dict[str, Any]:
+  """Fresh limits when a probe is due, else the last known ones.
+
+  `live` says whether the limits are this check's (or a probe recent enough
+  to stand in for one), and `fetchedAtMs` when they were measured.
+  """
+  result = {"limits": [], "usageStatusText": "", "authHelpText": "", "retryAdvised": False, "live": False, "fetchedAtMs": 0}
+  cache_file, lock_file = limits_cache_paths(api_key, base_url)
+
+  # --force is a person asking for fresh numbers, so it skips the reuse
+  # window; the interval absorbs repeated panel opens, not a refresh press.
+  fallback, fetched_ms = cached_answer(cache_file)
+  if fallback and not force and recent_probe(fetched_ms):
+    result.update(limits=fallback, live=True, fetchedAtMs=fetched_ms)
+    return result
+
+  with probe_lock(lock_file):
+    if not force:
+      # Another run may have probed while this one waited for the lock.
+      fallback, fetched_ms = cached_answer(cache_file)
+      if fallback and recent_probe(fetched_ms):
+        result.update(limits=fallback, live=True, fetchedAtMs=fetched_ms)
+        return result
+    try:
+      limits = quota_limits(fetch_quota(api_key, base_url))
+    except MiniMaxError as error:
+      failure = error
+    except Exception as error:
+      # An answer shaped like nothing expected is still a failed check: the
+      # kept limits stand.
+      failure = MiniMaxError(f"MiniMax's quota check failed ({type(error).__name__}).")
+    else:
+      result.update(limits=limits, live=True, fetchedAtMs=round(time.time() * 1000))
+      try:
+        write_json(cache_file, {"fetchedAtMs": result["fetchedAtMs"], "limits": limits})
+      except OSError as exc:
+        print(f"omarchy-agent-usage-minimax: could not write limits cache ({exc})", file=sys.stderr)
+      return result
+
+  # A transport failure reached no server — typically the seconds after login
+  # before the network is up — so ask the shell to retry sooner.
+  result["retryAdvised"] = failure.transport
+  result["authHelpText"] = str(failure)
+  if fallback:
+    result.update(limits=fallback, fetchedAtMs=fetched_ms)
+  if failure.rejected:
+    result["usageStatusText"] = "Sign-in expired"
+  elif not fallback:
+    result["usageStatusText"] = "MiniMax limits unavailable"
+  return result
 
 
 # Nobody with a MiniMax key here: an empty record, which the panel skips.
 # With one, a failed check keeps the last good limits, marked stale.
-def collect(api_key: str, base_url: str) -> dict[str, Any]:
+def collect(api_key: str, base_url: str, force: bool = False) -> dict[str, Any]:
   if not api_key:
-    return base_record(usageStatusText="MiniMax unavailable", authHelpText=AUTH_HELP)
+    return base_record()
 
-  record = base_record(ready=True, tierLabel=TIER_LABEL)
-  try:
-    limits = quota_limits(fetch_quota(api_key, base_url))
-  except MiniMaxError as error:
-    cached = read_json(limits_cache()) or {}
-    record.update(
-      limits=open_windows(cached.get("limits")),
-      limitsStale=True,
-      limitsFetchedAt=int(cached.get("fetchedAtMs") or 0),
-      usageStatusText="MiniMax limits unavailable",
-      authHelpText=str(error),
-    )
-    return record
-
-  fetched_at = round(time.time() * 1000)
-  record.update(limits=limits, limitsFetchedAt=fetched_at)
-  try:
-    write_json(limits_cache(), {"fetchedAtMs": fetched_at, "limits": limits})
-  except OSError:
-    pass
+  limits = collect_limits(api_key, base_url, force)
+  record = base_record(
+    ready=True,
+    tierLabel=TIER_LABEL if limits["limits"] else "",
+    limits=limits["limits"],
+    limitsStale=bool(limits["limits"]) and not limits["live"],
+    limitsFetchedAt=limits["fetchedAtMs"],
+    usageStatusText=limits["usageStatusText"],
+    authHelpText=limits["authHelpText"],
+  )
+  if limits["retryAdvised"]:
+    record["retryAdvised"] = True
   return record
 
 
 def main() -> int:
   parser = argparse.ArgumentParser(description="Print the MiniMax Token Plan usage record as JSON")
-  # The API is point-in-time, so both common collector flags intentionally
-  # take the same path. Accepting them keeps usage-update provider-agnostic.
+  # --force re-probes past the reuse window. --limits-only takes the same path
+  # as a normal run: there is no local scan for it to reuse.
   parser.add_argument("--force", action="store_true")
   parser.add_argument("--limits-only", action="store_true")
   parser.add_argument("--base-url")
@@ -311,9 +452,9 @@ def main() -> int:
 
   try:
     api_key, saved_base_url = credentials()
-    record = collect(api_key, args.base_url or saved_base_url)
+    record = collect(api_key, args.base_url or saved_base_url, args.force)
   except Exception as error:
-    record = base_record(usageStatusText="MiniMax limits unavailable", authHelpText="MiniMax usage scan failed")
+    record = base_record(usageStatusText="MiniMax limits unavailable", authHelpText="MiniMax usage scan failed.")
     print(f"omarchy-agent-usage-minimax: {type(error).__name__}", file=sys.stderr)
   print(json.dumps(record, separators=(",", ":"), sort_keys=True))
   return 0
