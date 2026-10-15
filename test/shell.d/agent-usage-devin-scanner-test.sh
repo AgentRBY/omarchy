@@ -288,11 +288,12 @@ result=$(run --force)
   fail "Devin collector counts pi/omp devin messages once, profiles included" "$result"
 pass "Devin collector counts pi and omp sessions on the devin provider once"
 
-# PI_CODING_AGENT_DIR moves pi's sessions.
+# PI_CODING_AGENT_DIR moves pi's sessions, read as well as the default tree,
+# which keeps what was written before the move: 392 + m9's 20.
 moved="$TEST_HOME/elsewhere"
 mkdir -p "$moved/sessions/--work--"
 pi_line m9 devin 5 5 >"$moved/sessions/--work--/moved.jsonl"
-[[ $(jq -r '.todayTotalTokens' <<<"$(PI_CODING_AGENT_DIR="$moved" run --force)") == "282" ]] ||
+[[ $(jq -r '.todayTotalTokens' <<<"$(PI_CODING_AGENT_DIR="$moved" run --force)") == "412" ]] ||
   fail "Devin collector follows PI_CODING_AGENT_DIR" "$(PI_CODING_AGENT_DIR="$moved" run --force)"
 pass "Devin collector follows PI_CODING_AGENT_DIR"
 rm -rf "$TEST_HOME/.pi" "$TEST_HOME/.omp"
