@@ -19,19 +19,39 @@ call of its own. The agents panel only ever reads the JSON this prints.
 
 import argparse
 import base64
-import fcntl
-import hashlib
 import json
 import math
 import os
-import shutil
 import sqlite3
-import subprocess
 import sys
-import tempfile
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
+
+# The shared collector plumbing ships with the agents panel.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
+from collectors import (  # noqa: E402
+  Stats,
+  base_record,
+  cache_root,
+  cached_scan,
+  data_home,
+  emit,
+  local_day,
+  number,
+  obj,
+  open_limits,
+  opencode_db,
+  pi_session_roots,
+  read_json,
+  scan_max_age,
+  scan_opencode,
+  scan_pi_sessions,
+  token_count,
+  warn,
+  write_json,
+)
 
 AGENT_ID = "devin"
 AGENT_NAME = "Devin"
@@ -39,12 +59,8 @@ PROVIDER = "devin"
 AUTH_HELP = "Run `devin auth login` so Devin can record its quota."
 REFRESH_HELP = "Devin hasn't recorded its quota since it was signed in. Start Devin to refresh it."
 
-# A scan this recent is only reused to dedup concurrent collector runs (the
-# update command backgrounds one per agent while the panel refreshes on its
-# own). --limits-only promises only fresh limits, so it may reuse a scan for
-# up to 15 minutes. The quota is a file read, so it is read on every run.
-SCAN_REUSE_SECONDS = 20
-LIMITS_ONLY_REUSE_SECONDS = 900
+# The quota is a file read, so it is read on every run; only the local scan
+# is cached.
 
 # The quota comes from a cache the CLI writes when it starts, never from a
 # check of ours, and cloud sessions keep spending it meanwhile. Numbers this
@@ -61,76 +77,20 @@ TEAMS_TIER = {
   17: "Devin Max", 18: "Max", 19: "Devin Free", 20: "Devin Trial",
 }
 
-# Past this a token count or timestamp from disk is garbage, not usage.
-MAX_TOKENS = 10_000_000_000
+# The CLI's status cache dates its fetch in epoch seconds; past these bounds
+# the stamp is garbage, not a time.
 EARLIEST_EPOCH = 946_684_800  # 2000-01-01
 LATEST_EPOCH = 4_102_444_800  # 2100-01-01
-
-
-# --------------------------------------------------------------- utilities
-
-
-def obj(value):
-  return value if isinstance(value, dict) else {}
-
-
-# Token counts and timestamps on disk are untrusted: a boolean, NaN, infinite,
-# negative, huge or non-numeric value reads as nothing.
-def number(value):
-  if isinstance(value, bool) or not isinstance(value, (int, float)):
-    return 0
-  if not math.isfinite(value) or value < 0 or value > MAX_TOKENS:
-    return 0
-  return int(value)
 
 
 def epoch_seconds(value):
   if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
     return None
-  # Session timestamps are seconds or milliseconds.
+  # Stamps are seconds or milliseconds.
   seconds = value / 1000 if value > 100_000_000_000 else value
   if not EARLIEST_EPOCH <= seconds < LATEST_EPOCH:
     return None
   return seconds
-
-
-def parse_time(value):
-  """A timestamp from disk as an aware datetime, or None when it won't read."""
-  seconds = epoch_seconds(value)
-  if seconds is not None:
-    return datetime.fromtimestamp(seconds, timezone.utc)
-  if not isinstance(value, str) or not value.strip():
-    return None
-  try:
-    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-  except ValueError:
-    return None
-  if parsed.tzinfo is None:
-    parsed = parsed.astimezone()
-  if epoch_seconds(parsed.timestamp()) is None:
-    return None
-  return parsed
-
-
-# A pi or opencode row's day, read as every collector reading those sources
-# reads it: a row with no time at all is today's, and an untrusted time is
-# None, so the caller skips that row alone.
-def source_day(value):
-  return datetime.now().strftime("%Y-%m-%d") if value is None else local_day(value)
-
-
-# pi, omp, and the harnesses that copy their format spell usage camelCase or
-# snake_case; the first spelling present wins.
-def usage_tokens(usage, *keys):
-  for key in keys:
-    if key in usage:
-      return number(usage.get(key))
-  return 0
-
-
-def local_day(value):
-  parsed = parse_time(value)
-  return parsed.astimezone().strftime("%Y-%m-%d") if parsed else None
 
 
 def iso_from_unix(value):
@@ -138,150 +98,35 @@ def iso_from_unix(value):
   return datetime.fromtimestamp(seconds, timezone.utc).isoformat() if seconds else ""
 
 
+def stored_day(value):
+  # The Devin CLI dates every row it writes, so a row without a time is
+  # unreadable rather than today's.
+  return None if value is None else local_day(value)
+
+
 def model_name(raw):
   return str(raw or "").strip() or AGENT_ID
 
 
-def runtime_env():
-  home = str(Path.home())
-  path_parts = [
-    os.environ.get("PATH", ""),
-    f"{home}/.local/bin",
-    f"{home}/.npm-global/bin",
-    f"{home}/.local/share/mise/shims",
-  ]
-  env = os.environ.copy()
-  env["PATH"] = os.pathsep.join(part for part in path_parts if part)
-  return env
+class DevinStats(Stats):
+  """The shared totals, with prompts counted apart from tokens: the Devin
+  CLI records what a reply spent and what a person asked in separate rows."""
 
-
-ENV = runtime_env()
-
-
-def find_command(name):
-  return shutil.which(name, path=ENV.get("PATH"))
-
-
-def data_home():
-  return Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
-
-
-def xdg_cache_home():
-  return Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
-
-
-def cache_root():
-  root = xdg_cache_home() / "omarchy" / "agent-usage"
-  root.mkdir(parents=True, exist_ok=True)
-  return root
-
-
-def read_json(path):
-  try:
-    return json.loads(path.read_text(encoding="utf-8"))
-  except Exception:
-    return None
-
-
-def read_fresh_json(path, max_age_seconds):
-  if max_age_seconds <= 0:
-    return None
-  try:
-    # A negative age means the mtime is in the future: the clock moved
-    # backwards since the write, so the cache's freshness cannot be trusted.
-    age = time.time() - path.stat().st_mtime
-  except OSError:
-    return None
-  return read_json(path) if 0 <= age < max_age_seconds else None
-
-
-def write_json(path, payload):
-  # A temp name unique to this writer: several collectors can run at once, and
-  # a shared temp path means the second replace finds the first one's file
-  # already moved away.
-  handle_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-  tmp = Path(tmp_name)
-  try:
-    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
-      handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
-    tmp.chmod(0o644)
-    tmp.replace(path)
-  except BaseException:
-    tmp.unlink(missing_ok=True)
-    raise
-
-
-# ------------------------------------------------------------------- stats
-
-
-def empty_bucket():
-  return {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
-
-
-class Stats:
-  """Token and activity totals shared by every local source. Sessions and days
-  are sets, so a day active in two sources counts once toward activeDays."""
-
-  def __init__(self):
-    now = datetime.now()
-    self.today = now.strftime("%Y-%m-%d")
-    self.recent_dates = [(now - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
-    self.recent = {day: 0 for day in self.recent_dates}
-    self.today_prompts = 0
-    self.today_total_tokens = 0
-    self.today_sessions = set()
-    self.today_tokens_by_model = {}
-    self.total_prompts = 0
-    self.total_sessions = set()
-    self.active_days = set()
-    self.model_usage = {}
-
-  # A session of None is settled later, with add_session.
-  def add_session(self, session, today):
-    if session is not None:
-      self.total_sessions.add(session)
-      if today:
-        self.today_sessions.add(session)
+  def add_tokens(self, session, day, model, input_tokens, output_tokens, cache_read, cache_write):
+    if input_tokens + output_tokens + cache_read + cache_write <= 0:
+      return
+    self.add(day, session, model, input_tokens, output_tokens, cache_read, cache_write)
+    # The reply is not a prompt; prompts arrive through add_prompt.
+    self.total_prompts -= 1
+    if day == self.today:
+      self.today_prompts -= 1
 
   def add_prompt(self, session, day):
     self.total_prompts += 1
+    self.sessions.add(session)
     if day == self.today:
       self.today_prompts += 1
-    self.add_session(session, day == self.today)
-
-  def add(self, session, day, model, input_tokens, output_tokens, cache_read, cache_write, prompt=True):
-    total = input_tokens + output_tokens + cache_read + cache_write
-    if total <= 0:
-      return
-    if prompt:
-      self.add_prompt(session, day)
-    self.add_session(session, day == self.today)
-    self.active_days.add(day)
-    bucket = self.model_usage.setdefault(model, empty_bucket())
-    bucket["inputTokens"] += input_tokens
-    bucket["outputTokens"] += output_tokens
-    bucket["cacheReadInputTokens"] += cache_read
-    bucket["cacheCreationInputTokens"] += cache_write
-    if day in self.recent:
-      # recentDays.messageCount holds tokens, despite the legacy name.
-      self.recent[day] += total
-    if day == self.today:
-      self.today_total_tokens += total
-      self.today_tokens_by_model[model] = self.today_tokens_by_model.get(model, 0) + total
-
-  def record(self):
-    return {
-      "todayPrompts": self.today_prompts,
-      "todaySessions": len(self.today_sessions),
-      "todayTotalTokens": self.today_total_tokens,
-      "todayTokensByModel": self.today_tokens_by_model,
-      "recentDays": [{"date": day, "messageCount": self.recent[day]} for day in self.recent_dates],
-      "totalPrompts": self.total_prompts,
-      "totalSessions": len(self.total_sessions),
-      "activeDays": len(self.active_days),
-      "activeDates": sorted(self.active_days),
-      "modelUsage": self.model_usage,
-    }
+      self.today_sessions.add(session)
 
 
 # ------------------------------------------------------------- Devin CLI
@@ -321,21 +166,20 @@ def scan_message_nodes(conn, stats, prefix):
     except (TypeError, ValueError):
       continue
     metrics = obj(metadata.get("metrics"))
-    day = local_day(created_at)
+    day = stored_day(created_at)
     if not metrics or day is None:
       continue
     # Prompts are counted from prompt_history, where each one is a row.
-    stats.add(
+    stats.add_tokens(
       prefix + str(session_id), day, model_name(metadata.get("generation_model")),
-      number(metrics.get("input_tokens")), number(metrics.get("output_tokens")),
-      number(metrics.get("cache_read_tokens")), number(metrics.get("cache_creation_tokens")),
-      prompt=False,
+      token_count(metrics.get("input_tokens")), token_count(metrics.get("output_tokens")),
+      token_count(metrics.get("cache_read_tokens")), token_count(metrics.get("cache_creation_tokens")),
     )
 
 
 def scan_prompt_history(conn, stats, prefix):
   for session_id, timestamp in conn.execute("SELECT session_id, timestamp FROM prompt_history"):
-    day = local_day(timestamp)
+    day = stored_day(timestamp)
     if day is not None:
       stats.add_prompt(prefix + str(session_id), day)
 
@@ -347,12 +191,12 @@ def scan_session_totals(conn, stats, prefix, tables):
   for session_id, model, created_at, last_activity_at, total_tokens in conn.execute(
     "SELECT id, model, created_at, last_activity_at, total_tokens FROM sessions"
   ):
-    day = local_day(last_activity_at) or local_day(created_at)
+    day = stored_day(last_activity_at) or stored_day(created_at)
     if day is not None:
-      stats.add(prefix + str(session_id), day, model_name(model), number(total_tokens), 0, 0, 0, prompt=False)
+      stats.add_tokens(prefix + str(session_id), day, model_name(model), token_count(total_tokens), 0, 0, 0)
   if "messages" in tables and {"role", "timestamp", "session_id"} <= table_columns(conn, "messages"):
     for session_id, role, timestamp in conn.execute("SELECT session_id, role, timestamp FROM messages WHERE role = 'assistant'"):
-      day = local_day(timestamp)
+      day = stored_day(timestamp)
       if day is not None:
         stats.add_prompt(prefix + str(session_id), day)
 
@@ -380,323 +224,42 @@ def scan_devin_database(path, stats):
       scan_session_totals(conn, stats, prefix, tables)
     if not known:
       # A layout this collector doesn't know: reading it again won't help.
-      print(f"omarchy-agent-usage-devin: {path} has no session tables this collector reads", file=sys.stderr)
+      warn(f"{path} has no session tables this collector reads")
   except sqlite3.Error as error:
     # Transient lock, schema migration, corruption: the numbers stop here,
     # incomplete.
-    print(f"omarchy-agent-usage-devin: {path}: {error}", file=sys.stderr)
+    warn(f"{path}: {error}")
     return False
   finally:
     conn.close()
   return True
 
 
-# --------------------------------------------------------------- pi and omp
+# ------------------------------------------------------- pi, omp, opencode
 
 
-def pi_pattern():
-  return r'"provider"\s*:\s*"devin"'
-
-
-def accept_pi(message):
-  return str(message.get("provider") or "") == PROVIDER
-
-
-# pi's and omp's session trees, each profile's too: `--profile=<name>` moves
-# the whole agent tree under <base>/profiles/<name>/. pi moves its agent tree
-# with PI_CODING_AGENT_DIR and its sessions alone with
-# PI_CODING_AGENT_SESSION_DIR, both expanding a leading ~; either is read as
-# well as the default trees, which keep whatever was written before the move.
-def pi_session_roots():
-  roots = []
-  for base in (Path.home() / ".pi", Path.home() / ".omp"):
-    roots.append(base / "agent" / "sessions")
-    try:
-      # Sorted so the scan order does not depend on directory order.
-      roots.extend(sorted(child / "agent" / "sessions" for child in (base / "profiles").iterdir() if child.is_dir()))
-    except OSError:
-      # No profiles directory, or it is unreadable: the default root stands.
-      pass
-  if os.environ.get("PI_CODING_AGENT_DIR", "").strip():
-    roots.append(Path(os.environ["PI_CODING_AGENT_DIR"].strip()).expanduser() / "sessions")
-  if os.environ.get("PI_CODING_AGENT_SESSION_DIR", "").strip():
-    roots.append(Path(os.environ["PI_CODING_AGENT_SESSION_DIR"].strip()).expanduser())
-  # Canonical roots, so an override that aliases a default root through a
-  # symlink is scanned under one spelling. A root inside another is already
-  # read with it, so it is dropped rather than counted twice.
-  canonical = list(dict.fromkeys(root.resolve() for root in roots))
-  return [root for root in canonical if not any(other != root and root.is_relative_to(other) for other in canonical)]
-
-
-def pi_parent_session(path):
-  # A fork names the session it was cut from in its header line.
-  try:
-    with open(path, encoding="utf-8", errors="replace") as handle:
-      header = json.loads(handle.readline())
-  except (OSError, ValueError):
-    return None
-  parent = header.get("parentSession") if isinstance(header, dict) else None
-  return os.path.abspath(os.path.expanduser(parent)) if isinstance(parent, str) and parent else None
-
-
-def scan_pi_sessions(stats):
-  """Add the pi/omp assistant messages this collector counts. Returns whether
-  every root was read."""
-  roots = [root for root in pi_session_roots() if root.is_dir()]
-  if not roots:
-    return True
-  rg = find_command("rg") or "rg"
-  try:
-    proc = subprocess.Popen(
-      # --no-ignore: these are data files, not a source tree. A $HOME that is
-      # a git checkout would otherwise hide every session behind its ignores.
-      [rg, "--json", "--no-ignore", "-e", pi_pattern(), *map(str, roots)],
-      stdout=subprocess.PIPE,
-      stderr=subprocess.DEVNULL,
-      text=True,
-      errors="replace",
-      env=ENV,
-    )
-  except OSError:
-    return False
-
-  counted = set()
-  owned = {}
-  today_owned = {}
-  assert proc.stdout is not None
-  for raw in proc.stdout:
-    try:
-      event = json.loads(raw)
-      if event.get("type") != "match":
-        continue
-      path = os.path.abspath(event["data"]["path"]["text"])
-      line_number = event["data"].get("line_number")
-      entry = json.loads(event["data"]["lines"]["text"])
-    except Exception:
-      continue
-    if not isinstance(entry, dict) or entry.get("type") != "message":
-      continue
-    message = obj(entry.get("message"))
-    if message.get("role") != "assistant" or not accept_pi(message):
-      continue
-    usage = obj(message.get("usage"))
-    input_tokens = usage_tokens(usage, "input", "inputTokens", "input_tokens")
-    # pi folds thinking into its own field; both are generated.
-    output_tokens = usage_tokens(usage, "output", "outputTokens", "output_tokens") + usage_tokens(usage, "reasoning", "reasoningTokens", "reasoning_tokens")
-    cache_read = usage_tokens(usage, "cacheRead", "cacheReadTokens", "cache_read", "cache_read_input_tokens")
-    cache_write = usage_tokens(usage, "cacheWrite", "cacheWriteTokens", "cache_write", "cache_creation_input_tokens")
-    if not (input_tokens or output_tokens or cache_read or cache_write):
-      # Some writers keep only the total; it was still spent.
-      input_tokens = usage_tokens(usage, "totalTokens", "total_tokens")
-    timestamp = entry.get("timestamp")
-    # The first time present decides: none at all is today's, and an
-    # untrusted one, zero included, skips only this line.
-    day = source_day(message.get("timestamp") if timestamp is None else timestamp)
-    if day is None or not (input_tokens or output_tokens or cache_read or cache_write):
-      continue
-    # A fork repeats its parent's messages with their ids and timestamps, so
-    # the pair says two lines are one message. An id alone is only unique
-    # within its file, and a line without one always counts.
-    message_id = str(entry.get("id") or "")
-    if message_id and timestamp is not None:
-      key = ("entry", message_id, str(timestamp))
-    elif message_id:
-      key = ("path", path, message_id)
-    else:
-      key = ("line", path, line_number)
-    owned.setdefault(path, set()).add(key)
-    if day == stats.today:
-      today_owned.setdefault(path, set()).add(key)
-    if key in counted:
-      continue
-    counted.add(key)
-    stats.add(None, day, model_name(message.get("model")), input_tokens, output_tokens, cache_read, cache_write)
-
-  try:
-    code = proc.wait(timeout=5)
-  except subprocess.TimeoutExpired:
-    proc.kill()
-    return False
-
-  # A message belongs to the oldest session holding it, so a fork is a
-  # session of its own only for what it added, whichever file rg read first.
-  parents = {}
-  for path, keys in owned.items():
-    inherited = set()
-    visited = {path}
-    parent = parents.setdefault(path, pi_parent_session(path))
-    while parent and parent not in visited:
-      visited.add(parent)
-      inherited |= owned.get(parent, set())
-      parent = parents.setdefault(parent, pi_parent_session(parent))
-    if keys - inherited:
-      stats.add_session(path, bool(today_owned.get(path, set()) - inherited))
-  # rg exits 1 when nothing matched and 2 when a file couldn't be read.
-  return code in (0, 1)
-
-
-# ---------------------------------------------------------------- opencode
-
-
-def opencode_db():
-  # The database opencode itself reads, as the opencode collector finds it:
-  # OPENCODE_DB when set (a relative name lives beside the default one), and
-  # opencode-v2.db only for the builds that wrote nothing else.
-  root = data_home() / "opencode"
-  configured = os.environ.get("OPENCODE_DB", "").strip()
-  if configured:
-    path = Path(configured).expanduser()
-    return path if path.is_absolute() else root / path
-  normal = root / "opencode.db"
-  legacy = root / "opencode-v2.db"
-  return legacy if not normal.is_file() and legacy.is_file() else normal
-
-
-def add_opencode_row(stats, message_id, session_id, entry, row_type, created, seen):
-  # The original `message` table keeps the provider and model at the top
-  # level; V2's `session_message` nests them under `model` and keeps the role
-  # in its `type` column, with a compaction's tokens spent like a reply's.
-  if not isinstance(entry, dict) or (entry.get("role") or row_type) not in ("assistant", "compaction"):
-    return
-  nested = obj(entry.get("model"))
-  if str(entry.get("providerID") or nested.get("providerID") or "") != PROVIDER:
-    return
-  tokens = obj(entry.get("tokens"))
-  cache = obj(tokens.get("cache"))
-  input_tokens = number(tokens.get("input"))
-  # opencode keeps thinking tokens out of output; both are generated.
-  output_tokens = number(tokens.get("output")) + number(tokens.get("reasoning"))
-  cache_read = number(cache.get("read"))
-  cache_write = number(cache.get("write"))
-  if not (input_tokens or output_tokens or cache_read or cache_write):
-    return
-  # A message migrated into both stores counts once.
-  if message_id in seen:
-    return
-  seen.add(message_id)
-  # The message's own time, else the row's: none at all is today's, and an
-  # untrusted one, zero included, skips only this row.
-  stamp = obj(entry.get("time")).get("created")
-  day = source_day(created if stamp is None else stamp)
-  if day is None:
-    return
-  model = entry.get("modelID") or nested.get("id") or nested.get("modelID")
-  stats.add("opencode:" + str(session_id), day, model_name(model), input_tokens, output_tokens, cache_read, cache_write)
-
-
-def scan_opencode_db(stats):
-  """Add the devin rows from both of opencode's message stores, deduplicated
-  by message id. Returns whether the scan ran to completion."""
-  db = opencode_db()
-  if not db.is_file():
-    return True
-  try:
-    # Read-only: opencode may be writing right now.
-    conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
-  except sqlite3.Error:
-    return False
-  # The LIKE gate is pure acceleration; the Python filter stays the authority
-  # for the rows that reach it.
-  gate = "LIKE '%\"providerID\"%:%\"devin\"%'"
-  try:
-    conn.execute("PRAGMA query_only = ON")
-    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    seen = set()
-    # V2 first: a build that migrated keeps reading, and a message in both
-    # stores counts once.
-    columns = table_columns(conn, "session_message") if "session_message" in tables else set()
-    if {"id", "session_id", "type", "data"} <= columns:
-      created = "m.time_created" if "time_created" in columns else "NULL"
-      source = "session_message m"
-      fork_filter = ""
-      if "time_created" in columns and "session_v2" in tables and {"id", "fork_session_id", "time_created"} <= table_columns(conn, "session_v2"):
-        # A fork copies its source session's messages under new ids; only
-        # what came after the fork was spent in it.
-        source += " LEFT JOIN session_v2 s ON s.id = m.session_id"
-        fork_filter = " AND (s.fork_session_id IS NULL OR m.time_created >= s.time_created)"
-      for message_id, session_id, row_type, time_created, raw in conn.execute(
-        f"SELECT m.id, m.session_id, m.type, {created}, m.data FROM {source}"
-        f" WHERE m.type IN ('assistant', 'compaction') AND m.data {gate}" + fork_filter
-      ):
-        # One row that still fails must not take the scan down with it.
-        try:
-          add_opencode_row(stats, str(message_id), session_id, json.loads(raw), str(row_type or ""), time_created, seen)
-        except Exception:
-          continue
-    columns = table_columns(conn, "message") if "message" in tables else set()
-    if {"session_id", "data"} <= columns:
-      row_id = "id" if "id" in columns else "rowid"
-      for message_id, session_id, raw in conn.execute(
-        f"SELECT {row_id}, session_id, data FROM message"
-        f" WHERE data LIKE '%\"role\"%:%\"assistant\"%' AND data {gate}"
-      ):
-        try:
-          add_opencode_row(stats, str(message_id), session_id, json.loads(raw), "", None, seen)
-        except Exception:
-          continue
-  except sqlite3.Error as error:
-    # Transient lock, schema migration, corruption: the numbers stop here,
-    # incomplete.
-    print(f"omarchy-agent-usage-devin: {db}: {error}", file=sys.stderr)
-    return False
-  finally:
-    conn.close()
-  return True
+# pi, omp, and opencode name the provider alike, by its exact id.
+def billed_here(provider, model, entry):
+  return provider == PROVIDER
 
 
 # -------------------------------------------------------------- scan cache
 
 
-def scan_cache_paths():
-  digest = hashlib.sha1("\n".join([
-    str(Path.home()), str(data_dir()), str(data_home()), *map(str, pi_session_roots()), str(opencode_db()),
-  ]).encode("utf-8")).hexdigest()[:16]
-  root = cache_root()
-  return root / f"devin-scan-{digest}.json", root / f"devin-scan-{digest}.lock"
+def scan_sources():
+  return [Path.home(), data_dir(), data_home(), *pi_session_roots(), opencode_db()]
 
 
 def run_local_scans():
-  stats = Stats()
-  complete = scan_pi_sessions(stats)
+  stats = DevinStats()
+  pi_rows, complete = scan_pi_sessions(r'"provider"\s*:\s*"devin"', billed_here)
   for path in session_databases():
     complete = scan_devin_database(path, stats) and complete
-  complete = scan_opencode_db(stats) and complete
-  return stats.record(), complete
-
-
-def read_cached_stats(cache_file, max_age):
-  cached = read_fresh_json(cache_file, max_age)
-  if not isinstance(cached, dict) or cached.get("schemaVersion") != 2:
-    return None
-  # today* fields only mean "today" on the day they were scanned.
-  if cached.get("scanDate") != datetime.now().strftime("%Y-%m-%d"):
-    return None
-  stats = cached.get("stats")
-  return stats if isinstance(stats, dict) and set(Stats().record()) <= set(stats) else None
-
-
-def cached_local_stats(max_age):
-  """Local stats, with the cache as a pure optimization: any cache-layer
-  failure degrades to a direct scan and a warning on stderr."""
-  try:
-    cache_file, lock_file = scan_cache_paths()
-    cached = read_cached_stats(cache_file, max_age)
-    if cached is not None:
-      return cached
-    with lock_file.open("w") as lock:
-      fcntl.flock(lock, fcntl.LOCK_EX)
-      cached = read_cached_stats(cache_file, max_age)
-      if cached is not None:
-        return cached
-      stats, complete = run_local_scans()
-      # A scan that couldn't read everything serves this run, but caching it
-      # would hide the missing usage from every reader until it expires.
-      if complete:
-        write_json(cache_file, {"schemaVersion": 2, "scanDate": datetime.now().strftime("%Y-%m-%d"), "stats": stats})
-      return stats
-  except Exception as exc:
-    print(f"omarchy-agent-usage-devin: cache unavailable ({exc}); scanning directly", file=sys.stderr)
-    return run_local_scans()[0]
+  # The closing quote makes the database's prefilter match the whole id.
+  db_rows, db_complete = scan_opencode([PROVIDER + '"'], billed_here)
+  for row in pi_rows + db_rows:
+    stats.add_row(row, model_name(row.model))
+  return stats.snapshot(), complete and db_complete
 
 
 # ------------------------------------------------------------------ quota
@@ -804,7 +367,8 @@ def parse_user_status(payload):
 
 
 def user_status_dir():
-  return Path(os.environ.get("DEVIN_CACHE_DIR") or (xdg_cache_home() / "devin" / "cli"))
+  xdg_cache_home = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+  return Path(os.environ.get("DEVIN_CACHE_DIR") or (xdg_cache_home / "devin" / "cli"))
 
 
 # The CLI rewrites credentials.toml on sign-in, so a status fetched before
@@ -832,7 +396,7 @@ def sign_in_state(signed_in_at):
   this collector served under the previous sign-in is known to be the old
   account's, so it is remembered and kept out of that gap.
   """
-  state = obj(read_json(sign_in_state_path()))
+  state = read_json(sign_in_state_path())
   current = [name for name in state.get("current") or [] if isinstance(name, str)]
   previous = [name for name in state.get("previous") or [] if isinstance(name, str)]
   if state.get("signedInAt") != signed_in_at:
@@ -847,27 +411,7 @@ def remember_served(state, name):
   try:
     write_json(sign_in_state_path(), state)
   except OSError as exc:
-    print(f"omarchy-agent-usage-devin: could not write the sign-in state ({exc})", file=sys.stderr)
-
-
-def limit_window_open(entry, now):
-  raw = str(entry.get("resetsAt") or "")
-  if raw == "":
-    return True
-  try:
-    resets_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-  except ValueError:
-    return True
-  if resets_at.tzinfo is None:
-    resets_at = resets_at.replace(tzinfo=timezone.utc)
-  return resets_at > now
-
-
-# A window whose reset has passed is untouched, not unknown: it comes back at
-# zero with no reset time until the CLI fetches the next one.
-def usable_limits(entries):
-  now = datetime.now(timezone.utc)
-  return [entry if limit_window_open(entry, now) else dict(entry, percent=0.0, resetsAt="") for entry in entries]
+    warn(f"could not write the sign-in state ({exc})")
 
 
 def read_quota():
@@ -889,7 +433,7 @@ def read_quota():
     paths = []
   for path in paths:
     cache = read_json(path)
-    if not isinstance(cache, dict) or not isinstance(cache.get("payload"), str):
+    if not isinstance(cache.get("payload"), str):
       continue
     fetched_at = epoch_seconds(cache.get("fetched_at_secs"))
     if fetched_at is None or (cutoff is not None and fetched_at < cutoff):
@@ -912,7 +456,9 @@ def read_quota():
   age = time.time() - fetched_at
   return {
     "tierLabel": quota["tierLabel"],
-    "limits": usable_limits(quota["limits"]),
+    # A window whose reset has passed is untouched, not unknown: it comes back
+    # at zero with no reset time until the CLI fetches the next one.
+    "limits": open_limits(quota["limits"]),
     "limitsFetchedAt": round(fetched_at * 1000),
     "limitsStale": not 0 <= age < LIMITS_CURRENT_ENOUGH_SECONDS,
   }
@@ -926,20 +472,7 @@ def build_record(stats):
   signed_in = credentials_path().is_file()
   in_use = number(stats.get("totalPrompts")) > 0 or bool(stats.get("modelUsage"))
 
-  record = {
-    "schemaVersion": 1,
-    "id": AGENT_ID,
-    "name": AGENT_NAME,
-    "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "ready": in_use or signed_in or bool(quota and quota["limits"]),
-    "hasLocalStats": True,
-    "tierLabel": "",
-    "usageStatusText": "",
-    "authHelpText": "",
-    "limits": [],
-    "limitsStale": False,
-    "limitsFetchedAt": 0,
-  }
+  record = base_record(AGENT_ID, AGENT_NAME, ready=in_use or signed_in or bool(quota and quota["limits"]), hasLocalStats=True)
   if quota:
     record.update(quota)
   elif signed_in:
@@ -958,8 +491,8 @@ def main():
   parser.add_argument("--limits-only", action="store_true", help="reuse a recent local scan")
   args = parser.parse_args()
 
-  max_age = 0 if args.force else (LIMITS_ONLY_REUSE_SECONDS if args.limits_only else SCAN_REUSE_SECONDS)
-  print(json.dumps(build_record(cached_local_stats(max_age)), separators=(",", ":"), sort_keys=True))
+  stats = cached_scan(AGENT_ID, scan_sources(), scan_max_age(args.force, args.limits_only), run_local_scans)
+  emit(build_record(stats), sort_keys=True)
   return 0
 
 
