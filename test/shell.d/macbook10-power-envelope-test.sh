@@ -169,16 +169,26 @@ printf '\n' >>"$TEST_LOG"
 SH
 chmod +x "$norun/sudo"
 
-: >"$calls"
-PATH="$norun:$stub_bin:$ROOT/bin:$PATH" \
-  TEST_PRODUCT_NAME="MacBook10,1" \
-  TEST_LOG="$calls" \
-  OMARCHY_PATH="$ROOT" \
-  OMARCHY_MACBOOK10_ENVELOPE_UNIT="$unit" \
-  OMARCHY_MACBOOK10_ENVELOPE_SLEEP_HOOK="$hook" \
-  bash -euo pipefail "$migration"
+run_migration() {
+  : >"$calls"
+  PATH="$norun:$stub_bin:$ROOT/bin:$PATH" \
+    TEST_PRODUCT_NAME="MacBook10,1" \
+    TEST_LOG="$calls" \
+    OMARCHY_PATH="$ROOT" \
+    OMARCHY_MACBOOK10_ENVELOPE_UNIT="$unit" \
+    OMARCHY_MACBOOK10_ENVELOPE_SLEEP_HOOK="$hook" \
+    bash -euo pipefail "$migration"
+}
+
+rm -f "$unit" "$hook"
+run_migration
 grep -Fq $'systemctl\tenable\tomarchy-macbook10-power-envelope.service' "$calls" ||
   fail "the migration runs hardware setup" "$(cat "$calls")"
 grep -Fq "$packaged_bin" "$calls" ||
   fail "the migration applies the envelope on existing installs" "$(cat "$calls")"
 pass "the migration runs hardware setup and applies the envelope"
+
+: >"$unit"
+run_migration
+[[ ! -s $calls ]] || fail "the migration leaves an envelope another user installed alone" "$(cat "$calls")"
+pass "the migration leaves an envelope another user installed alone"
