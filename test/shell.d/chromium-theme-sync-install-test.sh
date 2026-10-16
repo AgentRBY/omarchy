@@ -40,14 +40,14 @@ printf '%s:%s\\n' "\${0##*/}" "$*" >>"$TEST_LOG"
 case \${0##*/} in
   omarchy-install-chromium-copy-url|omarchy-install-chromium-ytdlp|omarchy-install-chromium-theme-sync|omarchy-refresh-config)
     exec "$ROOT/bin/\${0##*/}" "$@" ;;
-  sudo|omarchy-pkg-add|omarchy-pkg-aur-add|omarchy-theme-set-browser|omarchy-install-chromium-google-account) exit 0 ;;
+  sudo|omarchy-pkg-add|omarchy-pkg-aur-add|omarchy-theme-set-browser|omarchy-install-chromium-google-account|omarchy-lifecycle-dispatch) exit 0 ;;
   *) exit 77 ;;
 esac
 `
 for (const name of ['sudo', 'omarchy-pkg-add', 'omarchy-pkg-aur-add', 'omarchy-theme-set-browser',
   'omarchy-install-chromium-copy-url', 'omarchy-install-chromium-ytdlp', 'omarchy-install-chromium-theme-sync',
   'omarchy-refresh-config', 'omarchy-install-chromium-google-account', 'omarchy-refresh-chromium',
-  'omarchy-restart-app', 'chromium', 'google-chrome-stable', 'brave', 'brave-origin', 'microsoft-edge-stable']) {
+  'omarchy-restart-app', 'omarchy-lifecycle-dispatch', 'chromium', 'google-chrome-stable', 'brave', 'brave-origin', 'microsoft-edge-stable']) {
   fs.writeFileSync(path.join(mockBin, name), stub, { mode: 0o755 })
 }
 
