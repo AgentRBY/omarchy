@@ -306,6 +306,25 @@ latest_records=$(cached_records)
   fail "the cache keeps the four newest and tells keymap names apart past a colon" "$latest_records"
 pass "the cache keeps the four newest and tells keymap names apart past a colon"
 
+# hyprctl binds reports a Lua bind without its command, so a command edited while
+# on another layout must not come back from the cache built before the edit.
+lua_terminal_bind() {
+  printf 'hl.bind("SUPER + RETURN", hl.dsp.exec_cmd("%s"), { description = "Terminal" })\n' "$1" >"$home/.config/hypr/hyprland.lua"
+}
+
+lua_terminal_bind old-terminal
+printf '\t\t\tactive keymap: English (US)\n' >"$tmpdir/devices"
+keybindings >/dev/null
+printf '\t\t\tactive keymap: German\n' >"$tmpdir/devices"
+keybindings >/dev/null
+lua_terminal_bind new-terminal
+printf '\t\t\tactive keymap: English (US)\n' >"$tmpdir/devices"
+keybindings >/dev/null
+newest_records=$(ls -t "$tmpdir"/cache/omarchy/keybindings-*.records | head -n 1)
+grep -qP '→ Terminal\texec\tnew-terminal$' "$newest_records" ||
+  fail "a Lua command edited on another layout is the one the menu runs on the way back" "$(cat "$newest_records")"
+pass "a Lua command edited on another layout is the one the menu runs on the way back"
+
 # Rows show their description in the Omarchy language: a numbered one
 # matches its %1 pattern, an unknown one stays as written, and the chord
 # column and what the row runs never change.
