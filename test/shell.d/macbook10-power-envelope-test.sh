@@ -190,5 +190,12 @@ pass "the migration runs hardware setup and applies the envelope"
 
 : >"$unit"
 run_migration
+grep -Fq "$packaged_bin" "$calls" ||
+  fail "the migration finishes a setup that stopped after writing the unit" "$(cat "$calls")"
+pass "the migration finishes a setup that stopped after writing the unit"
+
+: >"$hook"
+chmod 755 "$hook"
+run_migration
 [[ ! -s $calls ]] || fail "the migration leaves an envelope another user installed alone" "$(cat "$calls")"
 pass "the migration leaves an envelope another user installed alone"
