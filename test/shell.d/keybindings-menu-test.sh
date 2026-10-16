@@ -317,12 +317,13 @@ printf '\t\t\tactive keymap: English (US)\n' >"$tmpdir/devices"
 keybindings >/dev/null
 printf '\t\t\tactive keymap: German\n' >"$tmpdir/devices"
 keybindings >/dev/null
-lua_terminal_bind new-terminal
+lua_terminal_bind edited-terminal
+before_edit=$(ls "$tmpdir"/cache/omarchy/keybindings-*.records)
 printf '\t\t\tactive keymap: English (US)\n' >"$tmpdir/devices"
 keybindings >/dev/null
-newest_records=$(ls -t "$tmpdir"/cache/omarchy/keybindings-*.records | head -n 1)
-grep -qP '→ Terminal\texec\tnew-terminal$' "$newest_records" ||
-  fail "a Lua command edited on another layout is the one the menu runs on the way back" "$(cat "$newest_records")"
+edited_records=$(comm -13 <(sort <<<"$before_edit") <(ls "$tmpdir"/cache/omarchy/keybindings-*.records | sort))
+[[ -n $edited_records ]] && grep -qP '→ Terminal\texec\tedited-terminal$' "$edited_records" ||
+  fail "a Lua command edited on another layout is the one the menu runs on the way back" "$(cached_records)"
 pass "a Lua command edited on another layout is the one the menu runs on the way back"
 
 # Rows show their description in the Omarchy language: a numbered one
