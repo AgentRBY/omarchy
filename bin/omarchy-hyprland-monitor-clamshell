@@ -71,8 +71,9 @@ lua_scalar() {
 monitor_rules() {
   [[ -f $MONITOR_LUA ]] || return 0
 
-  # Comments go, and a long string, of any level, becomes an empty one, so the
-  # rule scan below needs to know only about quoted strings.
+  # Comments go, a long string of any level becomes an empty one, and a quoted
+  # string continued onto later lines is cut at its first, so the rule scan
+  # below needs to know only about quoted strings that close on their own line.
   awk '
     function long_bracket(text) {
       return match(text, /^\[=*\[/) ? RLENGTH : 0
@@ -93,8 +94,9 @@ monitor_rules() {
 
         c = substr(line, i, 1)
         if (quote != "") {
-          if (c == "\\") { out = out c; c = substr(line, ++i, 1) }
-          else if (c == quote) quote = ""
+          if (c == "\\") c = i < length(line) ? c substr(line, ++i, 1) : ""
+          else if (c == quote) { quote = ""; if (spilled) { spilled = 0; i++; continue } }
+          if (spilled) { i++; continue }
         } else if (c == "\"" || c == "\047") {
           quote = c
         } else if (substr(line, i, 2) == "--") {
@@ -112,7 +114,7 @@ monitor_rules() {
         out = out c
         i++
       }
-      quote = ""
+      if (quote != "" && !spilled) { out = out quote; spilled = 1 }
       print out
     }' "$MONITOR_LUA" | awk '
     # A rule starts a statement and ends where its parentheses balance, counting
