@@ -63,6 +63,8 @@ trap 'if [[ ${FUNCNAME[0]:-} == "$PROMPT_FN" ]]; then printf "returned\n" >>"$MA
 
 printf 'keyboard=%s\n' "${keyboard:-}"
 printf 'keyboard_label=%s\n' "${keyboard_label:-}"
+printf 'keyboard_input_method=%s\n' "${keyboard_input_method:-}"
+printf 'keyboard_xkb_layout=%s\n' "${keyboard_xkb_layout:-}"
 printf 'username=%s\n' "${username:-}"
 printf 'password=%s\n' "${password:-}"
 printf 'password_confirmation=%s\n' "${password_confirmation:-}"
@@ -140,6 +142,22 @@ for selection in 'French|fr-latin1' 'French (Switzerland)|fr_CH-latin1'; do
   [[ $(field keyboard) == "$keymap" ]] || fail "$label loads the console map that types its accented letters"
 done
 pass "French takes the latin1 console maps that type its accented letters"
+
+for selection in 'Japanese|jp106|mozc|' 'Japanese (US keyboard)|us|mozc|' 'Korean|us|hangul|kr:kr104' 'Lao|us|none|la' 'Chinese (Simplified, Pinyin)|us|pinyin|' 'Taiwan (Zhuyin)|us|chewing|' 'Hong Kong (Cangjie)|us|cangjie5|'; do
+  IFS='|' read -r label keymap method layout <<< "$selection"
+  run_prompt omarchy_prompt_keyboard "0:$label"
+  assert_status 0 "$label can be selected at install"
+  [[ $(field keyboard) == "$keymap" && $(field keyboard_input_method) == "$method" && $(field keyboard_xkb_layout) == "$layout" ]] ||
+    fail "$label carries a real console keymap and a separate input preference"
+done
+pass "language keyboard choices carry their keymap, input method, and desktop override"
+
+keyboard_input_method=hangul keyboard_xkb_layout=kr omarchy_persist_input_selection "$tmp_dir/target"
+[[ $(<"$tmp_dir/target/etc/omarchy/input-method") == $'INPUT_METHOD=hangul\nXKB_LAYOUT=kr' ]] || fail "first-boot setup persists the selection for user finalization"
+keyboard_input_method=hangul keyboard_xkb_layout=kr:kr104 omarchy_persist_input_selection "$tmp_dir/target"
+[[ $(<"$tmp_dir/target/etc/omarchy/input-method") == $'INPUT_METHOD=hangul\nXKB_LAYOUT=kr:kr104' ]] || fail "first-boot setup persists the Korean Right Alt variant"
+keyboard_input_method=hangul keyboard_xkb_layout=kr:dvorak omarchy_persist_input_selection "$tmp_dir/target" && fail "an unknown desktop variant is refused"
+pass "first-boot setup persists the selection for user finalization"
 
 run_prompt omarchy_prompt_keyboard "1:"
 assert_status "$OMARCHY_FORM_BACK" "keyboard prompt reports Esc as back"
