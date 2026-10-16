@@ -133,6 +133,14 @@ assert_status 0 "keyboard prompt succeeds"
 grep -qF -- '--selected English (US)' "$GUM_ARGS" || fail "keyboard prompt preselects English (US)"
 pass "keyboard prompt maps the chosen label to its keymap"
 
+for selection in 'French|fr-latin1' 'French (Switzerland)|fr_CH-latin1'; do
+  IFS='|' read -r label keymap <<< "$selection"
+  run_prompt omarchy_prompt_keyboard "0:$label"
+  assert_status 0 "$label can be selected at install"
+  [[ $(field keyboard) == "$keymap" ]] || fail "$label loads the console map that types its accented letters"
+done
+pass "French takes the latin1 console maps that type its accented letters"
+
 run_prompt omarchy_prompt_keyboard "1:"
 assert_status "$OMARCHY_FORM_BACK" "keyboard prompt reports Esc as back"
 assert_returned "keyboard prompt survives Esc under set -e"
