@@ -6,6 +6,7 @@
 
 no_osd=0
 monitor=""
+panel_without_ddc=""
 
 while (( $# > 0 )); do
   case "$1" in
@@ -39,17 +40,46 @@ use_apple_display() {
   omarchy-hyprland-monitor-focused-apple "$monitor"
 }
 
+use_ddc_display() {
+  [[ -n $monitor ]] && ! monitor_is_internal && monitor_may_have_ddc && ! monitor_is_panel_without_ddc
+}
+
+# A platform whose display driver registers no DDC channel says so in its
+# displays.conf (see docs/file-layout.md): there a probe finds only unrelated
+# I2C buses, slowly, so only a connector with a ddc node is probed. Everywhere
+# else every external monitor is.
+monitor_may_have_ddc() {
+  local displays_conf=/usr/share/omarchy-platform/displays.conf directive argument
+  [[ -r $displays_conf ]] || return 0
+
+  while IFS=$' \t\r' read -r directive argument || [[ -n $directive ]]; do
+    if [[ $directive == "ddc-require-connector-ddc" && -z $argument ]]; then
+      compgen -G "/sys/class/drm/card*-$monitor/ddc" >/dev/null
+      return
+    fi
+  done <"$displays_conf"
+  return 0
+}
+
 # An all-in-one wires its built-in panel to a DP connector, which DDC/CI does not answer.
 # When that is the only display and the kernel has a backlight, take the backlight to be its own.
 monitor_is_panel_without_ddc() {
-  [[ $monitor == DP-* ]] &&
-    hyprctl monitors all -j 2>/dev/null | jq -e --arg monitor "$monitor" 'length == 1 and .[0].name == $monitor' >/dev/null 2>&1 &&
-    omarchy-hw-display >/dev/null 2>&1 &&
-    ! omarchy-brightness-display-ddc "$monitor" >/dev/null 2>&1
+  if [[ -z $panel_without_ddc ]]; then
+    panel_without_ddc=0
+    [[ $monitor == DP-* ]] && monitor_may_have_ddc &&
+      hyprctl monitors all -j 2>/dev/null | jq -e --arg monitor "$monitor" 'length == 1 and .[0].name == $monitor' >/dev/null 2>&1 &&
+      omarchy-hw-display >/dev/null 2>&1 &&
+      ! omarchy-brightness-display-ddc "$monitor" >/dev/null 2>&1 &&
+      panel_without_ddc=1
+  fi
+
+  (( panel_without_ddc ))
 }
 
-use_ddc_display() {
-  [[ -n $monitor ]] && ! monitor_is_internal && ! monitor_is_panel_without_ddc
+# The kernel backlight is the built-in panel's, so an external monitor without
+# DDC fails rather than dimming the panel.
+use_backlight_display() {
+  [[ -z $monitor ]] || monitor_is_internal || monitor_is_panel_without_ddc
 }
 
 if (( $# == 0 )); then
@@ -59,6 +89,8 @@ if (( $# == 0 )); then
   elif use_ddc_display; then
     omarchy-brightness-display-ddc "$monitor"
     exit
+  elif ! use_backlight_display; then
+    exit 1
   fi
 
   device="$(omarchy-hw-display)" || exit 1
@@ -94,6 +126,8 @@ if use_apple_display; then
 elif use_ddc_display; then
   brightness="$(omarchy-brightness-display-ddc "$monitor" "$step")" || exit 1
   (( no_osd )) || omarchy-osd -i brightness -p "$brightness"
+elif ! use_backlight_display; then
+  exit 1
 else
   # Current device highlighted
   device="$(omarchy-hw-display)" || exit 1
