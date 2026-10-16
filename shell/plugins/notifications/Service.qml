@@ -1012,7 +1012,18 @@ Item {
     return Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
   }
 
-  onPopupsShownChanged: popupScreen = popupsShown ? focusedScreen() : null
+  onPopupsShownChanged: {
+    if (popupsShown) {
+      if (!popupScreen) popupScreen = focusedScreen()
+    } else {
+      // A replacement empties the stack for a moment before refilling it.
+      Qt.callLater(releasePopupScreen)
+    }
+  }
+
+  function releasePopupScreen() {
+    if (!popupsShown) popupScreen = null
+  }
 
   Connections {
     target: Quickshell
@@ -1086,7 +1097,8 @@ Item {
 
           readonly property real lifetime: service.durationFor(cardSlot.urgency, cardSlot.expireTimeout)
           property real remainingLifetime: 1.0
-          readonly property bool ticking: cardSlot.lifetime > 0 && !card.hovered
+          // No output means nobody can read it, so the clock waits for one.
+          readonly property bool ticking: !!service.popupScreen && cardSlot.lifetime > 0 && !card.hovered
 
           // A client updating this notification in place rewrites the row
           // under the card (see refreshPopup). New text deserves a full look,
