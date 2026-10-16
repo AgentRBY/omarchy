@@ -225,7 +225,8 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1, tran
 LUA
 }
 
-# A panel rule this cannot read, by description or wrapped, may name no transform.
+# A panel rule this cannot read, by description, wrapped or quoted otherwise, may
+# name no transform.
 write_unreadable_internal_rule_config() {
   cat >"$monitor_lua" <<LUA
 $1
@@ -445,7 +446,7 @@ OMARCHY_TEST_INTERNAL_DISABLED=true run_clamshell
 grep -F 'scale = 1.25 })' "$eval_log" >/dev/null || fail "clamshell recovery leaves the catch-all transform off a panel with its own rule"
 pass "clamshell recovery leaves the catch-all transform off a panel with its own rule"
 
-for rule in 'hl.monitor({ output = "desc:LG Display 0x0521", scale = 1.25 })' $'hl.monitor({\n  output = "eDP-1",\n  scale = 1.25,\n})' $'hl.monitor({\n  output =\n    "eDP-1",\n  scale = 1.25,\n})'; do
+for rule in 'hl.monitor({ output = "desc:LG Display 0x0521", scale = 1.25 })' $'hl.monitor({\n  output = "eDP-1",\n  scale = 1.25,\n})' $'hl.monitor({\n  output =\n    "eDP-1",\n  scale = 1.25,\n})' "hl.monitor({ output = 'eDP-1', scale = 1.25 })" 'hl.monitor({ output = [[eDP-1]], scale = 1.25 })'; do
   write_unreadable_internal_rule_config "$rule"
   : >"$eval_log"
   OMARCHY_TEST_INTERNAL_DISABLED=true run_clamshell

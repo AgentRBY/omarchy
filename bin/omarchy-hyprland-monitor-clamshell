@@ -166,10 +166,10 @@ read_monitor_position() {
 
 # A new panel rule without a transform resets it to 0, unrotating a panel the
 # catch-all rotated. Hyprland never mixes a panel's own rule with the catch-all,
-# and a desc: or wrapped rule may be the panel's own, so either keeps it out.
+# and any rule that may be the panel's own, however it is written, keeps it out.
 read_monitor_transform() {
   local transform
-  if monitor_rules | tr '\n' ' ' | grep -qE "output[[:space:]]*=[[:space:]]*\"($INTERNAL|desc:[^\"]*)\""; then
+  if monitor_rules | tr '\n' ' ' | grep -qE "output[[:space:]]*=[[:space:]]*([\"']|\[\[)($INTERNAL([\"']|\]\])|desc:)"; then
     transform=$(configured_internal_monitor_value transform)
   else
     transform=$(configured_monitor_value "" transform)
