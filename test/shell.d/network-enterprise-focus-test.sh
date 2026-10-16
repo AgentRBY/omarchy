@@ -20,9 +20,10 @@ const fs = require('fs')
 const [root, stage] = process.argv.slice(2)
 let source = fs.readFileSync(`${root}/shell/plugins/panels/network/Panel.qml`, 'utf8')
 // Replace only the singleton and expose the focused item in the disposable copy.
+// The content is built on first open, so focus is read through loadedContent.
 source = source.replace('import Quickshell.Networking', 'import Quickshell.Networking\nimport "../mocks"')
 source = source.replace(/\bNetworking\./g, 'NetworkMock.')
-source = source.replace('  id: root', '  id: root\n  readonly property var testFocus: keyCatcher.Window.activeFocusItem')
+source = source.replace('  id: root', '  id: root\n  readonly property var testFocus: panel.loadedContent ? panel.loadedContent.Window.activeFocusItem : null')
 fs.writeFileSync(`${stage}/network/Panel.qml`, source)
 JS
 printf '#!/bin/bash\nexit 0\n' > "$stage/bin/noop"
