@@ -445,7 +445,7 @@ OMARCHY_TEST_INTERNAL_DISABLED=true run_clamshell
 grep -F 'scale = 1.25 })' "$eval_log" >/dev/null || fail "clamshell recovery leaves the catch-all transform off a panel with its own rule"
 pass "clamshell recovery leaves the catch-all transform off a panel with its own rule"
 
-for rule in 'hl.monitor({ output = "desc:LG Display 0x0521", scale = 1.25 })' $'hl.monitor({\n  output = "eDP-1",\n  scale = 1.25,\n})'; do
+for rule in 'hl.monitor({ output = "desc:LG Display 0x0521", scale = 1.25 })' $'hl.monitor({\n  output = "eDP-1",\n  scale = 1.25,\n})' $'hl.monitor({\n  output =\n    "eDP-1",\n  scale = 1.25,\n})'; do
   write_unreadable_internal_rule_config "$rule"
   : >"$eval_log"
   OMARCHY_TEST_INTERNAL_DISABLED=true run_clamshell

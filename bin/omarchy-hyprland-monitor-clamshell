@@ -169,7 +169,7 @@ read_monitor_position() {
 # and a desc: or wrapped rule may be the panel's own, so either keeps it out.
 read_monitor_transform() {
   local transform
-  if monitor_rules | grep -qE "output[[:space:]]*=[[:space:]]*\"($INTERNAL|desc:[^\"]*)\""; then
+  if monitor_rules | tr '\n' ' ' | grep -qE "output[[:space:]]*=[[:space:]]*\"($INTERNAL|desc:[^\"]*)\""; then
     transform=$(configured_internal_monitor_value transform)
   else
     transform=$(configured_monitor_value "" transform)
