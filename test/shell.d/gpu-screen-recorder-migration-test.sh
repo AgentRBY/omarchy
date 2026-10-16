@@ -42,6 +42,10 @@ case "$1" in
     fi
     ;;
   -S)
+    if [[ ${PACKAGE_UPGRADE_ERROR:-} == "true" ]]; then
+      echo "error: failed to commit transaction (failed to retrieve some files)" >&2
+      exit 1
+    fi
     if [[ -f $PACKAGE_NAME_STATE && $(<"$PACKAGE_NAME_STATE") != "gpu-screen-recorder" && " $* " != *" --ask 4 "* ]]; then
       echo "error: unresolvable package conflicts detected" >&2
       exit 1
@@ -130,6 +134,18 @@ grep -qxF $'pacman\t-S\t--noconfirm\t--needed\tgpu-screen-recorder>=6.1.2' "$sud
 [[ $(<"$package_state") == "6.1.2-1" ]] ||
   fail "the migration installs the required recorder release" "$(<"$package_state")"
 pass "the migration upgrades an older recorder"
+
+for installed_name in gpu-screen-recorder gpu-screen-recorder-git; do
+  if PACKAGE_UPGRADE_ERROR=true run_migration "6.1.1-1" "6.1.2-1" "$installed_name"; then
+    fail "the migration accepts a failed upgrade of $installed_name"
+  fi
+  [[ -s $sudo_log ]] || fail "the migration never attempts to upgrade $installed_name"
+  grep -Fq "error: failed to commit transaction (failed to retrieve some files)" "$output" ||
+    fail "the migration does not report the failed transaction for $installed_name" "$(<"$output")"
+  [[ $(<"$package_name_state") == "$installed_name" && $(<"$package_state") == "6.1.1-1" ]] ||
+    fail "the failed transaction changes the installed $installed_name package"
+  pass "the migration exits nonzero when upgrading $installed_name fails"
+done
 
 if run_migration "6.1.1-1" "6.1.1-2"; then
   fail "the migration accepts a recorder that remains below v6.1.2"
