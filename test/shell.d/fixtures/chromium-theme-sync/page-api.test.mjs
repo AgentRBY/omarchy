@@ -4,20 +4,14 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const extension = new URL('../../../../default/chromium/extensions/theme-sync/', import.meta.url);
-const manifest = JSON.parse(readFileSync(new URL('manifest.json', extension), 'utf8'));
-const scripts = Object.fromEntries(['content.js', 'page-api.js'].map((name) =>
+const scripts = Object.fromEntries(['policy.js', 'content.js', 'page-api.js'].map(name =>
   [name, readFileSync(new URL(name, extension), 'utf8')]));
-const palette = {
-  type: 'palette', name: 'Tokyo Night', mode: 'dark',
-  colors: { background: '#1a1b26', bright_green: '#9ece6a', broken: 7 },
-};
-const flush = () => new Promise(setImmediate);
-// Objects built inside a vm context carry that realm's prototypes, which strict
-// deep equality rejects. A JSON round trip makes them comparable to literals.
-const plain = (value) => JSON.parse(JSON.stringify(value));
+const id = 'ppnnomfimbfcofidkfmghapellfbgklc';
+const palette = { type: 'palette', mode: 'dark', name: 'private name', colors: {
+  background: '#1a1b26', bright_green: '#9ece6a', broken: '#123456', api_token: 'synthetic-secret', accent: 'url(https://invalid.example/pixel)',
+} };
+const plain = value => JSON.parse(JSON.stringify(value));
 
-// Enough of CSSStyleDeclaration for both worlds: the isolated script sets and
-// removes custom properties, and the main-world API enumerates them by index.
 function styleDeclaration() {
   const values = new Map();
   const style = {
@@ -25,6 +19,7 @@ function styleDeclaration() {
     setProperty(name, value) { values.set(name, value); index(); },
     removeProperty(name) { values.delete(name); index(); },
     getPropertyValue(name) { return values.get(name) ?? ''; },
+    [Symbol.iterator]() { return values.keys(); },
   };
   function index() {
     for (const key of Object.keys(style)) if (/^\d+$/.test(key)) delete style[key];
@@ -33,112 +28,150 @@ function styleDeclaration() {
   return style;
 }
 
-function page({ stored = null } = {}) {
+function page({ noRoot = false, existingApi } = {}) {
   const document = new EventTarget();
-  document.documentElement = { style: styleDeclaration(), dataset: {} };
-  const window = {};
-  const runtimeMessages = [];
-  const listeners = [];
-  const globals = { Event, CustomEvent, document };
-  vm.runInNewContext(scripts['content.js'], {
-    ...globals,
-    chrome: {
-      storage: { local: { get: async () => (stored ? { palette: stored } : {}) } },
-      runtime: {
-        onMessage: { addListener: (listener) => listeners.push(listener) },
-        sendMessage: (message, callback) => {
-          runtimeMessages.push(plain(message));
-          callback(null);
-        },
+  const root = { style: styleDeclaration(), dataset: {} };
+  document.documentElement = noRoot ? null : root;
+  const window = existingApi ? { omarchy: existingApi } : {};
+  const requests = [], pending = [], listeners = [];
+  const globals = { Event, CustomEvent, document, URL };
+  const main = vm.createContext({ ...globals, window });
+  const isolated = vm.createContext({ ...globals, chrome: {
+    runtime: {
+      id,
+      onMessage: { addListener: listener => listeners.push(listener) },
+      sendMessage: (message, callback) => {
+        requests.push(plain(message));
+        if (message.type === 'omarchy-get-palette') pending.push(callback);
+        if (message.type === 'omarchy-enable-api') {
+          vm.runInContext(scripts['page-api.js'], main);
+          callback(true);
+        }
       },
     },
-  });
-  vm.runInNewContext(scripts['page-api.js'], { ...globals, window });
+  } });
+  vm.runInContext(scripts['policy.js'], isolated);
+  vm.runInContext(scripts['content.js'], isolated);
   return {
-    api: window.omarchy, document, runtimeMessages,
-    root: document.documentElement,
-    push: (message) => listeners.forEach((listener) => listener(message)),
+    window, document, root, requests, pending, main,
+    get api() { return window.omarchy; },
+    reply(value = palette, index = 0) { pending.splice(index, 1)[0](value); },
+    broadcast(sender = { id }) { listeners.forEach(listener => listener({ type: 'omarchy-palette', palette }, sender)); },
+    clear() { listeners.forEach(listener => listener({ type: 'omarchy-clear-palette' }, { id })); },
+    injectAgain() { vm.runInContext(scripts['policy.js'], isolated); vm.runInContext(scripts['content.js'], isolated); },
   };
 }
 
-test('a palette becomes custom properties, data attributes, an event, and window.omarchy reads', () => {
+test('unapproved documents receive no API, attributes, colors or page-to-worker bridge', () => {
   const p = page();
-  const seen = [];
-  const stop = p.api.onChange((colors) => seen.push(colors));
-  assert.equal(p.api.theme, null);
-  assert.equal(p.api.mode, null);
-  assert.deepEqual(plain(p.api.colors()), {});
+  p.root.style.setProperty('--omarchy-background', '#123456');
+  p.reply(null);
+  assert.equal(p.api, undefined);
+  assert.deepEqual(p.root.dataset, {});
+  assert.equal(p.root.style.getPropertyValue('--omarchy-background'), '#123456', 'does not erase a site-owned fallback');
+  vm.runInContext(scripts['page-api.js'], p.main);
+  assert.equal(p.api, undefined, 'main-world script itself also refuses an unapproved DOM');
+  for (const type of ['__omarchy_request', 'omarchy-get-palette']) {
+    p.document.dispatchEvent(new CustomEvent(type, { detail: JSON.stringify({ kind: 'install', name: 'unsafe' }) }));
+  }
+  assert.deepEqual(p.requests, [{ type: 'omarchy-get-palette' }]);
+});
 
-  p.push({ type: 'palette', palette });
-  assert.equal(p.root.style.getPropertyValue('--omarchy-background'), '#1a1b26');
-  assert.equal(p.root.style.getPropertyValue('--omarchy-bright-green'), '#9ece6a');
-  assert.equal(p.root.style.getPropertyValue('--omarchy-broken'), '', 'non-string values are skipped');
-  assert.equal(p.root.dataset.omarchyTheme, 'Tokyo Night');
-  assert.equal(p.root.dataset.omarchyMode, 'dark');
-  assert.equal(p.api.theme, 'Tokyo Night');
+test('authorized delivery exports only fixed validated colors and mode, never a theme name', () => {
+  const p = page();
+  p.root.dataset.omarchyTheme = 'stale private name';
+  p.reply();
+  assert.equal(p.api.theme, null);
   assert.equal(p.api.mode, 'dark');
+  assert.equal(p.root.dataset.omarchyTheme, undefined);
+  assert.equal(p.root.dataset.omarchySharing, 'true');
   assert.deepEqual(plain(p.api.colors()), { background: '#1a1b26', bright_green: '#9ece6a' });
   assert.equal(p.api.color('bright-green'), '#9ece6a');
-  assert.equal(p.api.color('bright_green'), '#9ece6a');
-  assert.equal(p.api.color('missing'), null);
+  for (const key of ['api_token', 'broken', 'accent', 'missing', '__proto__', 'toString', 'constructor']) {
+    assert.equal(p.api.color(key), null, key);
+  }
+  assert.ok(Object.isFrozen(p.api));
+  assert.equal(Object.getPrototypeOf(p.api.colors()), null);
+});
+
+test('theme changes preserve the API, remove vanished colors and notify frozen snapshots once', () => {
+  const p = page();
+  p.reply();
+  const api = p.api;
+  const seen = [];
+  const stop = api.onChange(value => seen.push(value));
+  p.broadcast();
+  p.reply({ type: 'palette', mode: 'light', colors: { accent: '#abcdef' } });
+  assert.equal(p.api, api);
+  assert.equal(p.api.mode, 'light');
+  assert.deepEqual(plain(p.api.colors()), { accent: '#abcdef' });
   assert.equal(seen.length, 1);
   assert.ok(Object.isFrozen(seen[0]));
-  assert.deepEqual(seen[0], p.api.colors());
-
   stop();
-  p.push({ type: 'palette', palette });
-  assert.equal(seen.length, 1, 'unsubscribed handlers stop firing');
+  p.broadcast();
+  p.reply(palette);
+  assert.equal(seen.length, 1);
 });
 
-test('a theme switch clears properties the new palette no longer has', () => {
+test('revocation removes API, attributes and colors and prevents delayed reads from republishing', () => {
   const p = page();
-  p.push({ type: 'palette', palette });
-  p.push({ type: 'palette', palette: { ...palette, name: 'Rose Pine', mode: 'light', colors: { accent: '#ebbcba' } } });
-  assert.deepEqual(plain(p.api.colors()), { accent: '#ebbcba' });
-  assert.equal(p.root.style.getPropertyValue('--omarchy-background'), '');
-  assert.equal(p.api.theme, 'Rose Pine');
-  assert.equal(p.api.mode, 'light');
-});
-
-test('a cached palette applies on a cold start before the worker answers', async () => {
-  const p = page({ stored: palette });
-  await flush();
-  assert.equal(p.api.theme, 'Tokyo Night');
-  assert.equal(p.api.color('background'), '#1a1b26');
-  assert.deepEqual(p.runtimeMessages, [{ type: 'omarchy-get-palette' }]);
-});
-
-test('messages without colors and unrelated messages leave the page untouched', () => {
-  const p = page();
-  for (const message of [null, {}, { type: 'palette' }, { type: 'palette', palette: { name: 'x' } }, { type: 'theme-result', ok: true }]) {
-    p.push(message);
-  }
-  assert.deepEqual(plain(p.api.colors()), {});
+  p.reply();
+  p.broadcast();
+  p.clear();
+  p.reply(palette);
+  assert.equal(p.api, undefined);
+  assert.equal(p.root.style.length, 0);
   assert.deepEqual(p.root.dataset, {});
+  // An old broadcast does not itself authorize anything: it must ask again.
+  p.broadcast();
+  assert.equal(p.api, undefined);
+  p.reply(null);
+  assert.equal(p.api, undefined);
 });
 
-test('window.omarchy is a frozen read-only surface with no theme write path', () => {
+test('out-of-order snapshots cannot overwrite a newer palette', () => {
   const p = page();
-  assert.ok(Object.isFrozen(p.api));
-  assert.deepEqual(Object.keys(p.api).sort(), ['color', 'colors', 'mode', 'onChange', 'theme']);
-  for (const method of ['canSetTheme', 'setTheme', 'installTheme']) assert.equal(p.api[method], undefined);
-
-  // The standalone write bridge listened for this event. Nothing may answer it now.
-  let responses = 0;
-  p.document.addEventListener('__omarchy_response', () => responses++);
-  for (const request of [
-    { id: 'raw', kind: 'can-set' },
-    { id: 'raw', kind: 'set', name: 'Tokyo Night' },
-    { id: 'raw', kind: 'install', name: 'Unsafe', colors: palette.colors },
-  ]) {
-    p.document.dispatchEvent(new CustomEvent('__omarchy_request', { detail: JSON.stringify(request) }));
-  }
-  assert.equal(responses, 0);
-  assert.deepEqual(p.runtimeMessages, [{ type: 'omarchy-get-palette' }], 'the content script only ever asks for the palette');
+  p.broadcast();
+  p.reply({ type: 'palette', mode: 'light', colors: { accent: '#abcdef' } }, 1);
+  p.reply(palette);
+  assert.deepEqual(plain(p.api.colors()), { accent: '#abcdef' });
 });
 
-test('the manifest injects both worlds at document_start on every frame', () => {
-  const [isolated, main] = manifest.content_scripts;
-  assert.deepEqual(isolated, { matches: ['<all_urls>'], js: ['content.js'], run_at: 'document_start', all_frames: true });
-  assert.deepEqual(main, { matches: ['<all_urls>'], js: ['page-api.js'], run_at: 'document_start', all_frames: true, world: 'MAIN' });
+test('a document_start delivery waits for the root and a revocation cancels that pending update', () => {
+  const p = page({ noRoot: true });
+  p.reply();
+  assert.equal(p.api, undefined);
+  p.document.documentElement = p.root;
+  p.document.dispatchEvent(new Event('DOMContentLoaded'));
+  assert.equal(p.api.mode, 'dark');
+  const revoked = page({ noRoot: true });
+  revoked.reply();
+  revoked.clear();
+  revoked.document.documentElement = revoked.root;
+  revoked.document.dispatchEvent(new Event('DOMContentLoaded'));
+  assert.equal(revoked.api, undefined);
+});
+
+test('forged messages are ignored and repeated injection does not duplicate listeners', () => {
+  const p = page();
+  p.broadcast({ id: 'another-extension' });
+  p.broadcast({ id, tab: { id: 123 } });
+  assert.equal(p.pending.length, 1);
+  p.injectAgain();
+  assert.equal(p.pending.length, 1);
+  p.reply();
+  p.broadcast();
+  assert.equal(p.pending.length, 1);
+});
+
+test('the API has no theme write methods and does not replace a site-owned window.omarchy', () => {
+  const p = page();
+  p.reply();
+  assert.deepEqual(Object.keys(p.api).sort(), ['color', 'colors', 'mode', 'onChange', 'theme']);
+  for (const method of ['setTheme', 'installTheme', 'canSetTheme']) assert.equal(p.api[method], undefined);
+  const own = { site: true };
+  const existing = page({ existingApi: own });
+  existing.reply();
+  existing.clear();
+  assert.equal(existing.api, own);
 });

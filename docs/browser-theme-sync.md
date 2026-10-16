@@ -1,44 +1,66 @@
 # Browser Theme Sync
 
-Omarchy Theme Sync exposes the current desktop palette to websites through CSS variables and `window.omarchy`. Websites choose whether to use these values; the extension does not automatically restyle every site or change Chromium's toolbar theme. The extension is read-only. A page can observe the palette, but it cannot set or install desktop themes.
+Omarchy Theme Sync shares desktop styling colors with websites through CSS variables and `window.omarchy`. Sharing starts **off for every site**. A browser-toolbar gesture approves an exact HTTP(S) origin; websites cannot request or grant themselves access. The extension is read-only: pages cannot switch or install desktop themes.
 
-The runtime and regression fixtures are adapted from [omacom/omarchy-theme-sync](https://github.com/omacom/omarchy-theme-sync). The bundled copy keeps that project's palette read path and omits its `setTheme` and `installTheme` write API. The square icon is an [official Omarchy brand asset](https://omarchy.org/brand), not a grant of trademark rights. No private signing key is included or required.
+The integration was adapted from [omacom/omarchy-theme-sync](https://github.com/omacom/omarchy-theme-sync). The bundled version has its own per-site read policy and bounded, fixed-schema host; it does not include the standalone write API. The square icon is an [official Omarchy brand asset](https://omarchy.org/brand), not a grant of trademark rights. No private signing key is included or required.
 
-## How It Works
+## Approving and Stopping Sharing
+
+1. Open a website, then click **Omarchy Theme Sync** in Chromium's extensions menu. Pin its toolbar icon if desired.
+2. Accept Chromium's site-permission prompt. Only that exact origin receives colors; the toolbar shows **ON** when a fresh palette is delivered.
+3. Click the icon again to stop sharing with that origin. Right-click the icon and choose **Stop sharing on all sites** to clear every approval.
+
+An origin includes its scheme, hostname, and port. Approving `https://example.com` does not approve `http://example.com`, a subdomain, or another port. Chromium's underlying host grants span ports, but the worker separately checks exact-origin approval for every read and broadcast. Removing a browser host grant also removes affected approvals. Installer, migration, and refresh commands never create site approvals or reset a user's revocation.
+
+Neither same-origin nor cross-origin subframes are injected or addressed directly. Same-origin frames can still inspect an approved parent's DOM through normal browser rules, and third-party scripts executing inside an approved top-level page can read that page's palette. File URLs, browser-internal pages, and incognito documents are never approved, even if the browser's extension settings permit file or incognito access. Exact colors remain a fingerprinting signal to approved sites; this is consent and data minimization, not anonymity.
+
+No identifying page API, CSS properties, or attributes are installed on unapproved documents. Revocation clears published properties and attributes and removes the extension-owned `window.omarchy`. Already disclosed data cannot be withdrawn from a website's own memory or servers. Reload pages after an extension update or manual reload to discard old extension contexts and any old DOM state.
+
+## Architecture and Trust Boundaries
 
 ```text
-Omarchy current theme
-  -> native helper watches current state
-  -> extension service worker caches and broadcasts the palette
-  -> content scripts write CSS variables and attributes
-  -> websites read the DOM or window.omarchy
+Current desktop palette
+  -> bounded TOML parser and inotify event loop
+  -> native messaging port
+  -> worker's fresh in-memory palette
+  -> exact-origin and top-frame authorization
+  -> isolated script writes validated colors and mode
+  -> approved page reads CSS or window.omarchy
 ```
 
-`bin/omarchy-browser-theme-host` watches `~/.local/state/omarchy/current/`, including replacement of the `theme` directory. It sends length-prefixed JSON through Chromium native messaging. The helper reads the theme state and runs no Omarchy commands. Every well-formed request it receives is a resync, and the reply is the same palette message.
+`bin/omarchy-browser-theme-host` executes `default/chromium/theme-sync-host.py` through the system Python. One event loop owns native stdin, stdout, and Linux inotify descriptors. It watches both the current directory and active theme directory, including directory swaps, direct palette edits, and `light.mode` changes. Directory names containing spaces do not require text parsing. The host creates the state directory if absent, but otherwise writes no files, starts no child processes, and needs no lock file or shared `/tmp` fallback. EOF and signals close its descriptors. A lost or overflowed watch disconnects rather than presenting a permanently stale live connection.
 
-The isolated content script receives palette messages and writes properties on `<html>`. A main-world script exposes `window.omarchy`, which reads those live properties. Nothing flows from the page back to the worker or the helper.
+The host accepts only bounded JSON-object frames, treats all well-formed requests as read-only resyncs, and never dispatches theme commands. Request and response frames are capped at 1 MiB; palette source readback is capped at 64 KiB. Malformed or oversized TOML produces no colors. Only known, top-level styling fields containing six-digit hex colors are exported, normalized to lowercase. Nested tables, arbitrary custom keys, CSS expressions, URLs, theme names, and other metadata are not exported.
 
-The extension has a stable public manifest key and ID, `ppnnomfimbfcofidkfmghapellfbgklc`. Native manifests permit only that extension origin and use the name `com.omarchy.theme`. The bundled worker is `background-1.js`; version its filename when changing the bundled worker so an older registered service worker cannot hide the update.
+Mode resolution follows `omarchy-theme-color`: valid `mode`, valid legacy `theme_type`, a sibling `light.mode`, background RGB sum greater than 382, then dark. Supported legacy short names and ANSI color entries map into the fixed semantic color schema. The mode is always `light` or `dark`.
 
-## Installation and Upgrades
+The extension ID remains `ppnnomfimbfcofidkfmghapellfbgklc`, and native registration permits only that extension origin under `com.omarchy.theme`. The worker is `background-2.js`; version its filename when changing the bundled worker so an older registered worker cannot hide an update.
 
-- Fresh user provisioning registers the helper through `install/user/chromium.sh`; this does not depend on pending migrations or an existing Chromium profile.
-- The default Chromium flags include `default/chromium/extensions/theme-sync`. Runtime setup uses the selected `OMARCHY_PATH` for source checkouts and packaged installs.
-- An upgrade migration invokes `omarchy-install-chromium-theme-sync`. It preserves custom flags, unrelated extensions, symlinked dotfiles, and an unterminated final line. It does not run a destructive refresh or restart the browser.
-- Later browser installation and explicit Chromium refresh also register the helper. Branded Chromium browsers still need to support unpacked extension loading; native registration alone does not bypass their restrictions.
-- Updating the existing runtime/settings packages supplies these files through their normal `bin/`, `default/`, and `config/` packaging rules. No separate theme-sync package, repository clone, system daemon, root policy, or new sudo permission is needed.
+### Browser Permissions
 
-Restart the browser after installation or migration. If manually reloading the extension, reload open pages too so their content scripts reconnect.
+- `nativeMessaging` opens the read-only native port.
+- `storage` persists only approved origins. Local storage is restricted to trusted extension contexts, not content scripts. Old disk-cached palettes are removed on startup.
+- `activeTab` supplies the clicked tab's URL during the browser-toolbar gesture.
+- `scripting` registers isolated, top-frame scripts for approved hosts and injects the page API into an authorized document ID. Binding injection to a document prevents a navigation from reusing another document's authorization.
+- `alarms` provides a 30-second reconnect retry that survives MV3 worker suspension. The alarm is removed after a fresh native palette arrives or all sharing is stopped.
+- `contextMenus` supplies the browser-owned stop-everywhere action.
+- Optional HTTP(S) host permissions are requested only through the toolbar gesture. There are no required host grants, static all-site content scripts, external messaging API, or network requests.
 
-The installer replaces standalone entries only when their readable manifest public key identifies the same extension. It also handles the exact packaged theme-sync path when selecting a source checkout. It does not delete standalone files or infer identity from directory/display names. Missing or malformed manifests are preserved for manual cleanup. Multiple `--load-extension` directives retain Chromium's last-directive-wins behavior; earlier inactive lists are not re-enabled.
+Authorization is enforced independently of script match patterns. Cached reads, native broadcasts, and main-world injection all require the same exact-origin, top-frame, non-incognito policy. Broadcast notifications cause an authorized fresh read; queued notifications cannot revive access after revocation. Palette state exists only in worker memory while the native port is live and is cleared from open pages immediately when it disconnects. A cold worker or unavailable host never supplies an old disk snapshot. Nothing from page events or `postMessage` is forwarded to the worker or host.
 
-Flags are parsed with GLib through the already-shipped system Python/PyGObject packages, matching Chromium's launcher rather than interpreting each line as one argument. The merger preserves unrelated argument text and comments, quotes the updated extension argument, and validates the resulting argv. It never sources or evaluates flags. Malformed syntax fails without rewriting the flags file.
-
-Manually loaded standalone copies may need removal in the browser's extension manager. Do not run the standalone uninstaller after takeover: it can remove the now-bundled `com.omarchy.theme` registration. The bundled installer does not rewrite browser Preferences or Secure Preferences.
+The browser, installed Omarchy code, local filesystem, and user-controlled extension settings remain trusted. A manifest public key identifies an unpacked extension; it is not protection against another process already running as the same OS user. Adding a website-to-desktop write path would introduce a new trust boundary and requires a separate review.
 
 ## CSS API
 
-Every valid flat key in the current `colors.toml` is exposed as `--omarchy-<key>`, with underscores changed to hyphens. A key such as `bright_green` becomes `--omarchy-bright-green`. Values update in place when the palette changes, and removed keys are cleared.
+Approved pages receive these known color properties when their source values are valid:
+
+- `accent`, `background`, `dark_background`, `darker_background`, `lighter_background`
+- `foreground`, `dark_foreground`, `light_foreground`, `bright_foreground`, `cursor`, `muted`
+- `selection`, `selection_background`, `selection_foreground`
+- `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `orange`, `brown`
+- `bright_red`, `bright_green`, `bright_yellow`, `bright_blue`, `bright_magenta`, `bright_cyan`
+
+Underscores become hyphens: `bright_green` is exposed as `--omarchy-bright-green`. Removed keys are cleared. Non-hex custom values are intentionally not exported; sites should always retain fallbacks.
 
 ```css
 .card {
@@ -52,51 +74,63 @@ html[data-omarchy-mode="light"] .card {
 }
 ```
 
-Always use fallback values for browsers without the extension. `<html>` also receives `data-omarchy-theme` and `data-omarchy-mode`. The extension does not set `color-scheme`, so unrelated form controls and scrollbars are not changed automatically.
+The root gets `data-omarchy-mode` and a sharing marker, but no theme-name attribute. The extension does not automatically restyle unrelated pages, change Chromium's toolbar theme, or set `color-scheme`.
 
 ## JavaScript API
 
-Check for `window.omarchy` before calling it. The first palette arrives asynchronously; reads may initially be empty, and `onChange` fires when that first palette arrives.
+`window.omarchy` is absent until approval and fresh delivery. Its arrival and later updates dispatch `omarchythemechange` on `document`, without event detail. Check for the API each time, including after revocation.
 
 | Member | Result |
 | --- | --- |
-| `theme` | Current theme name, or `null` before it arrives |
-| `mode` | Current mode, usually `dark` or `light`, or `null` |
-| `colors()` | Snapshot of all exposed colors |
+| `theme` | Always `null`; retained for compatibility, without disclosing private names |
+| `mode` | `dark` or `light` while shared |
+| `colors()` | Null-prototype snapshot of exposed colors |
 | `color(name)` | One value, accepting underscores or hyphens, or `null` |
-| `onChange(handler)` | Calls the handler with a frozen color snapshot; returns an unsubscribe function |
+| `onChange(handler)` | Receives a frozen color snapshot; returns an unsubscribe function |
 
 ```js
-const api = window.omarchy;
-if (api) {
-  console.log(api.theme, api.color('accent'));
-  const stop = api.onChange((colors) => {
-    console.log('Updated palette:', colors);
-  });
-  // Call stop() when the view is removed.
+function update() {
+  const api = window.omarchy;
+  if (api) console.log(api.mode, api.color('accent'));
 }
+document.addEventListener('omarchythemechange', update);
+update();
 ```
 
-`omarchythemechange` is also dispatched on `document`, without event detail. Read the current values from the API or CSS. DOM values and events are visible to page scripts and are not an authentication mechanism.
+An existing site-owned `window.omarchy` is not replaced. DOM values and events are visible to page scripts and can be spoofed by the page; they are not an authentication mechanism and should not be interpolated into HTML.
 
-## Permissions and Limits
+## Installation and Upgrades
 
-- Reads expose the palette and theme name on every page where the content scripts run, including subframes. Custom colors can help fingerprint users; there is no per-site read opt-in.
-- The manifest requests `nativeMessaging` and local `storage`. It requests no host permissions, and the worker makes no network requests.
-- Native messages have a 1 MiB request cap and a 1 MiB response cap. Palette source files over 64 KiB produce an empty palette instead of unbounded data. Theme names are cut at 64 characters.
-- The helper creates the watched state directory when it is missing and one lock file under `$XDG_RUNTIME_DIR`. It writes nothing else, and it never runs `omarchy-theme-set`.
+- Fresh user setup registers the native host through `install/user/chromium.sh`, even before the first browser launch.
+- Default Chromium flags load the extension, but loading it does not approve any site or start a native host while approvals are empty.
+- Migration `1788886195.sh`, later browser installation, and Chromium refresh register the helper. Migration preserves custom flags, unrelated extensions, symlinked dotfiles, file modes, and unterminated final lines without a destructive refresh or browser restart.
+- Flags are parsed through system Python/PyGObject and GLib, one physical line at a time, matching Arch's launcher. They are never sourced or evaluated. Ambiguous syntax fails without replacing the source file. The last effective extension list wins.
+- Standalone entries are replaced only when their readable manifest key identifies the same extension, or they name the exact packaged alias. No standalone repository is removed, and unknown manifests are preserved. Manually loaded copies may need removal in the extension manager; do not run the standalone uninstaller after takeover because it can remove the shared native registration.
+- Existing runtime/settings packaging supplies the new files. No extra package, root daemon, or sudo permission is needed. Chromium 123 or newer is required. Other Chromium-family builds must support unpacked extension loading; native registration does not bypass branded-browser restrictions.
 
-A write path that lets a page switch or install themes changes the trust boundary and should be reviewed explicitly. The standalone project's write API shows what that involves: an origin allowlist in the worker, request validation in the helper, rate limits, and quota tracking.
+Restart the browser after installation or migration. Fresh-install and upgrade validation in a disposable Omarchy VM and real branded-browser/platform checks remain pre-merge requirements.
 
-## Validation
-
-Run the focused integration and runtime tests:
+## Validation and Local Tryout
 
 ```bash
 bash test/shell.d/chromium-theme-sync-install-test.sh
 bash test/shell.d/chromium-theme-sync-runtime-test.sh
 ```
 
-The runtime fixtures exercise the actual content and page scripts, the worker logic, and native framing with temporary HOME and XDG paths. Native ports are mocked in the worker tests. Integration tests cover fresh setup, migration, flag preservation, same-ID takeover, symlinked configs, and retryable failures.
+The runtime tests exercise the actual native executable and main event loop, native framing, mode compatibility, directory replacement, no-child/no-lock teardown, consent and revocation, different ports, frames, incognito, stale replies, arbitrary metadata, and CSS URLs. Worker APIs are mocked; those tests do not substitute for browser permission UI checks.
 
-Before merge, exercise fresh installation and upgrade in a disposable Omarchy VM, restart Chromium, and confirm palette changes reach a real page. The unit/shell tests do not replace those live browser and package-upgrade checks. Do not run acceptance tests against the active development desktop.
+For a visible local check, use a disposable profile and loopback-only page:
+
+```bash
+./test/browser-theme-sync
+```
+
+Sharing initially stays off. Approve the site through the browser icon, type `light` or `dark` plus Enter in the terminal to change the synthetic palette, then revoke sharing. The embedded frame must stay unshared. Close that temporary browser or press Ctrl+C to remove its profile, native registration, and test state. Do not sign into it.
+
+To observe real desktop theme switches without modifying the real browser profile or theme state:
+
+```bash
+./test/browser-theme-sync --desktop
+```
+
+This variant points the temporary host at the current desktop state read-only. Change the desktop theme normally to exercise live delivery. Neither launcher mode changes installed browser flags, registrations, account data, or Omarchy configuration. Graphical acceptance tests still belong in a disposable VM, not the development desktop.

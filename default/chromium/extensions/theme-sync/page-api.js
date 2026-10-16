@@ -8,11 +8,12 @@
 // install desktop themes through this extension.
 
 (() => {
+  if (document.documentElement?.dataset.omarchySharing !== 'true' || Object.hasOwn(window, 'omarchy')) return;
   const VAR_PREFIX = '--omarchy-';
 
   function colors() {
     const style = document.documentElement && document.documentElement.style;
-    const out = {};
+    const out = Object.create(null);
     if (!style) return out;
 
     // Inline custom properties enumerate through the style declaration's index,
@@ -26,26 +27,38 @@
     return out;
   }
 
+  const api = Object.freeze({
+    // Custom theme names are private. Retain the getter for compatibility.
+    get theme() { return null; },
+    get mode() {
+      const mode = document.documentElement?.dataset.omarchyMode;
+      return ['dark', 'light'].includes(mode) ? mode : null;
+    },
+    colors,
+    color(name) {
+      const key = String(name).replace(/-/g, '_');
+      const snapshot = colors();
+      return Object.hasOwn(snapshot, key) ? snapshot[key] : null;
+    },
+    onChange(handler) {
+      if (typeof handler !== 'function') return () => {};
+      const listener = () => handler(Object.freeze(colors()));
+      document.addEventListener('omarchythemechange', listener);
+      return () => document.removeEventListener('omarchythemechange', listener);
+    },
+  });
   Object.defineProperty(window, 'omarchy', {
     configurable: true,
     enumerable: false,
-    value: Object.freeze({
-      get theme() {
-        return document.documentElement?.dataset.omarchyTheme || null;
-      },
-      get mode() {
-        return document.documentElement?.dataset.omarchyMode || null;
-      },
-      colors,
-      color(name) {
-        return colors()[String(name).replace(/-/g, '_')] || null;
-      },
-      onChange(handler) {
-        if (typeof handler !== 'function') return () => {};
-        const listener = () => handler(Object.freeze(colors()));
-        document.addEventListener('omarchythemechange', listener);
-        return () => document.removeEventListener('omarchythemechange', listener);
-      },
-    }),
+    value: api,
   });
+  const revoke = () => {
+    if (document.documentElement?.dataset.omarchySharing === 'true') return;
+    if (window.omarchy === api) delete window.omarchy;
+    document.removeEventListener('omarchythemechange', revoke);
+  };
+  document.addEventListener('omarchythemechange', revoke);
+  // The authorized main-world injection can arrive after the isolated script's
+  // first DOM update. Announce API availability as well as palette changes.
+  document.dispatchEvent(new Event('omarchythemechange'));
 })();

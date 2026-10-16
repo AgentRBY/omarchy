@@ -1,59 +1,70 @@
-// Isolated world. Writes the palette into the shared DOM, which is the only part
-// of this extension that pages actually see.
-//
-// Inline custom properties on <html> are visible to page CSS and to page
-// JavaScript through getComputedStyle, even though this script's own globals are
-// not. That makes the DOM the contract and removes any need to hand the palette
-// across the world boundary.
+// A dynamic top-frame script, registered only for approved hosts. Host grants
+// span ports, so the worker must approve this exact document's origin before
+// anything is published. No page event or postMessage reaches the worker.
+(() => {
+  if (globalThis.__omarchyThemeSync) return;
+  globalThis.__omarchyThemeSync = true;
+  let updates = 0;
+  let pending = null;
+  let published = false;
 
-const VAR_PREFIX = '--omarchy-';
-const CHANGE_EVENT = 'omarchythemechange';
-
-let applied = null;
-
-function apply(palette) {
-  const root = document.documentElement;
-  if (!root || !palette || !palette.colors) return;
-
-  // Theme switches re-send the whole palette; a key that disappeared between
-  // themes has to be removed or it would linger as a stale value.
-  const next = new Set();
-  for (const [key, value] of Object.entries(palette.colors)) {
-    if (typeof value !== 'string') continue;
-    const property = VAR_PREFIX + key.replace(/_/g, '-');
-    next.add(property);
-    root.style.setProperty(property, value);
-  }
-
-  if (applied) {
-    for (const property of applied) {
-      if (!next.has(property)) root.style.removeProperty(property);
+  function removeColors() {
+    const root = document.documentElement;
+    if (!root) return;
+    for (const property of [...root.style]) {
+      if (property.startsWith('--omarchy-')) root.style.removeProperty(property);
     }
   }
-  applied = next;
 
-  // Descriptive only. Setting color-scheme here would restyle form controls and
-  // scrollbars on every site, so the mode is advertised and left for pages to use.
-  if (palette.mode) root.dataset.omarchyMode = palette.mode;
-  if (palette.name) root.dataset.omarchyTheme = palette.name;
+  function clear() {
+    pending = null;
+    if (!published) return;
+    published = false;
+    const root = document.documentElement;
+    if (!root) return;
+    removeColors();
+    delete root.dataset.omarchySharing;
+    delete root.dataset.omarchyMode;
+    delete root.dataset.omarchyTheme;
+    document.dispatchEvent(new Event('omarchythemechange'));
+  }
 
-  // No detail: cloning an object across the isolated/main boundary is realm
-  // -sensitive, and pages read the values straight off window.omarchy or CSS.
-  document.dispatchEvent(new Event(CHANGE_EVENT));
-}
+  function apply(message) {
+    const palette = ThemeSyncPolicy.palette(message);
+    if (!palette) { clear(); return; }
+    if (!document.documentElement) { pending = palette; return; }
+    removeColors();
+    const root = document.documentElement;
+    delete root.dataset.omarchyTheme;
+    for (const [key, value] of Object.entries(palette.colors)) {
+      root.style.setProperty('--omarchy-' + key.replace(/_/g, '-'), value);
+    }
+    root.dataset.omarchyMode = palette.mode;
+    root.dataset.omarchySharing = 'true';
+    published = true;
+    // The main-world API is injected only after this authenticated delivery.
+    chrome.runtime.sendMessage({ type: 'omarchy-enable-api' }, () => { void chrome.runtime.lastError; });
+    document.dispatchEvent(new Event('omarchythemechange'));
+  }
 
-// Two sources, whichever lands first. The cached read covers a cold service
-// worker; the request wakes the worker so it re-opens the native port.
-chrome.storage.local.get('palette').then(
-  (stored) => { if (stored.palette && !applied) apply(stored.palette); },
-  () => {}
-);
+  document.addEventListener('DOMContentLoaded', () => {
+    if (pending) apply(pending);
+  }, { once: true });
 
-chrome.runtime.sendMessage({ type: 'omarchy-get-palette' }, (palette) => {
-  void chrome.runtime.lastError;
-  if (palette) apply(palette);
-});
-
-chrome.runtime.onMessage.addListener((message) => {
-  if (message && message.type === 'palette') apply(message.palette);
-});
+  chrome.runtime.onMessage.addListener((message, sender) => {
+    if (sender.id !== chrome.runtime.id || sender.tab) return;
+    // Reauthorize broadcasts too: a palette notification queued before a
+    // revocation cannot republish data after its clear message arrived.
+    if (message?.type === 'omarchy-palette') request();
+    if (message?.type === 'omarchy-clear-palette') { updates++; clear(); }
+  });
+  function request() {
+    const requestedAt = ++updates;
+    chrome.runtime.sendMessage({ type: 'omarchy-get-palette' }, palette => {
+      void chrome.runtime.lastError;
+      // A delayed reply must not overwrite a newer broadcast or revocation.
+      if (updates === requestedAt) apply(palette);
+    });
+  }
+  request();
+})();

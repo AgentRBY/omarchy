@@ -6,167 +6,272 @@ import vm from 'node:vm';
 const extension = new URL('../../../../default/chromium/extensions/theme-sync/', import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL('manifest.json', extension), 'utf8'));
 const source = readFileSync(new URL(manifest.background.service_worker, extension), 'utf8');
-const palette = { type: 'palette', name: 'Tokyo Night', mode: 'dark', colors: { background: '#1a1b26', accent: '#7aa2f7' } };
-const page = { origin: 'https://omarchy.org', url: 'https://omarchy.org/', frameId: 0 };
+const policySource = readFileSync(new URL('policy.js', extension), 'utf8');
+const id = 'ppnnomfimbfcofidkfmghapellfbgklc';
+const origin = 'https://approved.example';
+const match = `${origin}/*`;
+const palette = { type: 'palette', mode: 'dark', colors: { background: '#112233', accent: '#445566' } };
+const sender = { id, url: `${origin}/page`, frameId: 0, documentId: 'document-1', tab: { id: 1, incognito: false } };
+const plain = value => JSON.parse(JSON.stringify(value));
 const flush = () => new Promise(setImmediate);
 
 function event() {
   const listeners = [];
-  return {
-    addListener: (listener) => listeners.push(listener),
-    emit: (...args) => listeners.map((listener) => listener(...args)),
-  };
+  return { addListener: listener => listeners.push(listener), emit: (...args) => listeners.map(listener => listener(...args)) };
 }
 
-// Runs the worker against a fake chrome.* surface. The context deliberately has
-// no fetch, URL, or btoa global: the read-only worker must not need any of them.
-function worker({ stored = {}, tabs = [{ id: 1 }, { id: 2 }, {}] } = {}) {
-  const storage = { ...stored };
-  const timers = new Map();
-  const ports = [];
-  const posts = [];
-  const sent = [];
-  const messages = event();
-  let timerId = 0;
-  let connectError = null;
-  const context = vm.createContext({
-    setTimeout: (callback, delay) => {
-      const id = ++timerId;
-      timers.set(id, { callback, delay });
-      return id;
-    },
-    clearTimeout: (id) => timers.delete(id),
+async function worker({ approved = [], grants = [], stored = {}, tabs, alarms = new Map() } = {}) {
+  const storage = { ...stored, approvedOrigins: [...approved] };
+  const permissions = new Set(grants);
+  const ports = [], sent = [], executions = [], registrations = [], posts = [], requests = [];
+  const onMessage = event(), onAction = event(), onRemoved = event(), onAlarm = event(), onMenu = event(), onUpdated = event();
+  const badges = new Map(), titles = new Map();
+  const availableTabs = tabs || [
+    { id: 1, url: `${origin}/page` }, { id: 2, url: 'https://unapproved.example/' },
+    { id: 3, url: `${origin}/private`, incognito: true }, { id: 4 },
+  ];
+  let accessLevel, gesture = false, connectError = false, permissionAccepted = true;
+  const context = vm.createContext({ URL,
+    // Reconnection must not depend on an in-memory timer or network API.
+    setTimeout: () => { throw new Error('worker-lifetime timers are not durable'); },
     chrome: {
       runtime: {
-        onMessage: messages,
-        onStartup: event(),
-        onInstalled: event(),
-        connectNative: (name) => {
-          if (connectError) throw connectError;
-          const port = { name, onMessage: event(), onDisconnect: event(), postMessage: (message) => posts.push(message) };
+        id, onMessage, onStartup: event(), onInstalled: event(),
+        connectNative: name => {
+          if (connectError) throw new Error('native host unavailable');
+          const port = { name, onMessage: event(), onDisconnect: event(), disconnected: false,
+            postMessage: message => posts.push(message), disconnect() { this.disconnected = true; } };
           ports.push(port);
           return port;
         },
       },
-      storage: {
-        local: {
-          get: async (key) => (key in storage ? { [key]: storage[key] } : {}),
-          set: async (items) => { Object.assign(storage, items); },
+      storage: { local: {
+        get: async key => ({ [key]: storage[key] }),
+        set: async items => { Object.assign(storage, plain(items)); },
+        remove: async key => { delete storage[key]; },
+        setAccessLevel: async value => { accessLevel = value.accessLevel; },
+      } },
+      permissions: {
+        onRemoved,
+        contains: async query => query.origins.every(origin => permissions.has(origin)),
+        request: async query => {
+          assert.ok(gesture, 'browser permission requested synchronously inside the toolbar gesture');
+          requests.push(plain(query));
+          if (permissionAccepted) query.origins.forEach(origin => permissions.add(origin));
+          return permissionAccepted;
+        },
+        remove: async query => {
+          query.origins.forEach(origin => permissions.delete(origin));
+          onRemoved.emit(query);
+          return true;
         },
       },
       tabs: {
-        query: (_query, callback) => callback(tabs),
-        sendMessage: (tabId, message, callback) => {
-          // A JSON round trip strips the vm realm's prototypes so strict deep equality can compare it.
-          sent.push({ tabId, message: JSON.parse(JSON.stringify(message)) });
-          if (callback) callback();
-        },
+        onUpdated,
+        query: async () => availableTabs,
+        sendMessage: async (tabId, message, target) => { sent.push(plain({ tabId, message, target })); },
+      },
+      scripting: {
+        unregisterContentScripts: async () => { registrations.length = 0; },
+        registerContentScripts: async scripts => { registrations.push(...plain(scripts)); },
+        executeScript: async script => { executions.push(plain(script)); },
+      },
+      action: { onClicked: onAction,
+        setBadgeText: async value => { badges.set(value.tabId, value.text); },
+        setTitle: async value => { titles.set(value.tabId, value.title); } },
+      contextMenus: { onClicked: onMenu, removeAll: async () => {}, create: () => {} },
+      alarms: {
+        onAlarm,
+        create: async (name, configuration) => { alarms.set(name, plain(configuration)); },
+        clear: async name => alarms.delete(name),
       },
     },
   });
+  context.importScripts = file => { assert.equal(file, 'policy.js'); vm.runInContext(policySource, context); };
   vm.runInContext(source, context);
+  async function idle() {
+    await vm.runInContext('Promise.all([ready, changes])', context);
+    await flush();
+    await vm.runInContext('changes', context);
+    await flush();
+  }
+  await idle();
   return {
-    ports, posts, sent, storage, timers,
-    port: () => ports.at(-1),
-    send(message, sender = page) {
-      const replies = [];
-      const claimed = messages.emit(message, sender, (reply) => replies.push(reply));
-      return { claimed, replies };
+    storage, permissions, ports, sent, executions, registrations, posts, requests, alarms, badges, titles,
+    accessLevel: () => accessLevel,
+    port: () => ports.at(-1), idle,
+    async message(message, from = sender) {
+      return new Promise(resolve => {
+        const claimed = onMessage.emit(message, from, resolve);
+        if (claimed.every(value => !value)) resolve(undefined);
+      });
     },
-    fire() {
-      assert.equal(timers.size, 1, 'exactly one pending timer');
-      const [id, { callback, delay }] = [...timers.entries()][0];
-      timers.delete(id);
-      callback();
-      return delay;
+    async click(tab = { id: 1, url: `${origin}/page` }) {
+      gesture = true;
+      onAction.emit(tab);
+      gesture = false;
+      await idle();
     },
-    failConnect(error) { connectError = error; },
+    async revoke(pattern = match) { permissions.delete(pattern); onRemoved.emit({ origins: [pattern] }); await idle(); },
+    async stopAll() { onMenu.emit({ menuItemId: 'omarchy-theme-sync-stop-all' }); await idle(); },
+    async alarm() { onAlarm.emit({ name: 'omarchy-theme-sync-reconnect' }); await idle(); },
+    async navigate(url) { onUpdated.emit(1, {status: 'loading'}, {id: 1, url}); await idle(); },
+    failConnect(value = true) { connectError = value; },
+    denyPermission() { permissionAccepted = false; },
   };
 }
 
-test('opens one native port on load and fans each palette out to every tab', async () => {
-  const w = worker();
-  assert.equal(w.ports.length, 1);
-  assert.equal(w.port().name, 'com.omarchy.theme');
-  w.port().onMessage.emit(palette);
-  await flush();
-  assert.deepEqual(w.storage.palette, palette);
-  assert.deepEqual(w.sent, [
-    { tabId: 1, message: { type: 'palette', palette } },
-    { tabId: 2, message: { type: 'palette', palette } },
-  ]);
-  assert.equal(w.posts.length, 0, 'the worker never writes to the port');
-});
-
-test('ignores port messages that are not a palette', async () => {
-  const w = worker();
-  for (const message of [null, undefined, {}, { type: 'theme-result', id: '1', ok: true }, { type: 'install-theme' }]) {
-    w.port().onMessage.emit(message);
-  }
-  await flush();
+test('first install is private: no content scripts, native process, or historical palette delivery', async () => {
+  const w = await worker({ stored: { palette: { ...palette, name: 'private old name' } } });
+  assert.equal(w.ports.length, 0);
+  assert.equal(w.registrations.length, 0);
   assert.equal(w.storage.palette, undefined);
-  assert.equal(w.sent.length, 0);
+  assert.equal(w.accessLevel(), 'TRUSTED_CONTEXTS');
+  assert.equal(await w.message({ type: 'omarchy-get-palette' }), null);
+  assert.equal(await w.message({ type: 'omarchy-approve-origin', origin }), undefined);
+  assert.deepEqual(w.storage.approvedOrigins, []);
+  assert.ok(w.sent.every(({ message }) => message.type === 'omarchy-clear-palette'));
 });
 
-test('reconnects with capped exponential backoff and resets after a healthy palette', () => {
-  const w = worker();
-  const delays = [];
-  for (let i = 0; i < 8; i++) {
-    w.port().onDisconnect.emit();
-    delays.push(w.fire());
-  }
-  assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]);
-  assert.equal(w.ports.length, 9);
-  w.port().onMessage.emit(palette);
-  w.port().onDisconnect.emit();
-  assert.equal(w.fire(), 1000);
-});
-
-test('a failing connectNative schedules a retry instead of throwing', () => {
-  const w = worker();
-  w.port().onDisconnect.emit();
-  w.failConnect(new Error('no such native host'));
-  assert.equal(w.fire(), 1000);
+test('only an accepted browser-toolbar gesture authorizes the exact origin', async () => {
+  const w = await worker();
+  await w.click();
+  assert.deepEqual(w.storage.approvedOrigins, [origin]);
   assert.equal(w.ports.length, 1);
-  assert.equal(w.timers.size, 1, 'a retry is pending');
-  w.failConnect(null);
-  assert.equal(w.fire(), 2000);
-  assert.equal(w.ports.length, 2);
+  assert.deepEqual(w.registrations[0], { id: 'omarchy-theme-sync', matches: [match], js: ['policy.js', 'content.js'],
+    runAt: 'document_start', allFrames: false, persistAcrossSessions: true });
+  assert.ok(w.executions.every(script => script.target.tabId === 1 && script.target.frameIds[0] === 0));
+  const denied = await worker();
+  denied.denyPermission();
+  await denied.click();
+  assert.deepEqual(denied.storage.approvedOrigins, []);
+  assert.equal(denied.ports.length, 0);
 });
 
-test('answers the content script from the cache and reopens a dead port', async () => {
-  const w = worker({ stored: { palette } });
-  w.port().onDisconnect.emit();
-  assert.equal(w.ports.length, 1);
-  const { claimed, replies } = w.send({ type: 'omarchy-get-palette' });
-  assert.deepEqual(claimed, [true], 'the channel stays open for the async storage read');
-  assert.equal(w.ports.length, 2, 'the request reopens the port without waiting for the retry timer');
-  await flush();
-  assert.deepEqual(replies, [palette]);
-
-  const cold = worker();
-  const request = cold.send({ type: 'omarchy-get-palette' });
-  await flush();
-  assert.deepEqual(request.replies, [null]);
-});
-
-test('theme write requests from any page are neither claimed, answered, nor forwarded', async () => {
-  const w = worker({ stored: { palette } });
-  for (const message of [
-    { type: 'omarchy-can-set-theme' },
-    { type: 'omarchy-set-theme', name: 'Tokyo Night' },
-    { type: 'omarchy-install-theme', name: 'Review', colors: palette.colors },
+test('a host grant alone, different port, iframe, forged sender or private tab gets no palette or API', async () => {
+  const w = await worker({ approved: [origin], grants: [match] });
+  w.port().onMessage.emit({ ...palette, name: 'private', colors: { ...palette.colors, api_token: 'synthetic', client_id: '#ffffff' } });
+  await w.idle();
+  const reads = w.sent.filter(({ message }) => message.type === 'omarchy-palette');
+  assert.deepEqual(reads.map(value => value.tabId), [1]);
+  assert.deepEqual(reads[0].message.palette, palette);
+  assert.deepEqual(reads[0].target, { frameId: 0 });
+  assert.equal(w.storage.palette, undefined, 'a fresh palette never goes to disk');
+  assert.deepEqual(plain(await w.message({ type: 'omarchy-get-palette' })), palette);
+  w.executions.length = 0;
+  for (const from of [
+    { ...sender, frameId: 1 }, { ...sender, url: 'https://unapproved.example/' },
+    { ...sender, url: 'https://approved.example:8443/' }, { ...sender, id: 'another-extension' },
+    { ...sender, documentId: undefined }, { ...sender, tab: { id: 1, incognito: true } },
   ]) {
-    const { claimed, replies } = w.send(message);
-    await flush();
-    assert.ok(claimed.every((value) => !value), JSON.stringify(message));
-    assert.deepEqual(replies, []);
+    assert.equal(await w.message({ type: 'omarchy-get-palette' }, from), null);
+    assert.equal(await w.message({ type: 'omarchy-enable-api' }, from), null);
+  }
+  assert.deepEqual(w.executions, []);
+  const permissionOnly = await worker({ grants: [match] });
+  assert.equal(await permissionOnly.message({ type: 'omarchy-get-palette' }), null);
+});
+
+test('main-world injection is bound to the approved document, not a later navigation', async () => {
+  const w = await worker({ approved: [origin], grants: [match] });
+  w.port().onMessage.emit(palette);
+  await w.idle();
+  w.executions.length = 0;
+  assert.equal(await w.message({ type: 'omarchy-enable-api' }), true);
+  assert.deepEqual(w.executions, [{ target: { tabId: 1, documentIds: ['document-1'] }, world: 'MAIN', files: ['page-api.js'] }]);
+});
+
+test('revoking one port does not revoke another explicitly approved origin on the same host', async () => {
+  const first = 'https://approved.example:8443';
+  const second = 'https://approved.example:9443';
+  const w = await worker({ approved: [first, second], grants: [match], tabs: [
+    {id: 1, url: `${first}/`}, {id: 2, url: `${second}/`},
+  ] });
+  w.port().onMessage.emit(palette);
+  await w.idle();
+  await w.click({id: 1, url: `${first}/`});
+  assert.deepEqual(w.storage.approvedOrigins, [second]);
+  assert.equal(w.permissions.has(match), true);
+  assert.equal(w.port().disconnected, false);
+  assert.equal(await w.message({type: 'omarchy-get-palette'}, {...sender, url: `${first}/`}), null);
+  assert.deepEqual(plain(await w.message({type: 'omarchy-get-palette'}, {...sender, url: `${second}/`})), palette);
+});
+
+test('the toolbar reflects approval on new documents and clears its badge on navigation away', async () => {
+  const w = await worker({ approved: [origin], grants: [match] });
+  w.port().onMessage.emit(palette);
+  await w.idle();
+  await w.message({type: 'omarchy-get-palette'});
+  await w.idle();
+  assert.equal(w.badges.get(1), 'ON');
+  assert.equal(w.titles.get(1), 'Stop sharing desktop colors with this site');
+  await w.navigate('https://unapproved.example/');
+  assert.equal(w.badges.get(1), '');
+  assert.equal(w.titles.get(1), 'Share desktop colors with this site');
+});
+
+test('revocation clears pages, approval state, scripts, native port and reconnect alarms', async () => {
+  for (const revoke of ['click', 'revoke', 'stopAll']) {
+    const w = await worker({ approved: [origin], grants: [match] });
+    const port = w.port();
+    port.onMessage.emit(palette);
+    await w.idle();
+    w.sent.length = 0;
+    await w[revoke]();
+    assert.deepEqual(w.storage.approvedOrigins, [], revoke);
+    assert.equal(w.registrations.length, 0);
+    assert.equal(port.disconnected, true);
+    assert.equal(w.alarms.size, 0);
+    assert.equal(await w.message({ type: 'omarchy-get-palette' }), null);
+    assert.ok(w.sent.length > 0 && w.sent.every(({message}) => message.type === 'omarchy-clear-palette'));
+  }
+});
+
+test('reconnect uses a worker-independent alarm; disconnect immediately invalidates the palette', async () => {
+  const w = await worker({ approved: [origin], grants: [match] });
+  w.port().onMessage.emit(palette);
+  await w.idle();
+  w.port().onDisconnect.emit();
+  await w.idle();
+  assert.equal(await w.message({ type: 'omarchy-get-palette' }), null);
+  assert.deepEqual([...w.alarms.values()], [{ delayInMinutes: 0.5, periodInMinutes: 0.5 }]);
+  w.failConnect();
+  await w.alarm();
+  assert.equal(w.alarms.size, 1);
+  // The browser-owned alarm survives discarding this vm/worker entirely.
+  const restarted = await worker({ approved: [origin], grants: [match], alarms: w.alarms });
+  assert.equal(restarted.alarms.size, 1, 'connection alone does not prove healthy readback');
+  restarted.port().onMessage.emit(palette);
+  await restarted.idle();
+  assert.equal(restarted.alarms.size, 0);
+  assert.deepEqual(plain(await restarted.message({ type: 'omarchy-get-palette' })), palette);
+  assert.equal(restarted.posts.length, 0, 'never sends native messages');
+});
+
+test('neither native failures nor invalid messages publish arbitrary or stale data', async () => {
+  const w = await worker({ approved: [origin], grants: [match] });
+  w.sent.length = 0;
+  for (const message of [null, {}, { ...palette, mode: 'private-mode' }, { type: 'install-theme' }]) w.port().onMessage.emit(message);
+  await w.idle();
+  assert.equal(w.sent.length, 0);
+  for (const type of ['omarchy-set-theme', 'omarchy-install-theme', 'omarchy-can-set-theme']) {
+    assert.equal(await w.message({ type }), undefined);
   }
   assert.equal(w.posts.length, 0);
-  assert.equal(w.timers.size, 0);
 });
 
-test('the manifest grants only native messaging and storage', () => {
-  assert.deepEqual(manifest.permissions, ['nativeMessaging', 'storage']);
-  assert.equal(Object.hasOwn(manifest, 'host_permissions'), false);
+test('file, browser-internal and incognito toolbar clicks cannot approve sharing', async () => {
+  const w = await worker();
+  for (const tab of [{ url: 'file:///tmp/site.html' }, { url: 'chrome://extensions/' },
+    { url: `${origin}/`, incognito: true }, { url: 'https://user:pass@approved.example/' }]) await w.click({ id: 1, ...tab });
+  assert.deepEqual(w.requests, []);
+  assert.deepEqual(w.storage.approvedOrigins, []);
+});
+
+test('manifest has no automatic all-site scripts or required host grants', () => {
+  assert.equal(manifest.content_scripts, undefined);
+  assert.equal(manifest.host_permissions, undefined);
+  assert.deepEqual(manifest.optional_host_permissions, ['http://*/*', 'https://*/*']);
+  assert.deepEqual(manifest.permissions, ['nativeMessaging', 'storage', 'scripting', 'activeTab', 'alarms', 'contextMenus']);
+  assert.equal(manifest.background.service_worker, 'background-2.js');
 });
