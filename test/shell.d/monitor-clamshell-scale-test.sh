@@ -312,6 +312,26 @@ hl.monitor({ output = "eDP-1", position = "auto", scale = 2 })
 LUA
 }
 
+# Nor is one in a block comment of a higher level, which a ]] does not end.
+write_leveled_comment_profile_config() {
+  cat >"$monitor_lua" <<'LUA'
+hl.monitor({ output = "eDP-1", position = "0x0", scale = 1.25 })
+--[==[ Previous profile, from a tool that writes t[a[1]]:
+hl.monitor({ output = "eDP-1", position = "auto", scale = 2 })
+]==]
+LUA
+}
+
+# Nor is one kept in a long string.
+write_long_string_profile_config() {
+  cat >"$monitor_lua" <<'LUA'
+hl.monitor({ output = "eDP-1", position = "0x0", scale = 1.25 })
+local previous = [=[
+hl.monitor({ output = "eDP-1", position = "auto", scale = 2 })
+]=]
+LUA
+}
+
 remember_scale() {
   mkdir -p "$state_dir"
   printf '%s\n' "$1" >"$scale_state"
@@ -505,7 +525,7 @@ OMARCHY_TEST_INTERNAL_DISABLED=true run_clamshell
 grep -F 'scale = 1.25' "$eval_log" >/dev/null || fail "clamshell recovery does not read a scale out of a trailing comment"
 pass "clamshell recovery does not read a scale out of a trailing comment"
 
-for config in nested_table semicolon block_comment nested_call quoted_rule shared_line string_paren split_opener commented_profile; do
+for config in nested_table semicolon block_comment nested_call quoted_rule shared_line string_paren split_opener commented_profile leveled_comment_profile long_string_profile; do
   "write_${config}_config"
   remember_scale 1.75
   : >"$eval_log"
