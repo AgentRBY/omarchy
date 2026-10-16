@@ -635,8 +635,8 @@ refresh_keybindings_cache() {
   if output_binding_records_uncached >"$tmp_file"; then
     mv "$tmp_file" "$cache_file"
     # Keep a few newest besides this one, so switching layout and back finds its cache.
-    find "$cache_dir" -maxdepth 1 -type f -name 'keybindings-*.records' ! -name "$cache_name" -printf '%T@\t%p\n' 2>/dev/null |
-      sort -rn | tail -n +4 | cut -f2- | xargs -r -d '\n' rm -f -- || true
+    find "$cache_dir" -maxdepth 1 -type f -name 'keybindings-*.records' ! -name "$cache_name" -printf '%T@\t%p\0' 2>/dev/null |
+      sort -zrn | tail -zn +4 | cut -zf2- | xargs -0r rm -f -- || true
   else
     rm -f "$tmp_file"
     return 1
