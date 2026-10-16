@@ -599,13 +599,18 @@ greeter_screen() {
 # missing or broken localectl, say), so the attempt fails and setup's own
 # retry-or-console screen takes over instead of asking forever.
 keyboard_form() {
-  local status failures=0
+  local status failures=0 applied
 
   while true; do
     step "Let's setup your keyboard..."
     omarchy_prompt_keyboard && status=0 || status=$?
     if ((status == 0)); then
-      apply_keyboard "$keyboard" && break
+      apply_keyboard "$keyboard" && applied=1 || applied=0
+      # Every keymap load brings Hold back, whether or not the layout took.
+      # Starting vconsole-setup waits out a reload localectl queued without waiting.
+      systemctl start systemd-vconsole-setup.service >/dev/null 2>&1 || true
+      disable_console_hold
+      ((applied)) && break
       if ((++failures >= 3)); then
         log_step "no keyboard layout could be set after $failures attempts"
         notice "Setup could not set a keyboard layout on this machine." 4
@@ -704,11 +709,6 @@ apply_keyboard() {
     log_step "/etc/vconsole.conf does not read back as keymap $keymap with an XKB layout"
     return 1
   fi
-
-  # Every keymap load above brings Hold back. Starting vconsole-setup waits out
-  # a reload localectl queued without waiting; once it has run, it is a no-op.
-  systemctl start systemd-vconsole-setup.service >/dev/null 2>&1 || true
-  disable_console_hold
 }
 
 # The same username/password/name/email form as the ISO configurator's Step 2.
