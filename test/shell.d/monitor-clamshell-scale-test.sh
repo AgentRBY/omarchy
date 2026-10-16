@@ -225,6 +225,14 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1, tran
 LUA
 }
 
+# A panel rule this cannot read, by description or wrapped, may name no transform.
+write_unreadable_internal_rule_config() {
+  cat >"$monitor_lua" <<LUA
+$1
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1, transform = 3 })
+LUA
+}
+
 remember_scale() {
   mkdir -p "$state_dir"
   printf '%s\n' "$1" >"$scale_state"
@@ -436,6 +444,14 @@ write_unrotated_internal_rule_config
 OMARCHY_TEST_INTERNAL_DISABLED=true run_clamshell
 grep -F 'scale = 1.25 })' "$eval_log" >/dev/null || fail "clamshell recovery leaves the catch-all transform off a panel with its own rule"
 pass "clamshell recovery leaves the catch-all transform off a panel with its own rule"
+
+for rule in 'hl.monitor({ output = "desc:LG Display 0x0521", scale = 1.25 })' $'hl.monitor({\n  output = "eDP-1",\n  scale = 1.25,\n})'; do
+  write_unreadable_internal_rule_config "$rule"
+  : >"$eval_log"
+  OMARCHY_TEST_INTERNAL_DISABLED=true run_clamshell
+  grep -F 'scale = 1 })' "$eval_log" >/dev/null || fail "clamshell recovery leaves the catch-all transform off a panel rule it cannot read: $rule"
+done
+pass "clamshell recovery leaves the catch-all transform off a panel rule it cannot read"
 
 for config in nested_table semicolon block_comment; do
   "write_${config}_config"
