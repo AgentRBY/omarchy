@@ -150,6 +150,7 @@ foreground=${foreground^^}
 pixels=$(magick "$grab" txt:-)
 opaque=$(awk 'NR > 1 && $3 ~ /FF$/ { print substr($3, 1, 7) }' <<<"$pixels" | sort | uniq -c | sort -rn)
 corner=$(awk '$1 == "0,0:" { print substr($3, 8, 2) }' <<<"$pixels")
+edges=$(awk 'NR > 1 && $3 !~ /(00|FF)$/' <<<"$pixels" | wc -l)
 
 [[ $(wc -l <<<"$opaque") == 1 && $opaque == *" $foreground" ]] ||
   fail "tray paints a dark symbolic icon in the bar foreground" "expected every opaque pixel $foreground, got: ${opaque:-none}"
@@ -157,3 +158,7 @@ pass "tray paints a dark symbolic icon in the bar foreground"
 
 [[ $corner == "00" ]] || fail "tray keeps a symbolic icon's shape" "expected a transparent corner, got alpha ${corner:-none}"
 pass "tray keeps a symbolic icon's shape"
+
+# A hard mask cutoff turns every anti-aliased edge pixel opaque and fattens the icon.
+(( edges > 0 )) || fail "tray keeps a symbolic icon's edges soft" "expected partly transparent edge pixels, found none"
+pass "tray keeps a symbolic icon's edges soft"
