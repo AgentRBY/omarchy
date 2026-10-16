@@ -225,8 +225,8 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1, tran
 LUA
 }
 
-# A panel rule this cannot read, by description, wrapped or quoted otherwise, may
-# name no transform.
+# A panel rule this cannot read, by description, wrapped, quoted otherwise or
+# named by an expression, may name no transform.
 write_unreadable_internal_rule_config() {
   cat >"$monitor_lua" <<LUA
 $1
@@ -446,13 +446,28 @@ OMARCHY_TEST_INTERNAL_DISABLED=true run_clamshell
 grep -F 'scale = 1.25 })' "$eval_log" >/dev/null || fail "clamshell recovery leaves the catch-all transform off a panel with its own rule"
 pass "clamshell recovery leaves the catch-all transform off a panel with its own rule"
 
-for rule in 'hl.monitor({ output = "desc:LG Display 0x0521", scale = 1.25 })' $'hl.monitor({\n  output = "eDP-1",\n  scale = 1.25,\n})' $'hl.monitor({\n  output =\n    "eDP-1",\n  scale = 1.25,\n})' "hl.monitor({ output = 'eDP-1', scale = 1.25 })" 'hl.monitor({ output = [[eDP-1]], scale = 1.25 })'; do
+unreadable_rules=(
+  'hl.monitor({ output = "desc:LG Display 0x0521", scale = 1.25 })'
+  $'hl.monitor({\n  output = "eDP-1",\n  scale = 1.25,\n})'
+  $'hl.monitor({\n  output =\n    "eDP-1",\n  scale = 1.25,\n})'
+  "hl.monitor({ output = 'eDP-1', scale = 1.25 })"
+  'hl.monitor({ output = [[eDP-1]], scale = 1.25 })'
+  $'local panel = "eDP-1"\nhl.monitor({ output = panel, scale = 1.25 })'
+  'hl.monitor({ output = "eDP-" .. 1, scale = 1.25 })'
+)
+for rule in "${unreadable_rules[@]}"; do
   write_unreadable_internal_rule_config "$rule"
   : >"$eval_log"
   OMARCHY_TEST_INTERNAL_DISABLED=true run_clamshell
   grep -F 'scale = 1 })' "$eval_log" >/dev/null || fail "clamshell recovery leaves the catch-all transform off a panel rule it cannot read: $rule"
 done
 pass "clamshell recovery leaves the catch-all transform off a panel rule it cannot read"
+
+write_unreadable_internal_rule_config 'hl.monitor({ output = "DP-2", mode = "2560x1440@144", position = "auto", scale = 1 })'
+: >"$eval_log"
+OMARCHY_TEST_INTERNAL_DISABLED=true run_clamshell
+grep -F 'scale = 1, transform = 3 })' "$eval_log" >/dev/null || fail "clamshell recovery keeps the catch-all transform beside an external monitor's rule"
+pass "clamshell recovery keeps the catch-all transform beside an external monitor's rule"
 
 for config in nested_table semicolon block_comment; do
   "write_${config}_config"

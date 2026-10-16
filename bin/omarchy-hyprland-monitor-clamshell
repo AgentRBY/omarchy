@@ -164,12 +164,21 @@ read_monitor_position() {
   echo auto
 }
 
+# The panel's connector or a desc: in any Lua string, or an output that is not a
+# plain string at all, any of which this parser may not be able to rule out.
+internal_may_have_rule() {
+  local rules
+  rules=$(monitor_rules | tr '\n' ' ')
+
+  grep -qE "output[[:space:]]*=[[:space:]]*([\"']|\[\[)($INTERNAL([\"']|\]\])|desc:)" <<<"$rules" ||
+    grep -qE "output[[:space:]]*=[[:space:]]*([^\"'[:space:][]|(\"[^\"]*\"|'[^']*'|\[\[([^]]|\][^]])*\]\])[[:space:]]*\.\.)" <<<"$rules"
+}
+
 # A new panel rule without a transform resets it to 0, unrotating a panel the
-# catch-all rotated. Hyprland never mixes a panel's own rule with the catch-all,
-# and any rule that may be the panel's own, however it is written, keeps it out.
+# catch-all rotated. Hyprland never mixes a panel's own rule with the catch-all.
 read_monitor_transform() {
   local transform
-  if monitor_rules | tr '\n' ' ' | grep -qE "output[[:space:]]*=[[:space:]]*([\"']|\[\[)($INTERNAL([\"']|\]\])|desc:)"; then
+  if internal_may_have_rule; then
     transform=$(configured_internal_monitor_value transform)
   else
     transform=$(configured_monitor_value "" transform)
