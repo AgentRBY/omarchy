@@ -52,6 +52,22 @@ wait_for_position() {
   return 1
 }
 
+# Wait until nothing has written shell.json for a second and a half.
+wait_for_settled() {
+  local last="" now stable=0
+  for _ in {1..150}; do
+    now=$(md5sum <"$config")
+    if [[ $now == "$last" ]]; then
+      (( ++stable >= 15 )) && return 0
+    else
+      stable=0
+      last=$now
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 jq '.bar.position = "bottom"' "$ROOT/config/omarchy/shell.json" >"$config"
 
 OMARCHY_PATH="$test_root" \
@@ -64,6 +80,8 @@ PATH="$ROOT/bin:$PATH" \
 QS_PID=$!
 
 wait_for_position bottom || fail_with_log "shell loads the user's shell.json"
+# Widgets save their defaults into shell.json once they load (elsewhen its zones), which would race the edit below.
+wait_for_settled || fail_with_log "shell stops writing shell.json after it loads"
 
 # A hand edit that drops the closing brace.
 sed -i '$ d' "$config"
@@ -72,6 +90,8 @@ wait_for_position top || fail_with_log "shell falls back to defaults on an unrea
 
 reply=$(shell_ipc shell setBarWidget omarchy.clock format '"HH:mm"' '{}') || fail_with_log "bar widget setting is accepted"
 [[ $reply == "ok" ]] || fail_with_log "bar widget setting is applied: $reply"
+shell_ipc shell listShellConfig | jq -e 'any(.bar.layout[][]; .id == "omarchy.clock" and .format == "HH:mm")' >/dev/null || fail_with_log "a bar change still applies in memory while shell.json is unreadable"
+pass "a bar change still applies in memory while shell.json is unreadable"
 sleep 1
 cmp -s "$config" "$TMPDIR/broken.json" || fail "a bar change leaves an unreadable shell.json as the user left it" "$(cat "$config")"
 pass "a bar change leaves an unreadable shell.json as the user left it"
