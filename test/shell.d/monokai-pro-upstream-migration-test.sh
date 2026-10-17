@@ -71,6 +71,42 @@ run
 [[ $(snapshot) == "$before" ]] || fail "a home whose spec names its own fork was changed" "$(snapshot)"
 pass "a config that chose its own monokai-pro keeps its spec, pin and clone"
 
+seed_home gthelding gthelding
+mkdir -p "$test_tmp/dotfiles"
+mv "$themes" "$test_tmp/dotfiles/all-themes.lua"
+ln -s "$test_tmp/dotfiles/all-themes.lua" "$themes"
+before=$(snapshot)
+run
+[[ -L $themes && $(snapshot) == "$before" ]] || fail "a theme file a dotfile manager links in was changed" "$(snapshot)"
+pass "a theme file a dotfile manager links in is left alone"
+
+seed_home gthelding gthelding
+rm -rf "$test_tmp/dotfiles"
+mv "$home/.config/nvim" "$test_tmp/dotfiles"
+ln -s "$test_tmp/dotfiles" "$home/.config/nvim"
+before=$(snapshot)
+run
+[[ -L $home/.config/nvim && $(snapshot) == "$before" ]] || fail "a config directory a dotfile manager links in was changed" "$(snapshot)"
+pass "a config directory a dotfile manager links in is left alone"
+
+seed_home gthelding gthelding
+mv "$lock" "$test_tmp/lazy-lock.json"
+ln -s "$test_tmp/lazy-lock.json" "$lock"
+before=$(snapshot)
+run
+[[ -L $lock && $(snapshot) == "$before" ]] || fail "a lockfile a dotfile manager links in was changed" "$(snapshot)"
+pass "a lockfile a dotfile manager links in is left alone"
+
+seed_home gthelding gthelding
+chmod a-r "$themes"
+if run 2>/dev/null; then
+  chmod u+r "$themes"
+  fail "a theme file that cannot be read let the migration pass"
+fi
+chmod u+r "$themes"
+grep -qF "\"commit\": \"$dead_pin\"" "$lock" || fail "an unreadable theme file still let the lockfile change" "$(cat "$lock")"
+pass "a theme file that cannot be read leaves the migration pending"
+
 rm -rf "$home"
 mkdir -p "$home"
 run
