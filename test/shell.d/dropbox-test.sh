@@ -66,6 +66,13 @@ status=$(dropbox_status)
   fail "dropbox status reads an unlinked, running daemon without asking it for a link" "$status"
 pass "dropbox status reads an unlinked, running daemon without asking it for a link"
 
+# info.json can outlive an unlink, so naming an account does not prove the daemon has stopped minting links.
+jq -n --arg path "$test_tmp/home/Dropbox" '{personal: {path: $path, subscription_type: "Plus"}}' >"$test_tmp/home/.dropbox/info.json"
+status=$(dropbox_status)
+[[ $(jq -r .authenticated <<<"$status") == "false" && ! -e $test_tmp/home/cli.log ]] ||
+  fail "dropbox status leaves the daemon alone while info.json names a missing folder" "$status"
+pass "dropbox status leaves the daemon alone while info.json names a missing folder"
+
 mkdir -p "$test_tmp/home/Dropbox"
 jq -n --arg path "$test_tmp/home/Dropbox" '{personal: {path: $path, subscription_type: "Plus"}}' >"$test_tmp/home/.dropbox/info.json"
 status=$(dropbox_status)
