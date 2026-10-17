@@ -135,8 +135,8 @@ pass "Omarchy 4 upgrade locks the Chromium policy directory to root"
 
 # A browser chosen on 3.x survives the retire step in ~/.config/mimeapps.list,
 # so the upgrade may only fill in Chromium when nothing resolves.
-grep -B1 -F 'env -u BROWSER xdg-settings set default-web-browser chromium.desktop' "$upgrade_to_quattro" |
-  grep -F '[[ -z $(env -u BROWSER xdg-settings get default-web-browser 2>/dev/null) ]]; then' >/dev/null ||
+grep -B1 -F 'env -u BROWSER XDG_CURRENT_DESKTOP= xdg-settings set default-web-browser chromium.desktop' "$upgrade_to_quattro" |
+  grep -F '[[ -z $(env -u BROWSER XDG_CURRENT_DESKTOP= xdg-settings get default-web-browser 2>/dev/null) ]]; then' >/dev/null ||
   fail "Omarchy 4 upgrade keeps the default browser the user chose"
 pass "Omarchy 4 upgrade keeps the default browser the user chose"
 
