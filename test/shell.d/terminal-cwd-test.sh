@@ -20,6 +20,11 @@ terminal_pid=$!
 bash -c '(cd "$1" && bash -c "sleep 30; :") & wait' _ "$downloads_dir" &
 browser_pid=$!
 
+# The same browser started from a terminal's shell: it and its helper share that
+# shell's pty, but only the browser leads a session.
+(cd "$test_tmp" && DIR="$downloads_dir" SHELL=/bin/bash exec script -qec '(cd "$DIR" && bash -c "sleep 30; :") & wait' /dev/null) </dev/null >/dev/null 2>&1 &
+pty_script_pid=$!
+
 # Children first: killing a parent reparents its children out of reach.
 kill_tree() {
   local child
@@ -28,7 +33,7 @@ kill_tree() {
   done
   kill "$1" 2>/dev/null || true
 }
-trap 'kill_tree "$terminal_pid"; kill_tree "$browser_pid"; wait 2>/dev/null || true; rm -rf "$test_tmp"' EXIT
+trap 'kill_tree "$terminal_pid"; kill_tree "$browser_pid"; kill_tree "$pty_script_pid"; wait 2>/dev/null || true; rm -rf "$test_tmp"' EXIT
 
 # Ready once each newest child has exec'd bash in its directory: script's child
 # takes its session and pty before the exec, so a ready terminal shell has both.
@@ -37,6 +42,7 @@ wait_for_shell() {
   for _ in $(seq 100); do
     child=$(cat /proc/"$1"/task/*/children 2>/dev/null | tr ' ' '\n' | sort -n | tail -n1)
     if [[ -n $child && $(readlink /proc/"$child"/exe 2>/dev/null) == */bash && $(readlink -f /proc/"$child"/cwd 2>/dev/null) == "$2" ]]; then
+      ready_shell=$child
       return
     fi
     sleep 0.05
@@ -45,6 +51,9 @@ wait_for_shell() {
 }
 wait_for_shell "$terminal_pid" "$work_dir"
 wait_for_shell "$browser_pid" "$downloads_dir"
+wait_for_shell "$pty_script_pid" "$test_tmp"
+pty_browser_pid=$ready_shell
+wait_for_shell "$pty_browser_pid" "$downloads_dir"
 
 cat >"$stub_bin/hyprctl" <<'SH'
 #!/bin/bash
@@ -76,3 +85,7 @@ pass "a terminal pid passed in finds its shell directory without hyprctl"
 cwd=$(PATH="$stub_bin:$PATH" XDG_RUNTIME_DIR="$test_tmp" HOME="$test_tmp" "$ROOT/bin/omarchy-cmd-terminal-cwd" "$browser_pid" 2>&1)
 [[ $cwd == "$test_tmp" ]] || fail "a focused app that is not a terminal opens a new terminal in HOME, not its helper shell's directory" "got: $cwd"
 pass "a focused app that is not a terminal opens a new terminal in HOME, not its helper shell's directory"
+
+cwd=$(PATH="$stub_bin:$PATH" XDG_RUNTIME_DIR="$test_tmp" HOME="$test_tmp" "$ROOT/bin/omarchy-cmd-terminal-cwd" "$pty_browser_pid" 2>&1)
+[[ $cwd == "$test_tmp" ]] || fail "an app started from a terminal, sharing its pty, still opens a new terminal in HOME" "got: $cwd"
+pass "an app started from a terminal, sharing its pty, still opens a new terminal in HOME"
