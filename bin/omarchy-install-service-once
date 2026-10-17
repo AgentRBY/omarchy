@@ -11,7 +11,7 @@ omarchy-pkg-add once-bin
 # Older releases allow root-running backups to follow user-controlled symlinks.
 # https://github.com/basecamp/once/security/advisories/GHSA-jqwc-wmh4-9qw3
 if ! pacman -T 'once-bin>=0.3.4' >/dev/null; then
-  echo "ONCE 0.3.4 or newer is required. Run omarchy update, then retry the installation." >&2
+  echo "ONCE 0.3.4 or newer is required. Run omarchy update, then omarchy-install-service-once." >&2
   exit 1
 fi
 

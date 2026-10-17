@@ -70,6 +70,7 @@ for version in '' 0.3.0-1 0.3.3-1 0.3.3-99; do
   (( status != 0 )) || fail "missing or vulnerable ONCE is rejected: ${version:-missing}"
   [[ $(<"$test_tmp/calls") == $'install\ncheck' ]] || fail "unsafe ONCE never starts" "$(cat "$test_tmp/calls")"
   grep -q 'omarchy update' "$test_tmp/output" || fail "rejected ONCE explains how to update"
+  grep -q 'then omarchy-install-service-once' "$test_tmp/output" || fail "rejected ONCE names the command to retry"
 done
 pass "missing and vulnerable packages cannot enable the service or launch ONCE"
 
