@@ -735,7 +735,7 @@ QtObject {
     if (relative.indexOf(".") === 0) return ""
     if (relative.indexOf("/.git/") !== -1 || relative.endsWith("/.git")) return ""
     // Bytecode a plugin's Python helper writes on import would otherwise reload it, restart the helper, and loop.
-    if (/(^|\/)__pycache__(\/|$)/.test(relative) || /\.py[co]$/.test(relative)) return ""
+    if (/\/__pycache__(\/|$)/.test(relative)) return ""
 
     var slash = relative.indexOf("/")
     return slash === -1 ? relative : relative.slice(0, slash)
