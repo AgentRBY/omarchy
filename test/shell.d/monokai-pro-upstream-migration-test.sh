@@ -97,15 +97,19 @@ run
 [[ -L $lock && $(snapshot) == "$before" ]] || fail "a lockfile a dotfile manager links in was changed" "$(snapshot)"
 pass "a lockfile a dotfile manager links in is left alone"
 
-seed_home gthelding gthelding
-chmod a-r "$themes"
-if run 2>/dev/null; then
+if (( EUID == 0 )); then
+  skip "running as root, which reads any file; skipping the unreadable theme file check"
+else
+  seed_home gthelding gthelding
+  chmod a-r "$themes"
+  if run 2>/dev/null; then
+    chmod u+r "$themes"
+    fail "a theme file that cannot be read let the migration pass"
+  fi
   chmod u+r "$themes"
-  fail "a theme file that cannot be read let the migration pass"
+  grep -qF "\"commit\": \"$dead_pin\"" "$lock" || fail "an unreadable theme file still let the lockfile change" "$(cat "$lock")"
+  pass "a theme file that cannot be read leaves the migration pending"
 fi
-chmod u+r "$themes"
-grep -qF "\"commit\": \"$dead_pin\"" "$lock" || fail "an unreadable theme file still let the lockfile change" "$(cat "$lock")"
-pass "a theme file that cannot be read leaves the migration pending"
 
 rm -rf "$home"
 mkdir -p "$home"
