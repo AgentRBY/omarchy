@@ -91,8 +91,10 @@ chmod +x "$stage/bin/omarchy-network-status"
 printf '#!/bin/bash\nprintf "%%s\\n" "$@" >> "$NETWORK_TEST_BROWSER_LOG"\n' > "$stage/bin/omarchy-launch-browser"
 chmod +x "$stage/bin/omarchy-launch-browser"
 # NetworkManager's probe, overridden from Arch's default as the reporter of #11961 had it.
+# Answers only the exact query, so a wrong property or path falls back and fails.
 cat > "$stage/bin/busctl" <<'SH'
 #!/bin/bash
+[[ "$*" == "--json=short get-property org.freedesktop.NetworkManager /org/freedesktop/NetworkManager org.freedesktop.NetworkManager ConnectivityCheckUri" ]] || exit 1
 echo '{"type":"s","data":"http://nmcheck.gnome.org/check_network_status.txt"}'
 SH
 chmod +x "$stage/bin/busctl"
