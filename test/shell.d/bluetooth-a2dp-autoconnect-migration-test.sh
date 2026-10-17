@@ -57,8 +57,8 @@ printf '%s\n' "$old_rule" >"$(conf_in "$stock")"
 run_migration "$stock"
 run_migration "$stock"
 cmp -s "$shipped" "$(conf_in "$stock")" || fail "the migration replaces an untouched copy of the old rule"
-grep -Fxq -- '--user try-restart wireplumber.service' "$stock/systemctl.log" ||
-  fail "the migration restarts WirePlumber after replacing the rule"
+[[ $(grep -Fxc -- '--user try-restart wireplumber.service' "$stock/systemctl.log") == 1 ]] ||
+  fail "the migration restarts WirePlumber once, and not again on a second run"
 pass "the migration replaces an untouched copy of the old rule and can run twice"
 
 edited="$test_tmp/edited"
