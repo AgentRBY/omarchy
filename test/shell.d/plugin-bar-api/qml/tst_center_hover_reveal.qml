@@ -62,6 +62,16 @@ Item {
       compare(api.centerHoverRevealSuppressed, true)
     }
 
+    // A write of the value it already holds changes nothing, so it must not
+    // stop host changes reaching the plugin or the next write reaching the host.
+    function test_sameValueWriteKeepsMirroring() {
+      api.centerHoverRevealSuppressed = false
+      root.hostSuppressed = true
+      compare(api.centerHoverRevealSuppressed, true)
+      api.centerHoverRevealSuppressed = false
+      compare(root.hostSuppressed, false)
+    }
+
     // Bar.qml creates the facade first and binds the host value after.
     function test_hostAlreadySuppressedAtCreation() {
       root.hostSuppressed = true
