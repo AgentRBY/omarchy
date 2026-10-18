@@ -175,7 +175,6 @@ touch "$seed/openclaw.tgz"
 # Scratch copies of the actual scripts, with only the package's path and
 # /usr/local/bin swapped.
 mkdir -p "$test_tmp/usr-local-bin"
-cp "$ROOT/bin/omarchy-migrate" "$mock_bin/omarchy-migrate"
 for script in bin/omarchy-install-openclaw-cli migrations/1792334754.sh migrations/1790397381.sh; do
   sed -e "s|/usr/share/openclaw|$seed|g" -e "s|/usr/local/bin|$test_tmp/usr-local-bin|g" -e "s|/usr/bin/openclaw|$test_tmp/usr-bin/openclaw|g" \
     "$ROOT/$script" >"$mock_bin/${script##*/}"
@@ -200,16 +199,15 @@ mkdir -p "$test_tmp/usr-bin" "$test_tmp/tools"
 for tool in bash cat chmod cp cut env grep head jq ln mkdir mv readlink realpath rm sed sha256sum stat timeout touch true; do
   ln -s "$(type -P "$tool")" "$test_tmp/tools/$tool"
 done
-mkdir -p "$test_tmp/package-db"
 run() {
-  HOME="$test_home" OMARCHY_TEST_ROOT="$test_tmp" OMARCHY_PACKAGE_DB="$test_tmp/package-db" MISE_SHIMS_DIR='' MISE_DATA_DIR='' XDG_DATA_HOME='' PATH="$test_tmp/usr-bin:$mock_bin:$test_home/.local/bin:$test_tmp/tools" \
+  HOME="$test_home" OMARCHY_TEST_ROOT="$test_tmp" MISE_SHIMS_DIR='' MISE_DATA_DIR='' XDG_DATA_HOME='' PATH="$test_tmp/usr-bin:$mock_bin:$test_home/.local/bin:$test_tmp/tools" \
     "$@" >"$test_tmp/output" 2>&1
 }
 
 # omarchy update runs migrations on a fixed system PATH, without
 # /usr/local/bin, mise's shims or ~/.local/bin.
 run_update() {
-  HOME="$test_home" OMARCHY_TEST_ROOT="$test_tmp" OMARCHY_PACKAGE_DB="$test_tmp/package-db" MISE_SHIMS_DIR='' MISE_DATA_DIR='' XDG_DATA_HOME='' PATH="$mock_bin:$test_tmp/tools" \
+  HOME="$test_home" OMARCHY_TEST_ROOT="$test_tmp" MISE_SHIMS_DIR='' MISE_DATA_DIR='' XDG_DATA_HOME='' PATH="$mock_bin:$test_tmp/tools" \
     "$@" >"$test_tmp/output" 2>&1
 }
 
