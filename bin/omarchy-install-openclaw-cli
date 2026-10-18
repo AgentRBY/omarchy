@@ -70,6 +70,23 @@ installed() {
   omarchy-pkg-present openclaw && runtime_runs && on_path
 }
 
+# Until the seed package ships, the openclaw package is still OpenClaw itself,
+# in /usr (#15804). On a machine with no runtime of Omarchy's under ~/.openclaw,
+# that package is the OpenClaw: installed, answering and first on PATH, it is
+# enough. A runtime already set up, or the command linked to one, always wins.
+packaged_command=/usr/bin/openclaw
+seedless() {
+  [[ ! -r $seed/install-cli.sh || ! -r $seed/openclaw.tgz ]]
+}
+
+packaged_runs() {
+  local found
+  seedless && [[ ! -e $runtime_command && ! -e $command_path && ! -L $command_path ]] &&
+    omarchy-pkg-present openclaw && [[ -x $packaged_command ]] &&
+    found=$(type -P openclaw) && [[ $(realpath -m -- "$found") == "$(realpath -m -- "$packaged_command")" ]] &&
+    timeout 30 "$packaged_command" --version >/dev/null 2>&1
+}
+
 # A unit's ExecStart, as the program and the script it is handed: the first
 # argument that is not an option. Later arguments and other lines can name
 # ~/.openclaw whichever OpenClaw the unit starts.
@@ -185,7 +202,7 @@ stopped_note() {
 
 case "$mode" in
 --check)
-  if installed; then exit 0; else exit 1; fi
+  if installed || packaged_runs; then exit 0; else exit 1; fi
   ;;
 --now) ;;
 *)
@@ -193,6 +210,17 @@ case "$mode" in
   exit 1
   ;;
 esac
+
+# With no seed to set a runtime up from, the package is OpenClaw itself.
+if seedless && [[ ! -e $runtime_command && ! -e $command_path && ! -L $command_path ]]; then
+  if ! omarchy-pkg-present openclaw; then
+    echo "Installing OpenClaw..."
+    omarchy-pkg-add openclaw
+  fi
+  if packaged_runs; then
+    exit 0
+  fi
+fi
 
 # Refused before anything is installed or touched: the command's name, what
 # PATH finds, and a gateway running another OpenClaw all have to be clear.

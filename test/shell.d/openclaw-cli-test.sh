@@ -82,9 +82,9 @@ fi
 SH
 touch "$seed/openclaw.tgz"
 
-# Scratch copies of the actual scripts, with only the package's path swapped.
+# Scratch copies of the actual scripts, with only the package's paths swapped.
 for script in bin/omarchy-install-openclaw-cli migrations/1790397381.sh; do
-  sed "s|/usr/share/openclaw|$seed|g" "$ROOT/$script" >"$mock_bin/${script##*/}"
+  sed -e "s|/usr/share/openclaw|$seed|g" -e "s|/usr/bin/openclaw|$test_tmp/usr-bin/openclaw|g" "$ROOT/$script" >"$mock_bin/${script##*/}"
 done
 mv "$mock_bin/1790397381.sh" "$test_tmp/migration.sh"
 chmod +x "$mock_bin/omarchy-install-openclaw-cli"
@@ -141,7 +141,34 @@ run omarchy-install-openclaw-cli --now && fail "a package with no seed cannot se
 grep -q "Run 'omarchy update'" "$test_tmp/output" || fail "a package with no seed says to update" "$(cat "$test_tmp/output")"
 [[ ! -e $test_home/.openclaw && ! -e $command ]] || fail "a package with no seed leaves the home untouched"
 mv "$seed.old" "$seed"
-pass "a package that is still the runtime is refused before anything is touched"
+pass "a package with no seed and no command of its own is refused before anything is touched"
+
+# Until the seed package ships, the package is OpenClaw itself (#15804): its
+# /usr/bin/openclaw answering first on PATH is a finished install.
+packaged_openclaw() {
+  printf '#!/bin/bash\nprintf "packaged %%s\\n" "$*" >>"%s"\n' "$events" >"$test_tmp/usr-bin/openclaw"
+  chmod +x "$test_tmp/usr-bin/openclaw"
+}
+new_home packaged
+packaged_openclaw
+mv "$seed" "$seed.old"
+run omarchy-install-openclaw-cli --check && fail "--check calls OpenClaw installed before its package is"
+run omarchy-install-openclaw-cli --now || fail "--now installs the package that is OpenClaw itself" "$(cat "$test_tmp/output")"
+grep -Fxq "pkg-add openclaw" "$events" || fail "--now installs the package" "$(cat "$events")"
+! grep -q '^install-cli' "$events" || fail "a package with no seed seeds nothing" "$(cat "$events")"
+[[ ! -e $test_home/.openclaw && ! -e $command && ! -L $command ]] || fail "the package alone leaves the home untouched"
+run omarchy-install-openclaw-cli --check || fail "--check accepts the package that is OpenClaw itself"
+: >"$events"
+run omarchy-install-openclaw-cli --now || fail "--now accepts the package that is OpenClaw itself again" "$(cat "$test_tmp/output")"
+! grep -q '^pkg-add\|^install-cli' "$events" || fail "an installed package is not reinstalled" "$(cat "$events")"
+
+# A runtime Omarchy already set up wins over the package.
+mkdir -p "$test_home/.openclaw/bin" && printf '#!/bin/bash\n' >"$runtime" && chmod +x "$runtime"
+ln -s "$runtime" "$command"
+run omarchy-install-openclaw-cli --check && fail "--check does not fall back to the package beside a runtime"
+mv "$seed.old" "$seed"
+rm -f "$test_tmp/usr-bin/openclaw"
+pass "the package that is still OpenClaw itself is a finished install, unless a runtime is set up"
 
 new_home broken
 OMARCHY_TEST_INSTALL_BROKEN=1 run omarchy-install-openclaw-cli --now && fail "a runtime that does not run is not a finished install"

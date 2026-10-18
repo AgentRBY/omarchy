@@ -5,17 +5,19 @@
 
 set -e
 
-# The same self-updating install the default agent gets.
+# The same install the default agent gets: the self-updating copy under
+# ~/.openclaw, or, until the seed package ships, the package itself.
 omarchy-install-openclaw-cli --now
 
 # The desktop app is OpenClaw's Control UI: a web app served by its own
 # gateway. The launcher entry goes through omarchy-launch-openclaw, which
 # onboards or starts that gateway before opening the window. The icon ships
-# inside the package, so nothing is fetched here.
+# inside the package (the seed's own, or the Control UI's in the package that is
+# still OpenClaw itself), so nothing is fetched here.
 echo "Installing the OpenClaw web app..."
-omarchy-webapp-install OpenClaw "http://127.0.0.1:18789" \
-  /usr/share/openclaw/openclaw.png \
-  omarchy-launch-openclaw
+icon=/usr/share/openclaw/openclaw.png
+[[ -r $icon ]] || icon=/usr/lib/node_modules/openclaw/dist/control-ui/apple-touch-icon.png
+omarchy-webapp-install OpenClaw "http://127.0.0.1:18789" "$icon" omarchy-launch-openclaw
 
 # A first install runs onboarding right here: launching the app instead would
 # open a second floating terminal for the wizard, identical to this one.
