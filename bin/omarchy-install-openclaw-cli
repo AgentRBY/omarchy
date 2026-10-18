@@ -214,6 +214,13 @@ esac
 # With no seed to set a runtime up from, the package is OpenClaw itself.
 if seedless && [[ ! -e $runtime_command && ! -e $command_path && ! -L $command_path ]]; then
   if ! omarchy-pkg-present openclaw; then
+    # Without the package, any openclaw on PATH is someone else's, and
+    # installing the package would shadow it or be shadowed by it.
+    if foreign=$(type -P openclaw); then
+      echo "'openclaw' on PATH is $foreign, which is not Omarchy's OpenClaw." >&2
+      echo "Remove it or reorder PATH, then run omarchy-install-openclaw-cli --now again." >&2
+      exit 1
+    fi
     echo "Installing OpenClaw..."
     omarchy-pkg-add openclaw
   fi

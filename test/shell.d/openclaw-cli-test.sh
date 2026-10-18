@@ -20,6 +20,10 @@ cat >"$mock_bin/omarchy-pkg-add" <<'SH'
 #!/bin/bash
 printf 'pkg-add %s\n' "$*" >>"$OMARCHY_TEST_ROOT/events"
 touch "$OMARCHY_TEST_ROOT/package-installed"
+# A package that is still OpenClaw itself brings its own command.
+if [[ -f $OMARCHY_TEST_ROOT/packaged-openclaw ]]; then
+  install -m755 "$OMARCHY_TEST_ROOT/packaged-openclaw" "$OMARCHY_TEST_ROOT/usr-bin/openclaw"
+fi
 SH
 # The user manager, as far as these tests need one: a service is active while
 # a marker says so, and enabled likewise. Stopping clears it, except for the
@@ -102,7 +106,7 @@ new_home() {
 # test can drop another openclaw.
 mkdir -p "$test_tmp/usr-bin"
 run() {
-  HOME="$test_home" OMARCHY_TEST_ROOT="$test_tmp" PATH="$test_tmp/usr-bin:$mock_bin:$test_home/.local/bin:$PATH" \
+  HOME="$test_home" OMARCHY_TEST_ROOT="$test_tmp" PATH="${OMARCHY_TEST_PATH_FIRST:+$OMARCHY_TEST_PATH_FIRST:}$test_tmp/usr-bin:$mock_bin:$test_home/.local/bin:$PATH" \
     "$@" >"$test_tmp/output" 2>&1
 }
 
@@ -146,8 +150,7 @@ pass "a package with no seed and no command of its own is refused before anythin
 # Until the seed package ships, the package is OpenClaw itself (#15804): its
 # /usr/bin/openclaw answering first on PATH is a finished install.
 packaged_openclaw() {
-  printf '#!/bin/bash\nprintf "packaged %%s\\n" "$*" >>"%s"\n' "$events" >"$test_tmp/usr-bin/openclaw"
-  chmod +x "$test_tmp/usr-bin/openclaw"
+  printf '#!/bin/bash\nprintf "packaged %%s\\n" "$*" >>"%s"\n' "$events" >"$test_tmp/packaged-openclaw"
 }
 new_home packaged
 packaged_openclaw
@@ -167,8 +170,30 @@ mkdir -p "$test_home/.openclaw/bin" && printf '#!/bin/bash\n' >"$runtime" && chm
 ln -s "$runtime" "$command"
 run omarchy-install-openclaw-cli --check && fail "--check does not fall back to the package beside a runtime"
 mv "$seed.old" "$seed"
-rm -f "$test_tmp/usr-bin/openclaw"
+rm -f "$test_tmp/usr-bin/openclaw" "$test_tmp/packaged-openclaw"
 pass "the package that is still OpenClaw itself is a finished install, unless a runtime is set up"
+
+# Without the package, an openclaw already on PATH is the user's, wherever it
+# sorts: the package is not installed over it, nor behind it.
+mkdir -p "$test_tmp/user-first" "$test_tmp/user-later"
+printf '#!/bin/bash\n' >"$test_tmp/user-first/openclaw"
+printf '#!/bin/bash\n' >"$test_tmp/user-later/openclaw"
+chmod +x "$test_tmp/user-first/openclaw" "$test_tmp/user-later/openclaw"
+mv "$seed" "$seed.old"
+for where in user-first user-later; do
+  new_home "seedless-$where"
+  if [[ $where == user-first ]]; then
+    OMARCHY_TEST_PATH_FIRST="$test_tmp/$where" run omarchy-install-openclaw-cli --now && fail "a user's openclaw ahead of /usr/bin is refused"
+  else
+    cp "$test_tmp/$where/openclaw" "$mock_bin/openclaw"
+    run omarchy-install-openclaw-cli --now && fail "a user's openclaw behind /usr/bin is refused"
+    rm -f "$mock_bin/openclaw"
+  fi
+  ! grep -q '^pkg-add' "$events" || fail "the package is not installed over a user's openclaw ($where)" "$(cat "$events")"
+  grep -q "not Omarchy's OpenClaw" "$test_tmp/output" || fail "the refusal names the user's openclaw ($where)" "$(cat "$test_tmp/output")"
+done
+mv "$seed.old" "$seed"
+pass "with no package, an openclaw already on PATH is refused before the package is installed"
 
 new_home broken
 OMARCHY_TEST_INSTALL_BROKEN=1 run omarchy-install-openclaw-cli --now && fail "a runtime that does not run is not a finished install"
