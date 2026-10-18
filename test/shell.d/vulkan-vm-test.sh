@@ -31,5 +31,12 @@ for entry in "$ROOT/install/hardware/vulkan.sh" "$ROOT/migrations/1792254894.sh"
 done
 pass "the CPU Vulkan driver is installed only in VMs with no Vulkan GPU"
 
+# lspci wakes runtime-suspended GPUs, so the migration leaves bare metal alone.
+lspci() { touch "$scratch/lspci"; }
+vm=no
+source "$ROOT/migrations/1792254894.sh" >/dev/null
+[[ ! -e $scratch/lspci ]] || fail "the migration probes PCI only in a VM"
+pass "the migration does not wake the GPUs of a machine that is not a VM"
+
 grep -Fxq 'vulkan-swrast' "$ROOT/install/omarchy-other.packages" || fail "ISO can supply the CPU Vulkan driver offline"
 pass "the CPU Vulkan driver is included in the offline package inventory"
