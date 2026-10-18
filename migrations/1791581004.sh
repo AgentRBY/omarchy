@@ -26,6 +26,34 @@ omarchy-cmd-present limine-mkinitcpio || exit 0
 [[ " $(<"$running_cmdline") " != *" $param "* ]] || exit 0
 grep -Eq "^KERNEL_CMDLINE\[default\]\+=\".*${param//./\\.}.*\"" "$defaults_conf" || exit 0
 
+# Nor does one whose own limine configuration leaves it out of every kernel's
+# command line. A plain KERNEL_CMDLINE in /etc/default/limine, which limine
+# reads last, replaces the drop-in: installs from before 3.5 and Apple Silicon
+# Macs have one, and so may a kernel's own KERNEL_CMDLINE[<kernel>]. No rebuild
+# can add the parameter there, and the check after it would stop every update.
+# limine-entry-tool merges those layers itself, so ask it for each kernel
+# limine-mkinitcpio builds. An answer that isn't a command line, a usage text
+# from another version for one, counts as having it, so the rebuild and its
+# check go ahead as before. A fallback entry, built only where
+# MKINITCPIO_FALLBACK asks for one, isn't asked about: skipping it only delays
+# the parameter until the next kernel update rebuilds every entry, while
+# rebuilding for one that isn't built would stop every update.
+modules_dir="${OMARCHY_KERNEL_MODULES_DIR:-/usr/lib/modules}"
+kernels=0 configured=0
+for builtin in "$modules_dir"/*/modules.builtin; do
+  [[ -f $builtin ]] || continue
+  kernel=$(pacman -Qqo "$builtin" 2>/dev/null) || continue
+  kernels=$((kernels + 1))
+  answer=$(sudo limine-entry-tool --get-cmdline "$kernel" --no-mutex --no-hooks)
+  if [[ $answer == *Usage:* || " $(tail -n 1 <<<"$answer") " =~ [[:space:]]${param//./\\.}[[:space:]] ]]; then
+    configured=1
+  fi
+done
+if ((kernels > 0 && configured == 0)); then
+  echo "This machine's limine configuration leaves $param out of its kernel command lines; nothing to rebuild"
+  exit 0
+fi
+
 echo "The booted kernel is missing $param; rebuilding the boot image"
 sudo limine-mkinitcpio
 

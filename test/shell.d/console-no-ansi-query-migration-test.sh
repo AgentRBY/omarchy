@@ -26,7 +26,19 @@ echo rebuilt >>"${REBUILDS:?}"
 [[ -z ${REBUILD_FAILS:-} ]] || exit 1
 [[ -n ${REBUILD_BUILDS_NOTHING:-} ]] || printf '  cmdline: %s\n' "${NEW_CMDLINE:?}" >"${LIMINE_CONF:?}"
 STUB
+# limine-entry-tool answers with the command line limine would build, which a
+# case can set to one without the parameter or to a usage text; pacman names
+# the kernel package that owns a modules directory.
+cat >"$stub_bin/limine-entry-tool" <<'STUB'
+#!/bin/bash
+[[ $1 == --get-cmdline ]] || exit 1
+echo get-cmdline >>"${QUERIES:?}"
+printf '%s\n' "${LIMINE_CMDLINE:-${NEW_CMDLINE:?}}"
+STUB
+printf '#!/bin/bash\n[[ $1 == -Qqo ]] && echo linux-omarchy\n' >"$stub_bin/pacman"
 chmod +x "$stub_bin"/*
+mkdir -p "$test_dir/modules/7.2.8-9-omarchy"
+: >"$test_dir/modules/7.2.8-9-omarchy/modules.builtin"
 
 old_cmdline="root=PARTUUID=1 rw quiet splash initramfs_async=0"
 new_cmdline="$old_cmdline systemd.tty.term.console=dumb"
@@ -37,6 +49,7 @@ run() { # booted cmdline, defaults conf
   printf '  cmdline: %s\n' "$1" >"$test_dir/limine.conf"
   PATH="$stub_bin:$ROOT/bin:$PATH" REBUILDS="$test_dir/rebuilds" \
     LIMINE_CONF="$test_dir/limine.conf" NEW_CMDLINE="$new_cmdline" OMARCHY_LIMINE_CONF="$test_dir/limine.conf" \
+    QUERIES="$test_dir/queries" OMARCHY_KERNEL_MODULES_DIR="$test_dir/modules" \
     OMARCHY_RUNNING_CMDLINE="$test_dir/cmdline" OMARCHY_LIMINE_DEFAULTS_CONF="$2" \
     OMARCHY_LIMINE_REBUILD_MARKER="$test_dir/marker" bash -euo pipefail "$migration" >/dev/null
 }
@@ -75,6 +88,34 @@ grep -v "tty.term.console" "$ROOT/etc/limine-entry-tool.d/omarchy-defaults.conf"
 run "$old_cmdline" "$test_dir/edited.conf"
 [[ $(rebuilds) == 0 ]] || fail "a machine whose defaults leave the parameter out was rebuilt anyway"
 pass "a machine whose defaults were edited to leave the parameter out is left alone"
+
+# A plain KERNEL_CMDLINE in /etc/default/limine, which limine reads last,
+# replaces the drop-in (installs from before 3.5, Apple Silicon Macs), and a
+# kernel's own KERNEL_CMDLINE[<kernel>] can too. limine then builds every
+# kernel without the parameter, so nothing is rebuilt and the update goes on.
+LIMINE_CMDLINE="$old_cmdline" run "$old_cmdline" "$ROOT/etc/limine-entry-tool.d/omarchy-defaults.conf" ||
+  fail "a machine whose limine configuration leaves the parameter out failed the migration"
+[[ $(rebuilds) == 0 ]] || fail "a machine whose limine configuration leaves the parameter out was rebuilt anyway"
+pass "a machine whose limine configuration replaces the drop-in is left alone, and its update goes on"
+
+# A parameter limine would build keeps the rebuild and its check, and so does
+# an answer that isn't a command line.
+for answer in "$old_cmdline	systemd.tty.term.console=dumb" "Usage: limine-entry-tool [options]"; do
+  rm -f "$test_dir/marker"
+  LIMINE_CMDLINE=$(printf '%b' "$answer") run "$old_cmdline" "$ROOT/etc/limine-entry-tool.d/omarchy-defaults.conf"
+  [[ $(rebuilds) == 1 && -e $test_dir/marker ]] || fail "an answer of '$answer' did not rebuild and mark"
+done
+pass "a configuration limine builds the parameter from, or an unclear answer, still rebuilds"
+rm -f "$test_dir/marker"
+
+# A refused sudo stays pending.
+printf '#!/bin/bash\nexit 1\n' >"$stub_bin/sudo"
+if run "$old_cmdline" "$ROOT/etc/limine-entry-tool.d/omarchy-defaults.conf"; then
+  fail "a refused sudo let the migration finish"
+fi
+[[ $(rebuilds) == 0 && ! -e $test_dir/marker ]] || fail "a refused sudo rebuilt or marked the machine"
+pass "a refused sudo leaves the migration pending"
+printf '#!/bin/bash\nexec "$@"\n' >"$stub_bin/sudo"
 
 # No Limine: the stand-in goes, and the PATH holds only what the migration
 # needs, so a limine-mkinitcpio installed on the machine running this test is
