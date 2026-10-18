@@ -14,7 +14,11 @@ omarchy-pkg-add gst-plugin-pipewire
 # as a dependency is replaced. pipewire-jack provides jack, so the swap is one
 # transaction, and --ask=4 answers pacman's conflict question with yes, which
 # omarchy-pkg-add cannot (see 1786952219.sh).
-if omarchy-pkg-missing pipewire-jack &&
-  ! pacman -Qqe 2>/dev/null | grep -Fxq -e jack -e jack2; then
-  sudo pacman -S --noconfirm --needed --ask=4 pipewire-jack
+if omarchy-pkg-missing pipewire-jack; then
+  # Captured, not piped: grep -q quitting early would SIGPIPE pacman under
+  # pipefail, and a failed query stops the migration rather than reading as none.
+  explicit=$(pacman -Qqe)
+  if ! grep -Fxq -e jack -e jack2 <<<"$explicit"; then
+    sudo pacman -S --noconfirm --needed --ask=4 pipewire-jack
+  fi
 fi

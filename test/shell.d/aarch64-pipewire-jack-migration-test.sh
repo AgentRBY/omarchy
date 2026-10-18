@@ -36,7 +36,10 @@ case "$1" in
     [[ $1 == "--" ]] && shift
     grep -qx "$1" "$INSTALLED"
     ;;
-  -Qqe) cat "$EXPLICIT" ;;
+  -Qqe)
+    [[ -z ${QUERY_FAILS:-} ]] || exit 1
+    cat "$EXPLICIT"
+    ;;
   -S) printf 'pacman %s\n' "$*" >> "$CALL_LOG" ;;
   *) exit 99 ;;
 esac
@@ -72,6 +75,19 @@ printf '%s\n' jack > "$EXPLICIT"
 run_migration
 ! grep -Fq 'pipewire-jack' "$CALL_LOG" || fail "an explicitly installed jack is kept" "$(<"$CALL_LOG")"
 pass "an explicitly installed jack is kept"
+
+# grep -q stops at the first match, so pacman is still writing a long list.
+{ echo jack2; seq 200000 | sed 's/^/filler-/'; } > "$EXPLICIT"
+run_migration
+! grep -Fq 'pipewire-jack' "$CALL_LOG" || fail "jack2 at the head of a long explicit list is kept" "$(<"$CALL_LOG")"
+pass "jack2 at the head of a long explicit list is kept"
+
+printf '%s\n' obs-studio > "$EXPLICIT"
+if QUERY_FAILS=1 run_migration 2>/dev/null; then
+  fail "a failed explicit-package query stops the migration"
+fi
+! grep -Fq 'pipewire-jack' "$CALL_LOG" || fail "a failed explicit-package query swaps nothing" "$(<"$CALL_LOG")"
+pass "a failed explicit-package query stops the migration and swaps nothing"
 
 printf '%s\n' pipewire-jack > "$INSTALLED"
 : > "$EXPLICIT"
