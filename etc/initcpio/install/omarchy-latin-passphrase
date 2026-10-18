@@ -1,0 +1,20 @@
+#!/bin/bash
+
+build() {
+  # Plymouth asks for the disk passphrase in the first keyboard layout of
+  # /etc/vconsole.conf, and since 26.134.222-3 its own install hook bundles
+  # that file. Passphrases are Latin characters, so a first layout that cannot
+  # type them (Cyrillic, Greek, Hebrew, Arabic and others) locks the user out
+  # (#15802). omarchy_hooks.conf runs this hook after plymouth only for those
+  # layouts, and dropping the file leaves Plymouth on its default US layout,
+  # as it was before that plymouth release.
+  rm -f -- "$BUILDROOT/etc/vconsole.conf"
+}
+
+help() {
+  cat <<HELPEOF
+Keeps /etc/vconsole.conf out of the image, so Plymouth asks for the disk
+passphrase in its default US layout when the configured layout cannot type
+Latin letters.
+HELPEOF
+}
