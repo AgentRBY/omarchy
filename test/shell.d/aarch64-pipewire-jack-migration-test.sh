@@ -76,6 +76,16 @@ run_migration
 ! grep -Fq 'pipewire-jack' "$CALL_LOG" || fail "an explicitly installed jack is kept" "$(<"$CALL_LOG")"
 pass "an explicitly installed jack is kept"
 
+# Neither needs to be explicit: whatever pulled them in still needs jack2.
+printf '%s\n' obs-studio > "$EXPLICIT"
+for user in jack2-dbus pipewire-jack-client; do
+  printf '%s\n' jack2 obs-studio "$user" > "$INSTALLED"
+  run_migration
+  ! grep -Fq "$swap" "$CALL_LOG" || fail "an installed $user keeps its jack2" "$(<"$CALL_LOG")"
+  pass "an installed $user keeps its jack2"
+done
+printf '%s\n' jack2 obs-studio > "$INSTALLED"
+
 # grep -q stops at the first match, so pacman is still writing a long list.
 { echo jack2; seq 200000 | sed 's/^/filler-/'; } > "$EXPLICIT"
 run_migration
