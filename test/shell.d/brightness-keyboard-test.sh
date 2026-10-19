@@ -5,7 +5,8 @@ set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 test_tmp=$(mktemp -d)
-trap 'rm -rf "$test_tmp"' EXIT
+# Releasing the paused blank lets a failed run reap its jobs before the cleanup.
+trap 'touch "$test_tmp/pause.go"; wait || true; rm -rf "$test_tmp"' EXIT
 
 mock_bin="$test_tmp/bin"
 leds="$test_tmp/leds"
@@ -102,11 +103,11 @@ pass "an empty record is replaced rather than blanked over"
 # A wake that starts while a blank is still saving waits for it to finish.
 echo 3 >"$level_file"
 pause="$test_tmp/pause"
-PAUSE_GET="$pause" run_keyboard off &
+PAUSE_GET="$pause" run_keyboard off >/dev/null 2>&1 &
 blank=$!
 for _ in {1..100}; do [[ -e $pause.started ]] && break; sleep 0.05; done
 [[ -e $pause.started ]] || fail "the blank reached its save"
-run_keyboard restore &
+run_keyboard restore >/dev/null 2>&1 &
 wake=$!
 sleep 0.5
 touch "$pause.go"
