@@ -94,9 +94,11 @@ cat >"$mock_bin/omarchy-hw-aarch64" <<'SH'
 #!/bin/bash
 [[ ${TEST_AARCH64:-0} == "1" ]]
 SH
-for command in gtk-update-icon-cache update-desktop-database; do
-  printf '#!/bin/bash\nexit 0\n' >"$mock_bin/$command"
-done
+printf '#!/bin/bash\nexit 0\n' >"$mock_bin/gtk-update-icon-cache"
+cat >"$mock_bin/update-desktop-database" <<'SH'
+#!/bin/bash
+[[ ${TEST_FAIL_DESKTOP_DATABASE:-0} != "1" ]]
+SH
 chmod +x "$mock_bin"/*
 
 fresh_home() {
@@ -163,6 +165,32 @@ grep -q 'does not match its release checksum' "$test_tmp/output" || fail "the mi
 pass "a download that fails its checksum leaves the existing install and packages alone"
 publish v0.2.0 0.2.0 latest-linux.yml T3-Code-0.2.0-x86_64.AppImage
 cp "$releases/download/v0.2.0/latest-linux.yml" "$releases/latest/download/"
+
+# The migration and the Install menu read an installed AppImage as a finished
+# install, so a setup that stops partway must not leave one behind.
+fresh_home
+if TEST_FAIL_DESKTOP_DATABASE=1 install_app stable; then
+  fail "a failed launcher setup fails the install"
+fi
+[[ ! -e $appimage ]] || fail "the AppImage only lands once the launcher and t3 link are in place"
+! grep -q '^drop' "$TEST_LOG" || fail "the packages stay installed after an unfinished setup"
+[[ -z $(find "$home/.local/share/t3code" -name '.*download*') ]] || fail "the unfinished download is removed"
+install_app stable || fail "a retry after an unfinished setup succeeds" "$(cat "$test_tmp/output")"
+[[ -x $appimage && -f $desktop ]] || fail "a retry finishes the install"
+pass "an install that stops partway leaves no AppImage, so a retry finishes it"
+
+# A desktop launcher expands %-field codes in Exec, so a literal % is doubled there.
+percent_home="$test_tmp/home%20name"
+mkdir -p "$percent_home"
+HOME="$percent_home" T3CODE_HOME="$percent_home/.t3" PATH="$mock_bin:$ROOT/bin:$PATH" \
+  "$ROOT/bin/omarchy-install-t3code-app" stable >"$test_tmp/output" 2>&1 ||
+  fail "an install under a home with % in its path succeeds" "$(cat "$test_tmp/output")"
+percent_desktop="$percent_home/.local/share/applications/t3code.desktop"
+grep -qxF "Exec=\"$test_tmp/home%%20name/.local/share/t3code/T3-Code.AppImage\" %U" "$percent_desktop" ||
+  fail "the launcher escapes % in the AppImage path" "$(cat "$percent_desktop")"
+grep -qxF "TryExec=$percent_home/.local/share/t3code/T3-Code.AppImage" "$percent_desktop" ||
+  fail "TryExec keeps the literal path"
+pass "a % in the home path is escaped in the launcher's Exec"
 
 fresh_home
 mkdir -p "$home/.local/bin"

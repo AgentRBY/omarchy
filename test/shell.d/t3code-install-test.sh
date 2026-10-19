@@ -47,6 +47,10 @@ if [[ ${OMARCHY_TEST_T3_FAIL:-0} == "1" ]]; then
   echo "T3 theme selection failed"
   exit 1
 fi
+if [[ ${OMARCHY_TEST_T3_HANG:-0} == "1" ]]; then
+  touch "$TEST_TMP/cli-started"
+  exec sleep 30
+fi
 echo "T3 selected Omarchy"
 SH
 
@@ -63,8 +67,9 @@ exit 0
 SH
 chmod +x "$mock_bin"/* "$mount_dir/t3code"
 
+mkdir -p "$test_tmp/tmp"
 run_installer() {
-  HOME="$test_home" T3CODE_HOME="$test_tmp/custom t3 home" \
+  TMPDIR="$test_tmp/tmp" HOME="$test_home" T3CODE_HOME="$test_tmp/custom t3 home" \
     OMARCHY_PATH="$ROOT" PATH="$mock_bin:$ROOT/bin:$PATH" \
     OMARCHY_THEME_HEADLESS=1 XDG_RUNTIME_DIR="$test_tmp" \
     "$ROOT/bin/omarchy-install-ai-t3-code" "$@" >"$test_tmp/output" 2>&1
@@ -113,3 +118,30 @@ if grep -Eq 'Opening T3 Code|T3 Code has been installed' "$test_tmp/output"; the
 fi
 cmp -s "$test_tmp/settings-before.json" "$settings" || fail "a failed selection does not rewrite settings"
 pass "a CLI failure remains visible and leaves the existing settings intact"
+
+# Ctrl-C reaches the installer's whole process group, but the background
+# mounter ignores it, so the installer has to unmount on its way out.
+rm -f "$test_tmp/cli-started" "$test_tmp/mounter.pid"
+set -m
+OMARCHY_TEST_T3_HANG=1 run_installer stable &
+installer=$!
+set +m
+for _ in {1..100}; do
+  [[ -f $test_tmp/cli-started ]] && break
+  sleep 0.1
+done
+[[ -f $test_tmp/cli-started ]] || fail "an interrupted install reaches the CLI" "$(cat "$test_tmp/output")"
+kill -INT -- "-$installer"
+status=0
+wait "$installer" || status=$?
+((status != 0)) || fail "an interrupted install does not report success"
+mounter=$(cat "$test_tmp/mounter.pid")
+for _ in {1..50}; do
+  kill -0 "$mounter" 2>/dev/null || break
+  sleep 0.1
+done
+if kill -0 "$mounter" 2>/dev/null; then
+  fail "an interrupted install unmounts the AppImage"
+fi
+[[ -z $(find "$test_tmp/tmp" -name mount) ]] || fail "an interrupted install removes its mount record"
+pass "an interrupted install unmounts the AppImage and cleans up"

@@ -13,13 +13,17 @@ T3CODE_APPIMAGE="$HOME/.local/share/t3code/T3-Code.AppImage"
 # The app's own `t3` launcher appears only after its first launch, so run the
 # bundled CLI from the mounted AppImage the same way that launcher does.
 t3_cli() {
-  local work mount="" mounter status=0
-  work=$(mktemp -d)
-  "$T3CODE_APPIMAGE" --appimage-mount >"$work/mount" 2>/dev/null &
-  mounter=$!
-  # The runtime prints its mount point, then stays mounted until killed.
-  while kill -0 "$mounter" 2>/dev/null; do
-    mount=$(head -n 1 "$work/mount")
+  local mount="" status=0
+  t3_cli_work=$(mktemp -d)
+  "$T3CODE_APPIMAGE" --appimage-mount >"$t3_cli_work/mount" 2>/dev/null &
+  t3_cli_mounter=$!
+  # The runtime stays mounted until killed, and a background job ignores
+  # Ctrl-C, so an interrupted install has to unmount it on the way out too.
+  trap 'kill "$t3_cli_mounter" 2>/dev/null; rm -rf "$t3_cli_work"' EXIT
+  trap 'exit 130' INT TERM
+  # The runtime prints its mount point first.
+  while kill -0 "$t3_cli_mounter" 2>/dev/null; do
+    mount=$(head -n 1 "$t3_cli_work/mount")
     [[ -d $mount ]] && break
     mount=""
     sleep 0.05
@@ -30,9 +34,10 @@ t3_cli() {
     echo "Could not open $T3CODE_APPIMAGE." >&2
     status=1
   fi
-  kill "$mounter" 2>/dev/null || true
-  wait "$mounter" 2>/dev/null || true
-  rm -rf "$work"
+  kill "$t3_cli_mounter" 2>/dev/null || true
+  wait "$t3_cli_mounter" 2>/dev/null || true
+  rm -rf "$t3_cli_work"
+  trap - EXIT INT TERM
   return "$status"
 }
 

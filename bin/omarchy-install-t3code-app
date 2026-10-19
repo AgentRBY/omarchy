@@ -18,6 +18,8 @@ REPO_URL="https://github.com/pingdotgg/t3code"
 APP_DIR="$HOME/.local/share/t3code"
 # T3 Code updates itself by replacing this file. A name without a version is
 # what tells its updater to keep the name, so the launcher below stays valid.
+# It is moved in last: once it exists, the launcher and `t3` link do too, which
+# the migration and the Install menu rely on.
 APPIMAGE="$APP_DIR/T3-Code.AppImage"
 DESKTOP_FILE="$HOME/.local/share/applications/t3code.desktop"
 ICON_DIR="$HOME/.local/share/icons/hicolor"
@@ -74,13 +76,12 @@ if [[ $(openssl dgst -sha512 -binary "$download" | base64 -w0) != "$sha512" ]]; 
   exit 1
 fi
 chmod 755 "$download"
-mv -f "$download" "$APPIMAGE"
 
 # Upstream's entry carries the t3code:// handlers that deep links resolve through.
 (
   cd "$work"
-  "$APPIMAGE" --appimage-extract t3code.desktop >/dev/null
-  "$APPIMAGE" --appimage-extract 'usr/share/icons/hicolor/*/apps/t3code.png' >/dev/null
+  "$download" --appimage-extract t3code.desktop >/dev/null
+  "$download" --appimage-extract 'usr/share/icons/hicolor/*/apps/t3code.png' >/dev/null
 )
 for icon in "$work"/squashfs-root/usr/share/icons/hicolor/*/apps/t3code.png; do
   size=${icon#"$work/squashfs-root/usr/share/icons/hicolor/"}
@@ -93,8 +94,10 @@ if [[ $channel == "nightly" ]]; then
 else
   name="T3 Code"
 fi
+# Exec expands %-field codes, so a literal % in the path is written as %%.
+exec_path=${APPIMAGE//%/%%}
 mkdir -p "$(dirname "$DESKTOP_FILE")"
-sed -e "s|^Exec=.*|Exec=\"$APPIMAGE\" %U\nTryExec=$APPIMAGE|" -e "s|^Name=.*|Name=$name|" \
+sed -e "s|^Exec=.*|Exec=\"$exec_path\" %U\nTryExec=$APPIMAGE|" -e "s|^Name=.*|Name=$name|" \
   -e '/^X-AppImage-Version=/d' "$work/squashfs-root/t3code.desktop" >"$work/t3code.desktop"
 install -Dm755 "$work/t3code.desktop" "$DESKTOP_FILE"
 update-desktop-database "$HOME/.local/share/applications"
@@ -109,5 +112,7 @@ if [[ ! -e $link && ! -L $link ]] || [[ $link_target == "/usr/bin/t3" || $link_t
   ln -sfn "$launcher" "$link"
 fi
 
-# Only once the app is in place, so a failed download leaves the package working.
+mv -f "$download" "$APPIMAGE"
+
+# Only once the app is in place, so a failed install leaves the package working.
 omarchy-pkg-drop t3code-bin t3code-nightly-bin
