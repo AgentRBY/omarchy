@@ -94,6 +94,7 @@ pass "restore with nothing saved leaves the backlight alone"
 echo 3 >"$level_file"
 : >"$test_tmp/runtime/omarchy-brightness-keyboard-asus::kbd_backlight"
 run_keyboard off
+[[ $(level) == "0" ]] || fail "off blanks over an empty record once it has saved the level (got $(level))"
 run_keyboard restore
 [[ $(level) == "3" ]] || fail "an empty record is replaced rather than blanked over (got $(level))"
 pass "an empty record is replaced rather than blanked over"
@@ -104,6 +105,7 @@ pause="$test_tmp/pause"
 PAUSE_GET="$pause" run_keyboard off &
 blank=$!
 for _ in {1..100}; do [[ -e $pause.started ]] && break; sleep 0.05; done
+[[ -e $pause.started ]] || fail "the blank reached its save"
 run_keyboard restore &
 wake=$!
 sleep 0.5
