@@ -46,6 +46,7 @@ assert_status 2 0 "$shell"$'\n'"$other_shell" "a lock another shell may hold is 
 assert_status 2 0 "$shell"$'\n'"$hyprlock" "a lock hyprlock may hold is left undetermined"
 assert_status 0 0 "$shell"$'\n'"$voxtype" "voxtype's dictation OSD does not count as a locker"
 assert_status 2 0 "$voxtype"$'\n'"$other_shell" "voxtype's OSD does not hide another shell"
-assert_status 0 0 "$shell"$'\n'"300 qs -d -p /home/me/.local/share/voxtype/quickshell/" "voxtype's OSD from the user's data directory does not count either"
+assert_status 0 0 "$shell"$'\n'"300 qs -d -p /home/me/.local/share/voxtype/quickshell" "voxtype's OSD from the user's data directory does not count either"
+assert_status 0 0 "$shell"$'\n'"300 qs -p /home/me/User Data/voxtype/quickshell/" "nor from a data directory with a space in it"
 assert_status 2 0 "$shell"$'\n'"200 qs -p /usr/share/voxtype/quickshell-locker" "a shell beside voxtype's config is still a locker"
 assert_status 2 0 "$shell"$'\n'"400 hyprlock -c /usr/share/voxtype/quickshell/lock.conf" "hyprlock is a locker whatever its arguments name"

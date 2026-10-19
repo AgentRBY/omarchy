@@ -21,7 +21,7 @@ omarchy-hyprland-session-locked || exit
 if pgrep -u "$UID" -a -x 'quickshell|qs|hyprlock' \
   | awk -v self="$1" '
       $1 == self { next }
-      $2 ~ /(^|\/)(qs|quickshell)$/ && / -p [^ ]*\/voxtype\/quickshell\/?( |$)/ { next }
+      $2 ~ /(^|\/)(qs|quickshell)$/ && / -p .*\/voxtype\/quickshell\/?( |$)/ { next }
       { found = 1 }
       END { exit !found }
     '; then
