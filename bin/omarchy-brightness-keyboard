@@ -36,12 +36,14 @@ if [[ $direction == "off" || $direction == "restore" ]]; then
 fi
 
 if [[ $direction == "off" ]]; then
-  if [[ ! -f $saved ]]; then
+  if [[ ! -s $saved ]]; then
     level="$(brightnessctl -d "$device" get)"
-    [[ $level =~ ^[0-9]+$ ]] && echo "$level" >"$saved"
+    if [[ $level =~ ^[0-9]+$ ]] && ! echo "$level" >"$saved"; then
+      rm -f "$saved"
+    fi
   fi
   # Never blank a level there is no record of to restore.
-  [[ -f $saved ]] && brightnessctl -d "$device" set 0 >/dev/null
+  [[ -s $saved ]] && brightnessctl -d "$device" set 0 >/dev/null
   exit 0
 elif [[ $direction == "restore" ]]; then
   if [[ -f $saved ]]; then

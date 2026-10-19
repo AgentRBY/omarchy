@@ -19,6 +19,10 @@ cat >"$mock_bin/brightnessctl" <<SH
 case "\$3" in
 get)
   [[ -z \${FAIL_GET:-} ]] || exit 1
+  if [[ -n \${PAUSE_GET:-} ]]; then
+    touch "\$PAUSE_GET.started"
+    for _ in {1..100}; do [[ -e "\$PAUSE_GET.go" ]] && break; sleep 0.05; done
+  fi
   cat "$level_file"
   ;;
 max) echo 3 ;;
@@ -69,6 +73,7 @@ pass "a backlight that was off before blanking stays off"
 echo 3 >"$level_file"
 run_keyboard off
 FAIL_SET=1 run_keyboard restore
+[[ $(level) == "0" ]] || fail "a rejected restore leaves the backlight where it was (got $(level))"
 run_keyboard restore
 [[ $(level) == "3" ]] || fail "a failed restore keeps the saved level for the next one (got $(level))"
 pass "a failed restore keeps the saved level"
@@ -84,3 +89,25 @@ echo 1 >"$level_file"
 run_keyboard restore
 [[ $(level) == "1" ]] || fail "restore with nothing saved leaves the backlight alone (got $(level))"
 pass "restore with nothing saved leaves the backlight alone"
+
+# An empty record, as a save that ran out of space leaves, is no record.
+echo 3 >"$level_file"
+: >"$test_tmp/runtime/omarchy-brightness-keyboard-asus::kbd_backlight"
+run_keyboard off
+run_keyboard restore
+[[ $(level) == "3" ]] || fail "an empty record is replaced rather than blanked over (got $(level))"
+pass "an empty record is replaced rather than blanked over"
+
+# A wake that starts while a blank is still saving waits for it to finish.
+echo 3 >"$level_file"
+pause="$test_tmp/pause"
+PAUSE_GET="$pause" run_keyboard off &
+blank=$!
+for _ in {1..100}; do [[ -e $pause.started ]] && break; sleep 0.05; done
+run_keyboard restore &
+wake=$!
+sleep 0.5
+touch "$pause.go"
+wait "$blank" "$wake"
+[[ $(level) == "3" ]] || fail "a wake overlapping a blank restores the level once the blank is done (got $(level))"
+pass "a wake overlapping a blank waits for it"
