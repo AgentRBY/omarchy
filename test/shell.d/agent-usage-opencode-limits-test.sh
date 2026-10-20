@@ -120,6 +120,32 @@ record, _ = opencode(None, 403)
 expect("OpenCode collector drops a cancelled plan's windows",
        [record["limits"], record["usageStatusText"], record["tierLabel"]], [[], "", ""], record)
 
+# Two ways in, each answering for itself: OPENCODE_API_KEY is asked first.
+sandbox()
+os.environ.update(OPENCODE_API_KEY="key_first", OPENCODE_GO_API_KEY="key_second")
+
+
+def by_key(**answers):
+  return lambda request: answers[request.get_header("Authorization").removeprefix("Bearer ")]
+
+
+# Every way in refused keeps the open windows of whichever refusal has them,
+# not just the first one asked, which has none.
+opencode(by_key(key_first=401, key_second=USAGE))
+record, _ = opencode(by_key(key_first=401, key_second=401))
+expect("OpenCode collector keeps the windows of a later refused key when the first has none",
+       [windows(record), record["limitsStale"], record["usageStatusText"]],
+       [[("Rolling (5h)", 0.16), ("Weekly (7-day)", 0.06), ("Monthly", 0.29)], True, "Sign-in expired"], record)
+
+# A key that says it has no Go plan makes an outage on the other one, with
+# nothing kept for it, no news.
+for path in limits_cache_files("opencode"):
+  path.unlink()
+record, _ = opencode(by_key(key_first=403, key_second=500))
+expect("OpenCode collector lets a no-plan key quiet another key's outage",
+       [record["limits"], record["usageStatusText"], record["authHelpText"]], [[], "", ""], record)
+del os.environ["OPENCODE_API_KEY"], os.environ["OPENCODE_GO_API_KEY"]
+
 # ------------------------------------------------------------ credentials
 
 # The key can come from opencode's own credential stores or, when a machine
