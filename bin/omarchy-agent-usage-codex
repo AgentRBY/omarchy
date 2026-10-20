@@ -837,15 +837,16 @@ def collect_limits(home=None, force=False, primary=True):
   # Each probe starts an app-server, which syncs the plugin list on the way
   # up, so a panel opened and shut repeatedly reuses a recent answer instead.
   # --force is a person asking for fresh numbers, so it skips the reuse
-  # window.
-  if cache and cache.fresh(force):
+  # window. A plan without windows is an answer like any other, so it stands
+  # in too.
+  if cache and cache.fresh(force, allow_empty=True):
     result = {
       "limits": fallback,
       "tierLabel": str(cache.data.get("tierLabel") or ""),
       "usageStatusText": "",
       "authHelpText": "",
       "live": True,
-      "fetchedAtMs": fetched_at_ms,
+      "fetchedAtMs": cache.fetched_at,
     }
     if isinstance(cache.data.get("resetCredits"), dict):
       result["resetCredits"] = cache.data["resetCredits"]
@@ -860,7 +861,7 @@ def collect_limits(home=None, force=False, primary=True):
 
   if ok:
     rpc["live"] = True
-    if same_login and rpc["limits"]:
+    if same_login:
       rpc["fetchedAtMs"] = cache.save(rpc["limits"], tierLabel=rpc["tierLabel"], resetCredits=rpc.get("resetCredits"))
     else:
       rpc["fetchedAtMs"] = now_ms()

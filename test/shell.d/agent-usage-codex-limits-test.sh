@@ -157,6 +157,18 @@ for shape in ("surrogate user", {"tokens": ["unexpected"]}, {"tokens": {"account
   odd = codex("backend")
   expect(f"an auth.json of another shape still gives a record ({json.dumps(shape)})", odd["usageStatusText"], "Codex limits unavailable", odd)
 
+# ---------------------------------------------------- a plan without windows
+
+# A plan the app-server gives no windows for is an answer, reused like any
+# other rather than starting an app-server every run.
+login("ws-five", "user-e")
+bare = codex("ok", CODEX_RATE_LIMITS=json.dumps({"planType": "free"}))
+before_starts = starts()
+reused = codex("ok", "--limits-only", CODEX_RATE_LIMITS=json.dumps({"planType": "free"}))
+expect("an answer without windows stands in for the next probe",
+       [bare["limits"], bare["tierLabel"], reused["limits"], reused["tierLabel"], reused["limitsStale"], starts() - before_starts],
+       [[], "free", [], "free", False, 0], reused)
+
 # ------------------------------------------------------------ a spend cap
 
 # A spend cap is kept like any window: stale past a failed check, and back at
