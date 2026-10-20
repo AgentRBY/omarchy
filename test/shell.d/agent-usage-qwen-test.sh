@@ -1,181 +1,162 @@
 #!/bin/bash
 
-source "$(dirname "$0")/base-test.sh"
+# The Qwen Code collector's own sources: its chat transcripts, read the way
+# Qwen Code's own statistics read them, where QWEN_HOME, QWEN_RUNTIME_DIR and
+# settings.json put them, and the per-transcript index. The unused-machine
+# record is held by the partition test, and the scan cache by the contract
+# check. Qwen Code publishes no limits, so there is no limits contract to
+# hold.
 
-require_command jq
-require_command python3
+set -euo pipefail
 
-COLLECTOR="$ROOT/bin/omarchy-agent-usage-qwen"
-TMP_ROOT=$(mktemp -d)
-trap 'rm -rf "$TMP_ROOT"' EXIT
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+source "$SHELL_TEST_DIR/agent-usage-helpers.sh"
 
-unset QWEN_HOME QWEN_RUNTIME_DIR XDG_CACHE_HOME
+agent_sandbox
 
-today=$(date +%Y-%m-%d)
-now_iso=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
-two_days_ago=$(date -d '2 days ago' +%Y-%m-%d)
-two_days_ago_iso=$(date -u -d '2 days ago' +%Y-%m-%dT%H:%M:%S.000Z)
+python3 - <<'PY'
+from agent_usage_fixtures import *
 
-new_home() {
-  local home="$TMP_ROOT/$1"
-  mkdir -p "$home"
-  printf '%s\n' "$home"
-}
+NOW = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+TWO_DAYS_AGO = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
-collect() {
-  local home="$1"
-  shift
-  HOME="$home" XDG_CACHE_HOME="$home/.cache" "$COLLECTOR" "$@"
-}
 
-# prompt <uuid> <session> <time> [subtype]
-prompt() {
-  local subtype=""
-  [[ -n ${4:-} ]] && subtype=",\"subtype\":\"$4\""
-  printf '{"uuid":"%s","parentUuid":null,"sessionId":"%s","timestamp":"%s","type":"user"%s,"message":{"role":"user","parts":[{"text":"hi"}]}}\n' "$1" "$2" "$3" "$subtype"
-}
+def qwen(*args):
+  return collect("qwen", *(args or ("--force",)))
 
-# response <uuid> <session> <time> <model> <auth> <input> <output> <cached> <thoughts> [response id]
-response() {
-  printf '{"uuid":"%s","sessionId":"%s","timestamp":"%s","type":"system","subtype":"ui_telemetry","systemPayload":{"uiEvent":{"event.name":"qwen-code.api_response","event.timestamp":"%s","response_id":"%s","model":"%s","auth_type":"%s","input_token_count":%s,"output_token_count":%s,"cached_content_token_count":%s,"thoughts_token_count":%s,"total_token_count":0}}}\n' \
-    "$1" "$2" "$3" "$3" "${10:-}" "$4" "$5" "$6" "$7" "$8" "$9"
-}
 
-# ---------------------------------------------------------------- unused
+def prompt(uuid, session, timestamp, subtype=None):
+  line = {"uuid": uuid, "parentUuid": None, "sessionId": session, "timestamp": timestamp, "type": "user", "message": {"role": "user", "parts": [{"text": "hi"}]}}
+  if subtype:
+    line["subtype"] = subtype
+  return line
 
-home=$(new_home empty)
-record=$(collect "$home" --force)
-[[ $(jq -c '{schemaVersion, id, name, ready, hasPromptStats, tierLabel, usageStatusText, authHelpText, limits, limitsStale, limitsFetchedAt, balance: has("balance"), todayPrompts, todaySessions, todayTotalTokens, todayTokensByModel, totalPrompts, totalSessions, activeDays, activeDates, modelUsage, days: (.recentDays | length)}' <<<"$record") == '{"schemaVersion":1,"id":"qwen","name":"Qwen Code","ready":false,"hasPromptStats":true,"tierLabel":"","usageStatusText":"","authHelpText":"","limits":[],"limitsStale":false,"limitsFetchedAt":0,"balance":false,"todayPrompts":0,"todaySessions":0,"todayTotalTokens":0,"todayTokensByModel":{},"totalPrompts":0,"totalSessions":0,"activeDays":0,"activeDates":[],"modelUsage":{},"days":7}' ]] ||
-  fail "Qwen collector prints a full empty record the panel skips on an unused machine" "$record"
-pass "Qwen collector prints a full empty record the panel skips on an unused machine"
 
-# ---------------------------------------------------------------- transcripts
+# One billed answer, as Qwen Code logs it: a ui_telemetry api_response event.
+def response(uuid, session, timestamp, model, auth, input, output, cached, thoughts, response_id=""):
+  event = {"event.name": "qwen-code.api_response", "event.timestamp": timestamp, "response_id": response_id, "model": model, "auth_type": auth,
+           "input_token_count": input, "output_token_count": output, "cached_content_token_count": cached, "thoughts_token_count": thoughts, "total_token_count": 0}
+  return {"uuid": uuid, "sessionId": session, "timestamp": timestamp, "type": "system", "subtype": "ui_telemetry", "systemPayload": {"uiEvent": event}}
 
-home=$(new_home transcripts)
-chats="$home/.qwen/projects/-home-me-app/chats"
-mkdir -p "$chats"
-{
-  prompt u1 s1 "$now_iso"
-  response r1 s1 "$now_iso" qwen3-coder-plus qwen-oauth 1000 200 600 50 resp-1
-  prompt u2 s1 "$now_iso" mid_turn_user_message
+
+def transcript(path, lines, mode="w"):
+  path = Path(path)
+  path.parent.mkdir(parents=True, exist_ok=True)
+  with path.open(mode) as handle:
+    for line in lines:
+      handle.write((line if isinstance(line, str) else json.dumps(line)) + "\n")
+  return path
+
+
+def chats(project="p"):
+  return home() / ".qwen" / "projects" / project / "chats"
+
+
+# ------------------------------------------------------------- transcripts
+
+sandbox()
+transcript(chats("-home-me-app") / "s1.jsonl", [
+  prompt("u1", "s1", NOW),
+  response("r1", "s1", NOW, "qwen3-coder-plus", "qwen-oauth", 1000, 200, 600, 50, "resp-1"),
+  prompt("u2", "s1", NOW, "mid_turn_user_message"),
   # Goal and notification records are not typed prompts.
-  prompt u3 s1 "$now_iso" goal_runtime
+  prompt("u3", "s1", NOW, "goal_runtime"),
   # Gemini leaves thinking out of the output count.
-  response r2 s1 "$now_iso" gemini-2.5-pro gemini-api-key 300 40 0 10 resp-2
+  response("r2", "s1", NOW, "gemini-2.5-pro", "gemini-api-key", 300, 40, 0, 10, "resp-2"),
   # A provider that reports only the cached part reported a fully cached prompt.
-  response r3 s1 "$now_iso" qwen3-coder-plus openai 0 5 80 0 resp-3
-  printf '{"uuid":"x","type":"system","subtype":"ui_telemetry","systemPayload":{"uiEvent":{"event.name":"qwen-code.tool_call","model":"m"}}}\n'
-  printf '{"uuid":"y","type":"assistant","model":"qwen3-coder-plus","usageMetadata":{"promptTokenCount":999}}\n'
-} >"$chats/s1.jsonl"
-{
-  prompt u4 s2 "$two_days_ago_iso"
-  response r4 s2 "$two_days_ago_iso" qwen3-coder-plus openai 70 7 0 3 resp-4
-} >"$chats/s2.jsonl"
+  response("r3", "s1", NOW, "qwen3-coder-plus", "openai", 0, 5, 80, 0, "resp-3"),
+  {"uuid": "x", "type": "system", "subtype": "ui_telemetry", "systemPayload": {"uiEvent": {"event.name": "qwen-code.tool_call", "model": "m"}}},
+  {"uuid": "y", "type": "assistant", "model": "qwen3-coder-plus", "usageMetadata": {"promptTokenCount": 999}},
+])
+earlier = [prompt("u4", "s2", TWO_DAYS_AGO), response("r4", "s2", TWO_DAYS_AGO, "qwen3-coder-plus", "openai", 70, 7, 0, 3, "resp-4")]
+transcript(chats("-home-me-app") / "s2.jsonl", earlier)
 # A branched session carries the records it was branched from.
-{
-  prompt u4 s2 "$two_days_ago_iso"
-  response r4 s2 "$two_days_ago_iso" qwen3-coder-plus openai 70 7 0 3 resp-4
-} >"$chats/s3.jsonl"
-printf '{"uuid":"l","type":"user","sessionId":"s1","timestamp":"%s"}\n' "$now_iso" >"$chats/s1.ledger.jsonl"
+transcript(chats("-home-me-app") / "s3.jsonl", earlier)
+transcript(chats("-home-me-app") / "s1.ledger.jsonl", [{"uuid": "l", "type": "user", "sessionId": "s1", "timestamp": NOW}])
 
-record=$(collect "$home" --force)
-[[ $(jq -c '{ready, todayPrompts, todaySessions, todayTotalTokens, totalPrompts, totalSessions, activeDays}' <<<"$record") == '{"ready":true,"todayPrompts":2,"todaySessions":1,"todayTotalTokens":1635,"totalPrompts":3,"totalSessions":2,"activeDays":2}' ]] ||
-  fail "Qwen collector counts typed prompts and billed responses once each" "$record"
-pass "Qwen collector counts typed prompts and billed responses once each"
+record = qwen()
+two_days_ago = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+expect("Qwen counts typed prompts and billed responses once each, booked on the day each arrived", {
+  "name": record["name"],
+  "counts": {key: record[key] for key in ("ready", "hasPromptStats", "todayPrompts", "todaySessions", "todayTotalTokens", "totalPrompts", "totalSessions", "activeDays")},
+  "two days ago": next(day["messageCount"] for day in record["recentDays"] if day["date"] == two_days_ago),
+}, {
+  "name": "Qwen Code",
+  "counts": {"ready": True, "hasPromptStats": True, "todayPrompts": 2, "todaySessions": 1, "todayTotalTokens": 1635, "totalPrompts": 3, "totalSessions": 2, "activeDays": 2},
+  "two days ago": 77,
+}, record)
+expect("Qwen reads tokens the way Qwen Code's own statistics do", record["modelUsage"], {
+  "qwen3-coder-plus": {"inputTokens": 470, "outputTokens": 212, "cacheReadInputTokens": 680, "cacheCreationInputTokens": 0},
+  "gemini-2.5-pro": {"inputTokens": 300, "outputTokens": 50, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
+}, record)
 
-[[ $(jq -c '.modelUsage' <<<"$record") == '{"qwen3-coder-plus":{"inputTokens":470,"outputTokens":212,"cacheReadInputTokens":680,"cacheCreationInputTokens":0},"gemini-2.5-pro":{"inputTokens":300,"outputTokens":50,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}' ]] ||
-  fail "Qwen collector reads tokens the way Qwen Code's own statistics do" "$record"
-pass "Qwen collector reads tokens the way Qwen Code's own statistics do"
+# --------------------------------------------------------- untrusted fields
 
-[[ $(jq -r --arg day "$two_days_ago" '.recentDays[] | select(.date == $day) | .messageCount' <<<"$record") == "77" ]] ||
-  fail "Qwen collector books a response on the day it arrived" "$record"
-pass "Qwen collector books a response on the day it arrived"
-
-# ---------------------------------------------------------------- untrusted fields
-
-home=$(new_home untrusted)
-chats="$home/.qwen/projects/p/chats"
-mkdir -p "$chats"
-{
-  prompt bad1 s "yesterday-ish"
-  prompt bad2 s "2999-01-01T00:00:00Z"
-  response bad3 s "$now_iso" m openai '"100"' true NaN -5 a
-  response bad4 s "$now_iso" m openai 1e30 0 0 0 b
-  response ok1 s "$now_iso" m openai 10 2 0 0 c
-  printf '{"uuid":"z","type":"user","timestamp":'
-} >"$chats/s.jsonl"
-record=$(collect "$home" --force)
-[[ $(jq -c '{todayPrompts, todayTotalTokens}' <<<"$record") == '{"todayPrompts":0,"todayTotalTokens":12}' ]] ||
-  fail "Qwen collector skips bad times, bad token fields, and a torn last line" "$record"
-pass "Qwen collector skips bad times, bad token fields, and a torn last line"
+sandbox()
+transcript(chats() / "s.jsonl", [
+  prompt("bad1", "s", "yesterday-ish"),
+  prompt("bad2", "s", "2999-01-01T00:00:00Z"),
+  response("bad3", "s", NOW, "m", "openai", "100", True, float("nan"), -5, "a"),
+  response("bad4", "s", NOW, "m", "openai", 1e30, 0, 0, 0, "b"),
+  response("ok1", "s", NOW, "m", "openai", 10, 2, 0, 0, "c"),
+])
+with (chats() / "s.jsonl").open("a") as torn:
+  torn.write('{"uuid":"z","type":"user","timestamp":')
+record = qwen()
+expect("Qwen skips bad times, bad token fields, and a torn last line", [record["todayPrompts"], record["todayTotalTokens"]], [0, 12], record)
 
 # ---------------------------------------------------------------- locations
 
-home=$(new_home relocated)
-mkdir -p "$home/qhome" "$home/runtime/projects/p/chats" "$home/qhome/projects/p/chats" "$home/.qwen/projects/p/chats"
-response a s "$now_iso" m openai 1 0 0 0 ra >"$home/runtime/projects/p/chats/s.jsonl"
-response b s "$now_iso" m openai 10 0 0 0 rb >"$home/qhome/projects/p/chats/s.jsonl"
-response c s "$now_iso" m openai 100 0 0 0 rc >"$home/.qwen/projects/p/chats/s.jsonl"
-record=$(HOME="$home" XDG_CACHE_HOME="$home/.cache" QWEN_HOME="$home/qhome" QWEN_RUNTIME_DIR="$home/runtime" "$COLLECTOR" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$record") == "11" ]] ||
-  fail "Qwen collector honors QWEN_HOME and QWEN_RUNTIME_DIR" "$record"
-pass "Qwen collector honors QWEN_HOME and QWEN_RUNTIME_DIR"
+sandbox()
+transcript(home() / "runtime" / "projects" / "p" / "chats" / "s.jsonl", [response("a", "s", NOW, "m", "openai", 1, 0, 0, 0, "ra")])
+transcript(home() / "qhome" / "projects" / "p" / "chats" / "s.jsonl", [response("b", "s", NOW, "m", "openai", 10, 0, 0, 0, "rb")])
+transcript(chats() / "s.jsonl", [response("c", "s", NOW, "m", "openai", 100, 0, 0, 0, "rc")])
+os.environ.update(QWEN_HOME=str(home() / "qhome"), QWEN_RUNTIME_DIR=str(home() / "runtime"))
+record = qwen()
+del os.environ["QWEN_HOME"], os.environ["QWEN_RUNTIME_DIR"]
+expect("Qwen honors QWEN_HOME and QWEN_RUNTIME_DIR", record["todayTotalTokens"], 11, record)
 
-mkdir -p "$home/.qwen" "$home/out/projects/p/chats"
-printf '{"advanced":{"runtimeOutputDir":"~/out"}}\n' >"$home/.qwen/settings.json"
-response d s "$now_iso" m openai 1000 0 0 0 rd >"$home/out/projects/p/chats/s.jsonl"
-record=$(collect "$home" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$record") == "1100" ]] ||
-  fail "Qwen collector reads the runtimeOutputDir from settings.json" "$record"
-pass "Qwen collector reads the runtimeOutputDir from settings.json"
+write_json(home() / ".qwen" / "settings.json", {"advanced": {"runtimeOutputDir": "~/out"}})
+transcript(home() / "out" / "projects" / "p" / "chats" / "s.jsonl", [response("d", "s", NOW, "m", "openai", 1000, 0, 0, 0, "rd")])
+record = qwen()
+expect("Qwen reads the runtimeOutputDir from settings.json", record["todayTotalTokens"], 1100, record)
 
-# ---------------------------------------------------------------- scan cache
+# ---------------------------------------------------------------- contract
 
-home=$(new_home cache)
-chats="$home/.qwen/projects/p/chats"
-mkdir -p "$chats"
-response a s "$now_iso" m openai 10 0 0 0 ra >"$chats/s.jsonl"
-collect "$home" >/dev/null
-response b s "$now_iso" m openai 5 0 0 0 rb >>"$chats/s.jsonl"
-[[ $(collect "$home" | jq -r '.todayTotalTokens') == "10" ]] ||
-  fail "Qwen collector reuses a scan from the last few seconds"
-[[ $(collect "$home" --limits-only | jq -r '.todayTotalTokens') == "10" ]] ||
-  fail "Qwen collector reuses a recent scan for --limits-only"
-[[ $(collect "$home" --force | jq -r '.todayTotalTokens') == "15" ]] ||
-  fail "Qwen collector rescans with --force"
-pass "Qwen collector reuses a recent scan and rescans with --force"
+sandbox()
 
-cache_file=$(find "$home/.cache/omarchy/agent-usage" -name 'qwen-scan-*.json' -print -quit)
-[[ $(jq -r '.scanDate' "$cache_file") == "$today" ]] ||
-  fail "Qwen collector stamps its scan cache with the day it was made" "$(cat "$cache_file")"
-jq '.scanDate = "2000-01-01" | .stats.todayTotalTokens = 1' "$cache_file" >"$cache_file.new" && mv "$cache_file.new" "$cache_file"
-[[ $(collect "$home" | jq -r '.todayTotalTokens') == "15" ]] ||
-  fail "Qwen collector ignores a scan cache from another day"
-pass "Qwen collector ignores a scan cache from another day"
+
+def add_response():
+  add_response.count = getattr(add_response, "count", 0) + 1
+  transcript(chats() / "s.jsonl", [response(f"g{add_response.count}", "s", iso_in(0), "m", "openai", 5, 0, 0, 0, f"rg{add_response.count}")], mode="a")
+
+
+check_scan_cache(Adapter("qwen", grow=add_response))
 
 # The transcript index reads only what was appended, and starts over when the
-# file is replaced.
-response c s "$now_iso" m openai 20 0 0 0 rc >>"$chats/s.jsonl"
-[[ $(collect "$home" --force | jq -r '.todayTotalTokens') == "35" ]] ||
-  fail "Qwen collector picks up lines appended to a transcript"
-response d s "$now_iso" m openai 1 0 0 0 rd >"$chats/s.new"
-response e s "$now_iso" m openai 2 0 0 0 re >>"$chats/s.new"
-response f s "$now_iso" m openai 3 0 0 0 rf >>"$chats/s.new"
-response g s "$now_iso" m openai 4 0 0 0 rg >>"$chats/s.new"
-mv "$chats/s.new" "$chats/s.jsonl"
-[[ $(collect "$home" --force | jq -r '.todayTotalTokens') == "10" ]] ||
-  fail "Qwen collector rereads a transcript that was replaced"
-pass "Qwen collector reads appends incrementally and rereads a replaced transcript"
+# file is replaced, even by a longer one.
+others = qwen()["todayTotalTokens"]
+transcript(chats() / "t.jsonl", [response("a", "t", NOW, "m", "openai", 10, 0, 0, 0, "ra"), response("b", "t", NOW, "m", "openai", 5, 0, 0, 0, "rb")])
+expect("Qwen reads a new transcript", qwen()["todayTotalTokens"] - others, 15)
+transcript(chats() / "t.jsonl", [response("c", "t", NOW, "m", "openai", 20, 0, 0, 0, "rc")], mode="a")
+expect("Qwen picks up lines appended to a transcript", qwen()["todayTotalTokens"] - others, 35)
+replacement = transcript(chats() / "t.new", [response(name, "t", NOW, "m", "openai", tokens, 0, 0, 0, f"r{name}") for name, tokens in zip("defg", (1, 2, 3, 4))])
+replacement.rename(chats() / "t.jsonl")
+expect("Qwen rereads a transcript that was replaced", qwen()["todayTotalTokens"] - others, 10)
 
-response h s "$now_iso" m openai 5 0 0 0 rh >>"$chats/s.jsonl"
-chmod 000 "$chats/s.jsonl"
-if [[ ! -r $chats/s.jsonl ]]; then
-  rm -f "$cache_file"
-  collect "$home" --force >/dev/null 2>&1
-  [[ ! -e $cache_file ]] ||
-    fail "Qwen collector does not cache a scan that could not read every transcript"
-  pass "Qwen collector does not cache a scan that could not read every transcript"
-else
-  skip "Qwen collector does not cache a scan that could not read every transcript (running as root)"
-fi
-chmod 644 "$chats/s.jsonl"
+# A scan that couldn't read every transcript isn't cached.
+transcript(chats() / "s.jsonl", [response("h", "s", NOW, "m", "openai", 5, 0, 0, 0, "rh")], mode="a")
+(chats() / "s.jsonl").chmod(0)
+try:
+  if os.access(chats() / "s.jsonl", os.R_OK):
+    print("ok - Qwen does not cache a scan that could not read every transcript # SKIP running as root")
+  else:
+    for path in scan_cache_files("qwen"):
+      path.unlink()
+    with contextlib.redirect_stderr(io.StringIO()):
+      qwen()
+    check("Qwen does not cache a scan that could not read every transcript", not scan_cache_files("qwen"),
+          ", ".join(path.name for path in scan_cache_files("qwen")))
+finally:
+  (chats() / "s.jsonl").chmod(0o644)
+PY
