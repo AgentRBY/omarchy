@@ -337,17 +337,27 @@ def base_record(**overrides: Any) -> dict:
 KEY_LIMIT_PERIODS = {"daily": "Daily", "weekly": "Weekly", "monthly": "Monthly"}
 
 
+# OpenRouter answers `limit: null` for a key without a credit limit, which has
+# no meter. An answer missing the limit, or one naming a limit without a
+# readable remainder, says nothing about the allowance, so it is a failed check
+# that keeps the last good meter rather than an empty one that would replace it.
 def key_limit_meter(key_info: dict) -> list[dict]:
+  if "limit" not in key_info:
+    raise OpenRouterError("OpenRouter answered /key without a credit limit.")
+  limit = key_info.get("limit")
+  if limit is None:
+    return []
+  remaining = key_info.get("limit_remaining")
   try:
-    limit = key_info.get("limit")
-    remaining = key_info.get("limit_remaining")
-    if limit is None or remaining is None or isinstance(limit, bool) or isinstance(remaining, bool):
-      return []
+    if isinstance(limit, bool) or isinstance(remaining, bool):
+      raise TypeError
     lim = float(limit)
     rem = max(0.0, float(remaining))
   except (TypeError, ValueError):
-    return []
-  if not (math.isfinite(lim) and math.isfinite(rem)) or lim <= 0:
+    raise OpenRouterError("OpenRouter answered /key with an unreadable credit limit.") from None
+  if not (math.isfinite(lim) and math.isfinite(rem)):
+    raise OpenRouterError("OpenRouter answered /key with an unreadable credit limit.")
+  if lim <= 0:
     return []
   period = KEY_LIMIT_PERIODS.get(str(key_info.get("limit_reset") or "").strip().lower())
   label = f"{period} key limit" if period else "Key limit"

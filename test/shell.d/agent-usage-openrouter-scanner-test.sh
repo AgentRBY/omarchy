@@ -100,7 +100,7 @@ activity = module.summarize_activity([
 expect("activity folds prompt, completion and reasoning tokens per model, with its active dates",
        [activity["todayTotalTokens"], sorted(activity["modelUsage"]), len(activity["activeDates"])], [85, ["gpt-4o-mini", "y-model"], 2], activity)
 expect("a key without a credit limit has no meter, and one with a limit names its period, not a reset time",
-       [module.key_limit_meter({}), module.key_limit_meter({"limit": 10, "limit_remaining": 4, "limit_reset": "weekly"})],
+       [module.key_limit_meter({"limit": None, "limit_remaining": None}), module.key_limit_meter({"limit": 10, "limit_remaining": 4, "limit_reset": "weekly"})],
        [[], [{"label": "Weekly key limit", "title": "Weekly key limit", "percent": 0.6, "resetsAt": ""}]])
 
 # A read that stalls on its body times out the read itself: a transport
@@ -226,4 +226,19 @@ expect("an incomplete balance answer keeps the last balance, stale",
        [remaining(record)] + picked(record, "limitsStale", "usageStatusText", "retryAdvised"), [9.0, True, "", None], record)
 record = openrouter(routes=with_routes(credits=502))
 expect("an incomplete balance answer never replaces the cached balance", [remaining(record), record["limitsStale"]], [9.0, True], record)
+
+# A /key answer without a readable allowance is a failed check too, not an
+# unlimited key: the last meter stays, stale, and survives a later failure.
+for incomplete in ({"data": {}}, {}, {"data": {"limit": 10}}, {"data": {"limit": 10, "limit_remaining": "lots"}}):
+  openrouter()
+  record = openrouter(routes=with_routes(key=incomplete))
+  expect(f"an incomplete /key answer {incomplete} keeps the last meter, stale",
+         [len(record["limits"])] + picked(record, "limitsStale", "usageStatusText"), [1, True, ""], record)
+  record = openrouter(routes=with_routes(key=502))
+  expect(f"an incomplete /key answer {incomplete} never replaces the cached meter", [len(record["limits"]), record["limitsStale"]], [1, True], record)
+
+# An explicitly unlimited key is a good answer that clears the meter.
+openrouter()
+record = openrouter(routes=with_routes(key={"data": {"limit": None, "limit_remaining": None}}))
+expect("an unlimited key replaces the meter with none, fresh", picked(record, "limits", "limitsStale", "usageStatusText"), [[], False, ""], record)
 PY
