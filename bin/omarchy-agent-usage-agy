@@ -724,7 +724,9 @@ def main():
     usageStatusText=limits["usageStatusText"],
     authHelpText=limits["authHelpText"],
     limits=limits["limits"],
-    limitsStale=not limits["live"],
+    # Stale says limits were kept past a failed check; with none kept there
+    # is nothing to be stale.
+    limitsStale=not limits["live"] and bool(limits["limits"]),
     limitsFetchedAt=limits["fetchedAtMs"],
     retryAdvised=limits["retryAdvised"],
   )

@@ -204,4 +204,5 @@ expect("Antigravity collector counts OpenClaw's answers and only Antigravity's p
        [record["ready"], record["usageStatusText"], record["totalPrompts"], record["todayTotalTokens"],
         {model: bucket["inputTokens"] for model, bucket in record["modelUsage"].items()}],
        [True, "Waiting for auth", 4, 20, {"gemini-3-pro": 12, "antigravity-gemini-3-pro": 4}], record)
+expect("waiting for auth with no limits kept is nothing stale", [record["limits"], record["limitsStale"]], [[], False], record)
 PY
