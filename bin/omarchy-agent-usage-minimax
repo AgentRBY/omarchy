@@ -160,21 +160,27 @@ def saved_key(path: Path, providers: tuple[str, ...]) -> tuple[str, str]:
 
 
 def credentials() -> tuple[str, str]:
+  """(key, host). A key only answers on its own region's host, so the host
+  follows wherever the key came from: mmx's region applies to mmx's key
+  alone. MINIMAX_BASE_URL overrides any of them."""
+  override = os.environ.get("MINIMAX_BASE_URL", "").strip()
+  env_key = os.environ.get("MINIMAX_API_KEY", "").strip()
+  if env_key:
+    return env_key, override or (CN_BASE_URL if os.environ.get("MINIMAX_REGION") == "cn" else DEFAULT_BASE_URL)
+
   config = mmx_config()
-  api_key = os.environ.get("MINIMAX_API_KEY", "").strip() or config_key(config)
-  base_url = config_base_url(config)
-  if not api_key:
-    # The key opencode or pi signed in to MiniMax with; a China-region
-    # provider's key only answers on the China host.
-    for path in (data_home() / "opencode" / "auth.json", pi_agent_dir() / "auth.json", Path.home() / ".omp" / "agent" / "auth.json"):
-      # Only the provider ids MiniMax bills: a key saved under any other
-      # name belongs to a gateway, and is never sent to MiniMax.
-      api_key, provider = saved_key(path, PROVIDERS)
-      if api_key:
-        if provider.startswith("minimax-cn"):
-          base_url = CN_BASE_URL
-        break
-  return api_key, os.environ.get("MINIMAX_BASE_URL", "").strip() or base_url
+  if mmx_key := config_key(config):
+    return mmx_key, override or config_base_url(config)
+
+  # The key opencode or pi signed in to MiniMax with; a China-region
+  # provider's key only answers on the China host.
+  for path in (data_home() / "opencode" / "auth.json", pi_agent_dir() / "auth.json", Path.home() / ".omp" / "agent" / "auth.json"):
+    # Only the provider ids MiniMax bills: a key saved under any other
+    # name belongs to a gateway, and is never sent to MiniMax.
+    api_key, provider = saved_key(path, PROVIDERS)
+    if api_key:
+      return api_key, override or (CN_BASE_URL if provider.startswith("minimax-cn") else DEFAULT_BASE_URL)
+  return "", override or DEFAULT_BASE_URL
 
 
 # --------------------------------------------------------------------------

@@ -129,6 +129,21 @@ opencode.unlink()
 pi_auth(None, "minimax-cn", "mmx_pi_cn")
 expect("MiniMax credentials use a China-region key pi saved, on the China host", credentials(), ["mmx_pi_cn", "https://api.minimaxi.com"])
 
+# A key answers only on its own region's host, so mmx's region applies to
+# mmx's key alone: a key from the environment, opencode or pi signs in where
+# its own provider id says.
+write_json(home() / ".mmx" / "config.json", {"region": "cn"})
+opencode_auth(None, "minimax", "mmx_opencode_global")
+expect("MiniMax asks with a global key opencode saved on the global host, whatever region mmx names",
+       credentials(), ["mmx_opencode_global", "https://api.minimax.io"])
+write_json(home() / ".mmx" / "config.json", {"api_key": "mmx_saved", "region": "cn"})
+os.environ["MINIMAX_API_KEY"] = "mmx_env"
+expect("MiniMax asks with an exported key on the global host, whatever region mmx names", credentials(), ["mmx_env", "https://api.minimax.io"])
+os.environ["MINIMAX_BASE_URL"] = "https://minimax.example"
+expect("MiniMax asks MINIMAX_BASE_URL when it is set", credentials(), ["mmx_env", "https://minimax.example"])
+del os.environ["MINIMAX_API_KEY"], os.environ["MINIMAX_BASE_URL"]
+expect("MiniMax asks with mmx's own key on the host mmx names", credentials(), ["mmx_saved", "https://api.minimaxi.com"])
+
 # A key saved under a provider id MiniMax doesn't bill belongs to a gateway
 # in front of it, and is never sent to MiniMax as a bearer.
 sandbox()
