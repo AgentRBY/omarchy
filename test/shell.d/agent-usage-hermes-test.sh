@@ -1,207 +1,144 @@
 #!/bin/bash
 
+# The Hermes collector's own source: the state.db in Hermes' home and in each
+# named profile under ~/.hermes/profiles. Hermes has no subscription, so it has
+# no limits. The unused-machine record is held centrally by the partition test,
+# and the scan cache by the contract check.
+
 set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+source "$SHELL_TEST_DIR/agent-usage-helpers.sh"
 
-require_command jq
-require_command python3
+agent_sandbox
 
-SCRATCH=$(mktemp -d)
-trap 'rm -rf "$SCRATCH"' EXIT
-TEST_HOME="$SCRATCH/test"
-mkdir "$TEST_HOME"
-# The collector caches its scan; keep it out of the real cache.
-export XDG_CACHE_HOME="$TEST_HOME/.cache"
-
-# A Hermes state.db at $1 with one session today, its prompt, and usage for
-# the models after it, given as name:base where every count is base plus a
-# per-field offset.
-make_state() {
-  mkdir -p "$(dirname "$1")"
-  python3 - "$@" <<'PY'
+python3 - <<'PY'
+import datetime as dt
 import sqlite3
-import sys
-import time
 
-path, models = sys.argv[1], sys.argv[2:]
-conn = sqlite3.connect(path)
-conn.executescript(
-  """
-  CREATE TABLE sessions (
-    id TEXT PRIMARY KEY,
-    started_at REAL NOT NULL
-  );
-  CREATE TABLE messages (
-    id INTEGER PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    timestamp REAL NOT NULL
-  );
-  CREATE TABLE session_model_usage (
-    session_id TEXT NOT NULL,
-    model TEXT NOT NULL,
-    input_tokens INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (session_id, model)
-  );
-  """
-)
-now = time.time()
-conn.execute("INSERT INTO sessions VALUES (?, ?)", ("session-1", now))
-conn.executemany(
-  "INSERT INTO messages VALUES (?, ?, ?, ?)",
-  [(1, "session-1", "user", now), (2, "session-1", "assistant", now)],
-)
-for spec in models:
-  name, base = spec.split(":")
-  base = int(base)
-  conn.execute("INSERT INTO session_model_usage VALUES (?, ?, ?, ?, ?, ?)", ("session-1", name, base, base + 10, base + 20, base + 30))
-conn.commit()
-conn.close()
-PY
-}
+from agent_usage_fixtures import *
 
-make_state "$TEST_HOME/.hermes/state.db" gpt-6-astra:10 gpt-6-sol:11
+SCHEMA = """
+CREATE TABLE sessions (id TEXT PRIMARY KEY, started_at REAL NOT NULL);
+CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, timestamp REAL NOT NULL);
+CREATE TABLE session_model_usage (
+  session_id TEXT NOT NULL, model TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (session_id, model)
+);
+"""
 
-record=$(HOME="$TEST_HOME" HERMES_HOME="" "$ROOT/bin/omarchy-agent-usage-hermes" --force) ||
-  fail "Hermes collector exits successfully"
-pass "Hermes collector exits successfully"
 
-printf '%s\n' "$record" | jq -e '.modelUsage["gpt-6-astra"].inputTokens == 10 and .modelUsage["gpt-6-sol"].inputTokens == 11' >/dev/null ||
-  fail "Hermes collector preserves usage for each model"
-pass "Hermes collector preserves usage for each model"
+# A Hermes state.db with one session today, its prompt and reply, and usage
+# for each model given as (name, base), every count being base plus a
+# per-field offset.
+def state_db(path, *models):
+  path = Path(path)
+  path.parent.mkdir(parents=True, exist_ok=True)
+  conn = sqlite3.connect(path)
+  conn.executescript(SCHEMA)
+  now = time.time()
+  conn.execute("INSERT INTO sessions VALUES ('session-1', ?)", (now,))
+  conn.executemany("INSERT INTO messages VALUES (?, 'session-1', ?, ?)", [(1, "user", now), (2, "assistant", now)])
+  for name, base in models:
+    conn.execute("INSERT INTO session_model_usage VALUES ('session-1', ?, ?, ?, ?, ?)", (name, base, base + 10, base + 20, base + 30))
+  conn.commit()
+  conn.close()
+  return path
 
-printf '%s\n' "$record" | jq -e '.todayTokensByModel["gpt-6-sol"] == 104 and .todayTotalTokens == 204' >/dev/null ||
-  fail "Hermes collector reports today's per-model totals"
-pass "Hermes collector reports today's per-model totals"
 
-printf '%s\n' "$record" | jq -e '.recentDays | length == 7 and .[-1].messageCount == 204' >/dev/null ||
-  fail "Hermes collector reports the last week's tokens by day"
-pass "Hermes collector reports the last week's tokens by day"
+def hermes(*args):
+  return collect("hermes", *(args or ("--force",)))
 
-printf '%s\n' "$record" | jq -e '.totalPrompts == 1 and .todayPrompts == 1 and .totalSessions == 1 and .todaySessions == 1' >/dev/null ||
-  fail "Hermes collector reports prompt and session totals"
-pass "Hermes collector reports prompt and session totals"
+
+# ---------------------------------------------------------------- state.db
+
+sandbox()
+state_db(home() / ".hermes" / "state.db", ("gpt-6-astra", 10), ("gpt-6-sol", 11))
+record = hermes()
+expect("Hermes reads each model's usage, today's totals, and its prompts and sessions from state.db", {
+  "ready": record["ready"],
+  "status": record["usageStatusText"],
+  "astra": record["modelUsage"]["gpt-6-astra"],
+  "solToday": record["todayTokensByModel"]["gpt-6-sol"],
+  "today": record["todayTotalTokens"],
+  "week": [len(record["recentDays"]), record["recentDays"][-1]["messageCount"]],
+  "counts": [record["totalPrompts"], record["todayPrompts"], record["totalSessions"], record["todaySessions"]],
+}, {
+  "ready": True,
+  "status": "",
+  "astra": {"inputTokens": 10, "outputTokens": 20, "cacheReadInputTokens": 30, "cacheCreationInputTokens": 40},
+  "solToday": 104,
+  "today": 204,
+  "week": [7, 204],
+  "counts": [1, 1, 1, 1],
+}, record)
 
 # Named profiles live under ~/.hermes/profiles even when HERMES_HOME moves the
 # default home elsewhere.
-make_state "$TEST_HOME/elsewhere/state.db" gpt-6-astra:100
-make_state "$TEST_HOME/.hermes/profiles/work/state.db" gpt-6-sol:1000
-record=$(HOME="$TEST_HOME" HERMES_HOME="$TEST_HOME/elsewhere" "$ROOT/bin/omarchy-agent-usage-hermes")
-printf '%s\n' "$record" | jq -e '.modelUsage["gpt-6-astra"].inputTokens == 100 and .modelUsage["gpt-6-sol"].inputTokens == 1000 and .totalSessions == 2 and .totalPrompts == 2' >/dev/null ||
-  fail "Hermes collector reads HERMES_HOME and every named profile"
-pass "Hermes collector reads HERMES_HOME and every named profile"
+sandbox()
+state_db(home() / "elsewhere" / "state.db", ("gpt-6-astra", 100))
+state_db(home() / ".hermes" / "profiles" / "work" / "state.db", ("gpt-6-sol", 1000))
+os.environ["HERMES_HOME"] = str(home() / "elsewhere")
+record = hermes()
+del os.environ["HERMES_HOME"]
+expect("Hermes reads HERMES_HOME and every named profile",
+       [record["modelUsage"]["gpt-6-astra"]["inputTokens"], record["modelUsage"]["gpt-6-sol"]["inputTokens"], record["totalSessions"], record["totalPrompts"]],
+       [100, 1000, 2, 2], record)
 
-empty_home=$(mktemp -d "$SCRATCH/home.XXXXXX")
-record=$(HOME="$empty_home" HERMES_HOME="" PATH=/usr/bin:/bin "$ROOT/bin/omarchy-agent-usage-hermes")
-rm -rf "$empty_home"
-printf '%s\n' "$record" | jq -e '.limits == [] and .tierLabel == "" and .totalSessions == 0 and .activeDays == 0 and .modelUsage == {}' >/dev/null ||
-  fail "Hermes collector prints a record the panel skips without Hermes"
-pass "Hermes collector prints a record the panel skips without Hermes"
-
-# No state.db is an unused machine, not trouble: with sync on, another
-# machine's Hermes must not show red here.
-[[ $(jq -c '{ready, usageStatusText, authHelpText, limitsStale, limitsFetchedAt, hasLocalStats}' <<<"$record") == '{"ready":false,"usageStatusText":"","authHelpText":"","limitsStale":false,"limitsFetchedAt":0,"hasLocalStats":false}' ]] ||
-  fail "Hermes collector reports no trouble without Hermes state" "$record"
-pass "Hermes collector reports no trouble without Hermes state"
-# The last seven local days ending today, none with messages: an unused
-# record still carries the full week, zeroed.
-empty_week=$(for offset in 6 5 4 3 2 1 0; do date -d "$(date +%F) 12:00 $offset days ago" +%F; done | jq -Rsc 'split("\n")[:-1] | map({date: ., messageCount: 0})')
-[[ $(jq -c '[.todayPrompts, .todaySessions, .todayTotalTokens, .todayTokensByModel, .recentDays, .totalPrompts, .totalSessions, .activeDays, .activeDates, .modelUsage]' <<<"$record") == "[0,0,0,{},$empty_week,0,0,0,[],{}]" ]] ||
-  fail "Hermes collector prints the full empty stats block without Hermes state" "$record"
-pass "Hermes collector prints the full empty stats block without Hermes state"
-
-# Hermes on the machine is ready whether or not the hermes command is on PATH.
-record=$(HOME="$TEST_HOME" HERMES_HOME="" PATH=/usr/bin:/bin "$ROOT/bin/omarchy-agent-usage-hermes" --force)
-[[ $(jq -c '{ready, usageStatusText, authHelpText}' <<<"$record") == '{"ready":true,"usageStatusText":"","authHelpText":""}' ]] ||
-  fail "Hermes collector is ready once Hermes state exists" "$record"
-pass "Hermes collector is ready once Hermes state exists"
-
-# An unreadable state.db says Hermes is unavailable, with the detail in the
-# help text, and the readable profiles still count.
-bad_home=$(mktemp -d "$SCRATCH/home.XXXXXX")
-make_state "$bad_home/.hermes/profiles/work/state.db" gpt-6-sol:1000
-mkdir -p "$bad_home/.hermes"
-printf 'not a database at all, just text that is long enough to read' >"$bad_home/.hermes/state.db"
-record=$(HOME="$bad_home" HERMES_HOME="" XDG_CACHE_HOME="$bad_home/.cache" "$ROOT/bin/omarchy-agent-usage-hermes" --force)
-[[ $(jq -c '{ready, usageStatusText, hasLocalStats, totalSessions}' <<<"$record") == '{"ready":true,"usageStatusText":"Hermes unavailable","hasLocalStats":true,"totalSessions":1}' ]] ||
-  fail "Hermes collector reports an unreadable state.db" "$record"
-[[ $(jq -r .authHelpText <<<"$record") == "Couldn't read Hermes' state.db ($bad_home/.hermes/state.db: "* ]] ||
-  fail "Hermes collector names the unreadable state.db" "$record"
-pass "Hermes collector reports an unreadable state.db"
-[[ -z $(find "$bad_home/.cache" -name 'hermes-scan-*.json' 2>/dev/null) ]] ||
-  fail "Hermes collector doesn't cache a scan that missed a database"
-pass "Hermes collector doesn't cache a scan that missed a database"
-rm -rf "$bad_home"
-
-# The scan is reused for SCAN_REUSE_SECONDS, for LIMITS_ONLY_REUSE_SECONDS on
-# --limits-only, and never on --force.
-cache_home=$(mktemp -d "$SCRATCH/home.XXXXXX")
-make_state "$cache_home/.hermes/state.db" gpt-6-astra:10
-run_cached() {
-  HOME="$cache_home" HERMES_HOME="" XDG_CACHE_HOME="$cache_home/.cache" "$ROOT/bin/omarchy-agent-usage-hermes" "$@" | jq -r .totalSessions
-}
-add_session() {
-  python3 - "$cache_home/.hermes/state.db" "$1" <<'PY'
-import sqlite3, sys, time
-conn = sqlite3.connect(sys.argv[1])
-conn.execute("INSERT INTO sessions VALUES (?, ?)", (sys.argv[2], time.time()))
-conn.commit()
-PY
-}
-age_cache() {
-  local file
-  for file in "$cache_home"/.cache/omarchy/agent-usage/hermes-scan-*.json; do
-    jq -c --argjson age "$1" '.scannedAtMs -= $age * 1000' "$file" >"$file.new" && mv "$file.new" "$file"
-  done
-}
-[[ $(run_cached) == "1" ]] || fail "Hermes collector scans on first run"
-add_session session-2
-[[ $(run_cached) == "1" ]] || fail "Hermes collector reuses a scan from seconds ago"
-pass "Hermes collector reuses a scan from seconds ago"
-[[ $(run_cached --force) == "2" ]] || fail "Hermes collector rescans on --force"
-pass "Hermes collector rescans on --force"
-add_session session-3
-age_cache 120
-[[ $(run_cached --limits-only) == "2" ]] || fail "Hermes collector reuses a recent scan on --limits-only"
-pass "Hermes collector reuses a recent scan on --limits-only"
-[[ $(run_cached) == "3" ]] || fail "Hermes collector rescans once the reuse window passes"
-pass "Hermes collector rescans once the reuse window passes"
-add_session session-4
-age_cache -3600
-[[ $(run_cached --limits-only) == "4" ]] || fail "Hermes collector never reuses a future-dated scan"
-pass "Hermes collector never reuses a future-dated scan"
-
-rm -rf "$cache_home"
+# An unreadable state.db says Hermes is unavailable, naming it in the help
+# text, while the readable profiles still count, and that scan isn't cached.
+sandbox()
+state_db(home() / ".hermes" / "profiles" / "work" / "state.db", ("gpt-6-sol", 1000))
+(home() / ".hermes" / "state.db").write_text("not a database at all, just text that is long enough to read")
+record = hermes()
+expect("an unreadable state.db reports Hermes unavailable, the readable profiles still counted",
+       [record["ready"], record["usageStatusText"], record["hasLocalStats"], record["totalSessions"]],
+       [True, "Hermes unavailable", True, 1], record)
+check("the help text names the unreadable state.db",
+      record["authHelpText"].startswith(f"Couldn't read Hermes' state.db ({home() / '.hermes' / 'state.db'}: "), record["authHelpText"])
+check("a scan that missed a database isn't cached", not scan_cache_files("hermes"), scan_cache_files("hermes"))
 
 # Every active date travels, not only the latest 400, and broken token counts
 # or start times skip their row instead of inflating the record.
-dates_home=$(mktemp -d "$SCRATCH/home.XXXXXX")
-make_state "$dates_home/.hermes/state.db"
-python3 - "$dates_home/.hermes/state.db" <<'PY'
-import datetime as dt, sqlite3, sys
-conn = sqlite3.connect(sys.argv[1])
+sandbox()
+db = state_db(home() / ".hermes" / "state.db")
+conn = sqlite3.connect(db)
 # Local noon on each earlier day, so a daylight-saving change can't put two
 # sessions on one date the way fixed 86400-second steps can near midnight.
 today = dt.date.today()
 noons = [dt.datetime.combine(today - dt.timedelta(days=n + 1), dt.time(12)).timestamp() for n in range(450)]
 conn.executemany("INSERT INTO sessions VALUES (?, ?)", [(f"old-{n}", noons[n]) for n in range(450)])
 conn.execute("INSERT INTO sessions VALUES ('broken', 'not a time')")
-conn.executemany("INSERT INTO session_model_usage VALUES (?, ?, ?, ?, ?, ?)", [
-  ("old-1", "negative", -500, 0, 0, 0),
-  ("old-2", "huge", 10**15, 0, 0, 0),
-  ("broken", "untimed", 5, 0, 0, 0),
+conn.executemany("INSERT INTO session_model_usage VALUES (?, ?, ?, 0, 0, 0)", [
+  ("old-1", "negative", -500),
+  ("old-2", "huge", 10**15),
+  ("broken", "untimed", 5),
 ])
 conn.commit()
+conn.close()
+record = hermes()
+expect("Hermes emits every active date", [record["activeDays"], len(record["activeDates"])], [451, 451], record)
+expect("Hermes skips broken token counts, and counts an untimed session's in the totals", sorted(record["modelUsage"]), ["untimed"], record)
+
+# ---------------------------------------------------------------- contract
+
+sandbox()
+
+
+def plant():
+  if not (home() / ".hermes" / "state.db").exists():
+    state_db(home() / ".hermes" / "state.db", ("gpt-6-astra", 10))
+
+
+def add_session():
+  add_session.count = getattr(add_session, "count", 0) + 1
+  conn = sqlite3.connect(home() / ".hermes" / "state.db")
+  conn.execute("INSERT INTO sessions VALUES (?, ?)", (f"grown-{add_session.count}", time.time()))
+  conn.commit()
+  conn.close()
+
+
+check_scan_cache(Adapter("hermes", plant=plant, grow=add_session))
 PY
-record=$(HOME="$dates_home" HERMES_HOME="" XDG_CACHE_HOME="$dates_home/.cache" "$ROOT/bin/omarchy-agent-usage-hermes" --force)
-rm -rf "$dates_home"
-[[ $(jq -c '[.activeDays, (.activeDates | length)]' <<<"$record") == '[451,451]' ]] ||
-  fail "Hermes collector emits every active date" "$record"
-pass "Hermes collector emits every active date"
-[[ $(jq -c '.modelUsage | keys' <<<"$record") == '["untimed"]' ]] ||
-  fail "Hermes collector skips broken token counts" "$record"
-pass "Hermes collector skips broken token counts"
