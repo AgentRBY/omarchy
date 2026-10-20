@@ -19,8 +19,10 @@ agent_sandbox
 python3 - <<'PY'
 from agent_usage_fixtures import *
 
-NOW = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-TWO_DAYS_AGO = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+# The checks below compare today's totals with rows stamped NOW.
+freeze_today()
+NOW = fixture_now().isoformat(timespec="milliseconds").replace("+00:00", "Z")
+TWO_DAYS_AGO = (fixture_now() - timedelta(days=2)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def qwen(*args):
@@ -77,7 +79,7 @@ transcript(chats("-home-me-app") / "s3.jsonl", earlier)
 transcript(chats("-home-me-app") / "s1.ledger.jsonl", [{"uuid": "l", "type": "user", "sessionId": "s1", "timestamp": NOW}])
 
 record = qwen()
-two_days_ago = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+two_days_ago = (fixture_now().astimezone() - timedelta(days=2)).strftime("%Y-%m-%d")
 expect("Qwen counts typed prompts and billed responses once each, booked on the day each arrived", {
   "name": record["name"],
   "counts": {key: record[key] for key in ("ready", "hasPromptStats", "todayPrompts", "todaySessions", "todayTotalTokens", "totalPrompts", "totalSessions", "activeDays")},
@@ -179,7 +181,7 @@ sandbox()
 
 def add_response():
   add_response.count = getattr(add_response, "count", 0) + 1
-  transcript(chats() / "s.jsonl", [response(f"g{add_response.count}", "s", iso_in(0), "m", "openai", 5, 0, 0, 0, f"rg{add_response.count}")], mode="a")
+  transcript(chats() / "s.jsonl", [response(f"g{add_response.count}", "s", fixture_now().isoformat(), "m", "openai", 5, 0, 0, 0, f"rg{add_response.count}")], mode="a")
 
 
 check_scan_cache(Adapter("qwen", grow=add_response))

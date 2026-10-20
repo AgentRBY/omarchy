@@ -390,6 +390,42 @@ def _route_tls_to(base_url: str) -> None:
 
 # -------------------------------------------------------------------- time
 
+_frozen_day = None
+
+
+class _DayClock(datetime):
+  """datetime whose now() runs as usual until local midnight past the frozen
+  day, then stops at that day's last microsecond. freeze_today() hands it to
+  the shared module."""
+
+  @classmethod
+  def now(cls, tz: Any = None) -> datetime:
+    real = datetime.now(tz)
+    if _frozen_day is None or datetime.now().date() <= _frozen_day:
+      return real
+    end = datetime.combine(_frozen_day, datetime.max.time()).astimezone()
+    return end.astimezone(tz) if tz else end.replace(tzinfo=None)
+
+
+def freeze_today() -> None:
+  """Hold "today" to the local day it is now, for the rest of the process:
+  the shared module's clock, and the rows the fixtures stamp "now"
+  (pi_reply(), opencode rows, today_stamp()), run on as usual until local
+  midnight and then stop at that day's last microsecond. A test that
+  straddles midnight then dates every row and scan by the day it began;
+  time.time(), and so every cache age, runs on. check_scan_cache freezes
+  today itself; a test comparing today's totals across runs calls this first."""
+  global _frozen_day
+  import collectors
+  if _frozen_day is None:
+    _frozen_day = datetime.now().date()
+  collectors.datetime = _DayClock
+
+
+def fixture_now() -> datetime:
+  """Now in UTC, held to the frozen day once freeze_today() has run."""
+  return _DayClock.now(timezone.utc)
+
 
 def iso_in(seconds: float) -> str:
   """An ISO UTC time `seconds` from now (negative for the past)."""
@@ -404,7 +440,7 @@ def ms_in(seconds: float) -> int:
 def today_stamp(hour: int = 12) -> str:
   """An ISO time at `hour` today in local time, with its offset, so it lands
   on today whatever the machine's zone."""
-  return datetime.now().astimezone().replace(hour=hour, minute=0, second=0, microsecond=0).isoformat()
+  return fixture_now().astimezone().replace(hour=hour, minute=0, second=0, microsecond=0).isoformat()
 
 
 def jwt(claims: dict) -> str:
@@ -425,7 +461,7 @@ def pi_reply(provider: str, tokens: int = 1, id: str | None = None, model: str =
     message["api"] = api
   line: dict[str, Any] = {"type": "message", "message": message}
   if timestamp == "now":
-    timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    timestamp = fixture_now().isoformat(timespec="milliseconds").replace("+00:00", "Z")
   if timestamp is not None:
     line["timestamp"] = timestamp
   if id:
@@ -445,6 +481,14 @@ def write_pi_session(path: str | Path, lines: list, parent: str | Path | None = 
   return path
 
 
+def _oc_now() -> int:
+  """An opencode row's default time, in ms on the fixtures' clock: a second
+  ago, but never before today's local midnight."""
+  now = fixture_now()
+  midnight = now.astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+  return int(max(now - timedelta(seconds=1), midnight).timestamp() * 1000)
+
+
 def _oc_tokens(tokens: Any) -> dict:
   if isinstance(tokens, dict):
     return tokens
@@ -454,13 +498,13 @@ def _oc_tokens(tokens: Any) -> dict:
 def oc_v1(provider: str, tokens: Any, model: str = "m", created: int | None = None, role: str = "assistant") -> str:
   """An opencode `message` row's data: provider and model at the top level."""
   return json.dumps({"role": role, "providerID": provider, "modelID": model, "tokens": _oc_tokens(tokens),
-                     "time": {"created": ms_in(-1) if created is None else created}})
+                     "time": {"created": _oc_now() if created is None else created}})
 
 
 def oc_v2(provider: str, tokens: Any, model: str = "m", created: int | None = None) -> str:
   """An opencode V2 `session_message` row's data: the model nested."""
   return json.dumps({"model": {"providerID": provider, "id": model}, "tokens": _oc_tokens(tokens),
-                     "time": {"created": ms_in(-1) if created is None else created}})
+                     "time": {"created": _oc_now() if created is None else created}})
 
 
 OC_TABLES = {
@@ -490,7 +534,7 @@ def oc_add(path: str | Path, message=(), session_message=(), forks=()) -> None:
   created_ms]), `session_message` rows (id, session, type, data[,
   created_ms]), and `forks` (session, source session, created_ms)."""
   conn = sqlite3.connect(path)
-  now = ms_in(-1)
+  now = _oc_now()
   for row in message:
     message_id, session, data, *created = row
     stamp = created[0] if created else now
@@ -818,6 +862,9 @@ def check_scan_cache(adapter: Adapter) -> None:
   name = adapter.id
   if adapter.grow is None:
     check(f"{name}: the scan adapter says how to add usage (grow)", False)
+  # Every run below must date its scan by one day, or a run straddling local
+  # midnight misses a cache it should reuse.
+  freeze_today()
   for path in scan_cache_files(name):
     path.unlink()
   adapter.plant()

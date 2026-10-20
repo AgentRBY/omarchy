@@ -50,8 +50,14 @@ def check(description, condition, detail=""):
   sys.exit(1)
 
 
-today = datetime.now().strftime("%Y-%m-%d")
-stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+# "today" is held to the day this run began, so one that straddles local
+# midnight still dates its rows, stats and scans by one day.
+sys.path.insert(0, os.path.join(os.environ["ROOT"], "test", "shell.d"))
+from agent_usage_fixtures import fixture_now, freeze_today  # noqa: E402
+
+freeze_today()
+today = collectors.today()
+stamp = fixture_now().isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 # ------------------------------------------------------------- untrusted values
 

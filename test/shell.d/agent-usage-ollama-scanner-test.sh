@@ -18,6 +18,8 @@ agent_sandbox
 python3 - <<'PY'
 from agent_usage_fixtures import *
 
+# The checks below compare today's totals with rows stamped now.
+freeze_today()
 USAGE = "ollama.com/api/usage"
 ME = "ollama.com/api/me"
 ROUTES = {
