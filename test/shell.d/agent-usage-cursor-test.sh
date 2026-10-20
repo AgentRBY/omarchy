@@ -55,7 +55,7 @@ yesterday = today - timedelta(days=1)
 # reports it: 609.86 spent against a 400.00 allowance, while Cursor's own
 # meters say 18.76% / 11.81% / 100%.
 PERIOD = {
-  "billingCycleEnd": "1792099926000",
+  "billingCycleEnd": "4092099926000",
   "planUsage": {
     "totalSpend": 60986,
     "includedSpend": 40000,
@@ -198,7 +198,7 @@ pass "Cursor collector prints the display-ready record contract"
   fail "Cursor collector reports Cursor's own meters, not spend over the allowance" "$result"
 pass "Cursor collector reports Cursor's own meters, not spend over the allowance"
 
-[[ $(jq -r '.record.limits[0].resetsAt' <<<"$result") == "2026-10-15T21:32:06+00:00" ]] ||
+[[ $(jq -r '.record.limits[0].resetsAt' <<<"$result") == "2099-09-03T06:25:26+00:00" ]] ||
   fail "Cursor collector dates the reset from the billing cycle end" "$result"
 pass "Cursor collector dates the reset from the billing cycle end"
 
@@ -254,7 +254,7 @@ pass "Cursor collector never carries another account's numbers"
   fail "Cursor collector moves an older cached scan onto today's week" "$result"
 pass "Cursor collector moves a scan from yesterday onto today's week"
 
-[[ $(jq -c '.lapsed' <<<"$result") == '[["Included total",0,""],["Auto models",12,"2026-10-15T21:32:06+00:00"]]' ]] ||
+[[ $(jq -c '.lapsed' <<<"$result") == '[["Included total",0,""],["Auto models",12,"2099-09-03T06:25:26+00:00"]]' ]] ||
   fail "Cursor collector resets a kept limit whose cycle ended" "$result"
 [[ $(jq -c '.lapsedOnDemand | {label, title, zero: (.percent == 0), resetsAt}' <<<"$result") == '{"label":"On-demand $0.00 / $10.00","title":"On-demand $0.00 / $10.00 Monthly","zero":true,"resetsAt":""}' ]] ||
   fail "Cursor collector renames an on-demand meter that reset with its new spend" "$result"
