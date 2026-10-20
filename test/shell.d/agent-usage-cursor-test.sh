@@ -1,464 +1,237 @@
 #!/bin/bash
 
+# The Cursor collector's own sources: the dashboard RPCs the Cursor CLI calls
+# (the period meters, the plan, and a week of daily token aggregations), the
+# per-account token scan carried past midnight and through failed checks, and
+# the editor or CLI being installed at all. The unused-machine record is held
+# centrally by the partition test, the Cursor sign-in order and the editor's
+# untouched database by the shared test, and the limits and scan caches by
+# the contract checks.
+
 set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+source "$SHELL_TEST_DIR/agent-usage-helpers.sh"
 
-require_command jq
-require_command python3
-
-TEST_HOME=$(mktemp -d)
-trap 'rm -rf "$TEST_HOME"' EXIT
-export XDG_CACHE_HOME="$TEST_HOME/.cache"
-
-mkdir -p "$TEST_HOME/.config/cursor"
-cat >"$TEST_HOME/.config/cursor/auth.json" <<'EOF'
-{ "accessToken": "cursor_test", "refreshToken": "cursor_refresh" }
-EOF
-
-# Without a credential the collector must still print a full, hidden-by-default
-# record: the update runner writes whatever valid JSON appears on stdout.
-no_token=$(HOME="$TEST_HOME" XDG_CONFIG_HOME="$TEST_HOME/missing" XDG_STATE_HOME="$TEST_HOME/.local/state" \
-  CURSOR_API_KEY="" "$ROOT/bin/omarchy-agent-usage-cursor")
-
-[[ $(jq -r '.id + ":" + (.ready | tostring) + ":" + (.hasPromptStats | tostring)' <<<"$no_token") == "cursor:false:false" ]] ||
-  fail "Cursor collector prints a valid record without credentials" "$no_token"
-pass "Cursor collector prints a valid record without credentials"
-
-result=$(python3 - "$ROOT/bin/omarchy-agent-usage-cursor" "$TEST_HOME/.config" "$TEST_HOME/.local/state" <<'PY'
-import importlib.machinery
-import importlib.util
-import json
-import os
-import sys
-import time
-from datetime import datetime, timedelta
-from pathlib import Path
-
-collector_path = str(Path(sys.argv[1]))
-os.environ["XDG_CONFIG_HOME"] = sys.argv[2]
-os.environ["XDG_STATE_HOME"] = sys.argv[3]
+agent_sandbox
 
 # Day windows resolve in local time, so pin the zone or the fixtures below
 # would shift by a day depending on where the test runs.
-os.environ["TZ"] = "UTC"
-time.tzset()
-os.environ.pop("CURSOR_API_KEY", None)
+export TZ=UTC
 
-loader = importlib.machinery.SourceFileLoader("cursor_collector", collector_path)
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
+python3 - <<'PY'
+from agent_usage_fixtures import *
+import collectors
+from datetime import date
 
-today = datetime.now().astimezone().date()
-yesterday = today - timedelta(days=1)
+RPC = "api2.cursor.sh/aiserver.v1.DashboardService/"
+TODAY = datetime.now().astimezone().date()
+YESTERDAY = TODAY - timedelta(days=1)
 
 # Spend well past the included limit, the way a plan with provider bonus usage
 # reports it: 609.86 spent against a 400.00 allowance, while Cursor's own
 # meters say 18.76% / 11.81% / 100%.
 PERIOD = {
   "billingCycleEnd": "4092099926000",
-  "planUsage": {
-    "totalSpend": 60986,
-    "includedSpend": 40000,
-    "limit": 40000,
-    "autoPercentUsed": 11.81,
-    "apiPercentUsed": 100,
-    "totalPercentUsed": 18.76,
-  },
+  "planUsage": {"totalSpend": 60986, "includedSpend": 40000, "limit": 40000, "autoPercentUsed": 11.81, "apiPercentUsed": 100, "totalPercentUsed": 18.76},
   "spendLimitUsage": {"individualLimit": "1000", "individualUsed": "951", "limitType": "user"},
 }
-
 AGGREGATIONS = {
-  today.isoformat(): [
-    {"modelIntent": "default", "inputTokens": "10", "outputTokens": "5",
-     "cacheReadTokens": "100", "cacheWriteTokens": "1", "totalCents": None},
-  ],
-  yesterday.isoformat(): [
-    {"modelIntent": "default", "inputTokens": "2", "outputTokens": "3",
-     "cacheReadTokens": "4", "cacheWriteTokens": "0"},
-    {"modelIntent": "kimi-k3-max", "inputTokens": "1", "outputTokens": "1",
-     "cacheReadTokens": "0", "cacheWriteTokens": "0"},
+  TODAY.isoformat(): [{"modelIntent": "default", "inputTokens": "10", "outputTokens": "5", "cacheReadTokens": "100", "cacheWriteTokens": "1", "totalCents": None}],
+  YESTERDAY.isoformat(): [
+    {"modelIntent": "default", "inputTokens": "2", "outputTokens": "3", "cacheReadTokens": "4", "cacheWriteTokens": "0"},
+    {"modelIntent": "kimi-k3-max", "inputTokens": "1", "outputTokens": "1", "cacheReadTokens": "0", "cacheWriteTokens": "0"},
   ],
 }
-
-calls = []
-
-
-class StubClient(collector.CursorClient):
-  def call(self, method, payload):
-    calls.append((method, payload))
-    if method == "GetCurrentPeriodUsage":
-      return PERIOD
-    if method == "GetPlanInfo":
-      return {"planInfo": {"planName": "Ultra"}}
-    if method == "GetAggregatedUsageEvents":
-      start = datetime.fromtimestamp(int(payload["startDate"]) / 1000).astimezone().date()
-      return {"aggregations": AGGREGATIONS.get(start.isoformat(), [])}
-    raise AssertionError(f"unexpected method: {method}")
+grown = {"tokens": 0}
 
 
-collector.CursorClient = StubClient
-record = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False)
+def window_start(data):
+  return datetime.fromtimestamp(int(json.loads(data)["startDate"]) / 1000).astimezone()
 
-windows = collector.day_windows(today, collector.RECENT_DAYS)
-first_start = datetime.fromtimestamp(windows[0][1] / 1000).astimezone()
 
-# --limits-only keeps the token sections of this account's last scan.
-carried = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", True)
+# A day's aggregations, plus whatever the scan contract has grown today by.
+def aggregations(request):
+  day = window_start(request.data).date()
+  rows = list(AGGREGATIONS.get(day.isoformat(), []))
+  if day == TODAY and grown["tokens"]:
+    rows.append({"modelIntent": "grown", "inputTokens": str(grown["tokens"])})
+  return {"aggregations": rows}
 
-# ...but only for so long: an old scan is fetched again.
-stats_file = collector.stats_cache(collector.account_key("cursor_test"))
-fresh_scan = json.loads(stats_file.read_text())
-stats_file.write_text(json.dumps(dict(fresh_scan, scannedAtMs=fresh_scan["scannedAtMs"] - sys.modules["collectors"].LIMITS_ONLY_REUSE_SECONDS * 1000)))
-calls_before = len(calls)
-collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", True)
-refetched = sum(1 for method, _ in calls[calls_before:] if method == "GetAggregatedUsageEvents")
-del calls[calls_before:]
-stats_file.write_text(json.dumps(fresh_scan))
+
+ROUTES = {
+  RPC + "GetCurrentPeriodUsage": PERIOD,
+  RPC + "GetPlanInfo": {"planInfo": {"planName": "Ultra"}},
+  RPC + "GetAggregatedUsageEvents": aggregations,
+}
+
+
+def cli_signed_in(user="u-main", expires_in=3600):
+  write_json(config_home() / "cursor" / "auth.json", {"accessToken": jwt({"sub": user, "exp": time.time() + expires_in})})
+
+
+def cursor(*args, routes=None, mode="up", **env):
+  saved = dict(os.environ)
+  os.environ.update(env)
+  try:
+    with FakeHttp(ROUTES if routes is None else routes, mode=mode) as http:
+      record = collect("cursor", *(args or ("--force",)))
+  finally:
+    os.environ.clear()
+    os.environ.update(saved)
+  cursor.requests = http.requests
+  return record
+
+
+def meters(record):
+  return [{"label": limit["label"], "percent": round(limit["percent"] * 10000)} for limit in record["limits"]]
+
+
+# --------------------------------------------------------------- the answer
+
+sandbox()
+cli_signed_in()
+record = cursor()
+expect("the record is account-wide, with no prompt counts, and the plan from GetPlanInfo",
+       {key: record.get(key) for key in ("ready", "hasPromptStats", "scope", "tierLabel", "usageStatusText")},
+       {"ready": True, "hasPromptStats": False, "scope": "account", "tierLabel": "Ultra", "usageStatusText": ""}, record)
+expect("the meters are Cursor's own, not spend over the allowance", meters(record), [
+  {"label": "Included total", "percent": 1876}, {"label": "Auto models", "percent": 1181},
+  {"label": "Named models", "percent": 10000}, {"label": "On-demand $9.51 / $10.00", "percent": 9510},
+], record)
+expect("the reset is the billing cycle's end", record["limits"][0]["resetsAt"], "2099-09-03T06:25:26+00:00", record)
+starts = [window_start(request["data"]) for request in cursor.requests if request["url"].endswith("GetAggregatedUsageEvents")]
+expect("tokens are asked for in seven daily windows, each from local midnight",
+       [len(starts), {(start.hour, start.minute, start.second) for start in starts}], [7, {(0, 0, 0)}])
+expect("the week's token series is built from the windows", [day["messageCount"] for day in record["recentDays"]], [0, 0, 0, 0, 0, 11, 116], record)
+expect("Cursor's token names map onto the record's", record["modelUsage"], {
+  "default": {"inputTokens": 12, "outputTokens": 8, "cacheReadInputTokens": 104, "cacheCreationInputTokens": 1},
+  "kimi-k3-max": {"inputTokens": 1, "outputTokens": 1, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
+}, record)
+expect("today stands apart from the rest of the week",
+       [record["todayTotalTokens"], record["todayTokensByModel"], record["activeDays"]], [116, {"default": 116}, 2], record)
+
+# A failed check keeps the week of tokens on disk along with the limits.
+down = cursor(mode="down")
+expect("a failed check keeps the last week of tokens and the plan",
+       [down["recentDays"] == record["recentDays"], down["tierLabel"], down["limitsStale"]], [True, "Ultra", True], down)
 
 # Another account's scan never stands in: signed in as someone else with the
 # dashboard down, there are no tokens to show.
-class DownForOther(StubClient):
-  def call(self, method, payload):
-    raise collector.CursorError("Cursor API unreachable")
+other = cursor(mode="down", CURSOR_API_KEY="someone_else")
+expect("another account's numbers are never carried",
+       {"limits": other["limits"], "tierLabel": other["tierLabel"], "today": other["todayTotalTokens"],
+        "counts": [day["messageCount"] for day in other["recentDays"]], "last": other["recentDays"][6]["date"], "modelUsage": other["modelUsage"]},
+       {"limits": [], "tierLabel": "", "today": 0, "counts": [0] * 7, "last": TODAY.isoformat(), "modelUsage": {}}, other)
 
-
-collector.CursorClient = DownForOther
-os.environ["CURSOR_API_KEY"] = "someone_else"
-other = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False)
-os.environ.pop("CURSOR_API_KEY")
-collector.CursorClient = StubClient
+# A kept limit whose billing cycle has ended comes back at zero, and an
+# on-demand meter among them is renamed for its new spend.
+module = load_collector("cursor")
+key = collectors.account_key(collectors.cursor_token())
+limits_path = module.limits_cache(key).path
+good = json.loads(limits_path.read_text())
+past = iso_in(-3600)
+write_json(limits_path, dict(good, limits=[dict(good["limits"][0], resetsAt=past)] + good["limits"][1:3] + [dict(good["limits"][3], resetsAt=past)]))
+lapsed = cursor(mode="down")
+write_json(limits_path, good)
+expect("a kept limit whose cycle ended resets, the rest stand",
+       [[limit["label"], round(limit["percent"] * 100), limit["resetsAt"]] for limit in lapsed["limits"][:2]],
+       [["Included total", 0, ""], ["Auto models", 12, "2099-09-03T06:25:26+00:00"]], lapsed)
+expect("an on-demand meter that reset is renamed with its new spend",
+       {name: lapsed["limits"][3][name] for name in ("label", "title", "percent", "resetsAt")},
+       {"label": "On-demand $0.00 / $10.00", "title": "On-demand $0.00 / $10.00 Monthly", "percent": 0.0, "resetsAt": ""}, lapsed)
 
 # A scan from yesterday moves onto this week's dates, and its today figures
-# are cleared, since none of it happened today.
-key = collector.account_key("cursor_test")
-cache = collector.stats_cache(key)
-scan = json.loads(cache.read_text())
-yesterday_scan = dict(scan, scanDate=yesterday.isoformat())
-yesterday_scan["stats"] = dict(scan["stats"], recentDays=[{"date": (today - timedelta(days=offset)).isoformat(), "messageCount": offset} for offset in range(7, 0, -1)])
-# Each day's usage rides along, so the day that falls out of the week leaves
-# the model totals and active days as well as the chart.
-yesterday_scan["stats"]["days"] = [[(today - timedelta(days=offset)).isoformat(), {"carried-model": {"inputTokens": offset}}] for offset in range(7, 0, -1)]
-cache.write_text(json.dumps(yesterday_scan))
-overnight = collector.carried_stats(key, today)
+# are cleared, since none of it happened today. Each day's usage rides along,
+# so the day that falls out of the week leaves the model totals and active
+# days as well as the chart.
+stats_path = module.stats_cache(key)
+scan = json.loads(stats_path.read_text())
+yesterday_scan = dict(scan, scanDate=YESTERDAY.isoformat())
+yesterday_scan["stats"] = dict(scan["stats"], recentDays=[{"date": (TODAY - timedelta(days=offset)).isoformat(), "messageCount": offset} for offset in range(7, 0, -1)])
+yesterday_scan["stats"]["days"] = [[(TODAY - timedelta(days=offset)).isoformat(), {"carried-model": {"inputTokens": offset}}] for offset in range(7, 0, -1)]
+write_json(stats_path, yesterday_scan)
+overnight = module.carried_stats(key, TODAY)
+expect("a scan from yesterday moves onto today's week",
+       [overnight["todayTotalTokens"], overnight["todayTokensByModel"], [day["messageCount"] for day in overnight["recentDays"]], overnight["recentDays"][6]["date"]],
+       [0, {}, [6, 5, 4, 3, 2, 1, 0], TODAY.isoformat()], overnight)
+expect("the day that left the week leaves the model totals",
+       [overnight["modelUsage"]["carried-model"]["inputTokens"], overnight["activeDays"], len(overnight["activeDates"])], [21, 6, 6], overnight)
 # A scan cached before days were kept still moves onto the new week.
-cache.write_text(json.dumps(dict(yesterday_scan, stats={k: v for k, v in yesterday_scan["stats"].items() if k != "days"})))
-overnight_legacy = collector.carried_stats(key, today)
-cache.write_text(json.dumps(scan))
-
-# A kept limit whose billing cycle has ended comes back at zero.
-limits_cache = collector.limits_cache(key).path
-good = json.loads(limits_cache.read_text())
-past = "2020-01-01T00:00:00+00:00"
-limits_cache.write_text(json.dumps(dict(good, limits=[dict(good["limits"][0], resetsAt=past)] + good["limits"][1:3] + [dict(good["limits"][3], resetsAt=past)])))
-collector.CursorClient = DownForOther
-lapsed = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False, force=True)
-limits_cache.write_text(json.dumps(good))
-collector.CursorClient = StubClient
-
-
-# A failed check keeps the last good limits and the week on disk, marked stale.
-class DownClient(StubClient):
-  def call(self, method, payload):
-    raise collector.CursorError("Cursor API unreachable")
-
-
-class RefusedClient(StubClient):
-  def call(self, method, payload):
-    raise collector.CursorError(collector.AUTH_HELP, auth=True)
-
-
-collector.CursorClient = DownClient
-down = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False, force=True)
-collector.CursorClient = RefusedClient
-refused = collector.scan("https://api.example", Path(os.environ["XDG_CONFIG_HOME"]) / "cursor" / "auth.json", False, force=True)
-
-print(json.dumps({
-  "other": other,
-  "overnight": overnight,
-  "overnightLegacy": overnight_legacy,
-  "lapsed": [[limit["label"], round(limit["percent"] * 100), limit["resetsAt"]] for limit in lapsed["limits"][:2]],
-  "lapsedOnDemand": {name: lapsed["limits"][3][name] for name in ("label", "title", "percent", "resetsAt")},
-  "down": down,
-  "refused": refused,
-  "record": record,
-  "aggregationCalls": sum(1 for method, _ in calls if method == "GetAggregatedUsageEvents"),
-  "windowIsLocalMidnight": (first_start.hour, first_start.minute, first_start.second) == (0, 0, 0),
-  "carriedRecentDays": carried["recentDays"] == record["recentDays"],
-  "refetched": refetched,
-  "carriedSkipsAggregation": sum(1 for method, _ in calls if method == "GetAggregatedUsageEvents") == collector.RECENT_DAYS,
-}))
-PY
-)
-
-[[ $(jq -c '.record | {schemaVersion, id, name, ready, hasPromptStats, scope, tierLabel, usageStatusText}' <<<"$result") == '{"schemaVersion":1,"id":"cursor","name":"Cursor","ready":true,"hasPromptStats":false,"scope":"account","tierLabel":"Ultra","usageStatusText":""}' ]] ||
-  fail "Cursor collector prints the display-ready record contract" "$result"
-pass "Cursor collector prints the display-ready record contract"
-
-[[ $(jq -c '[.record.limits[] | {label, percent: (.percent * 10000 | round)}]' <<<"$result") == '[{"label":"Included total","percent":1876},{"label":"Auto models","percent":1181},{"label":"Named models","percent":10000},{"label":"On-demand $9.51 / $10.00","percent":9510}]' ]] ||
-  fail "Cursor collector reports Cursor's own meters, not spend over the allowance" "$result"
-pass "Cursor collector reports Cursor's own meters, not spend over the allowance"
-
-[[ $(jq -r '.record.limits[0].resetsAt' <<<"$result") == "2099-09-03T06:25:26+00:00" ]] ||
-  fail "Cursor collector dates the reset from the billing cycle end" "$result"
-pass "Cursor collector dates the reset from the billing cycle end"
-
-[[ $(jq -r '.aggregationCalls' <<<"$result") == "7" ]] ||
-  fail "Cursor collector asks for seven daily windows" "$result"
-pass "Cursor collector asks for seven daily windows"
-
-[[ $(jq -r '.windowIsLocalMidnight' <<<"$result") == "true" ]] ||
-  fail "Cursor collector requests windows that start at local midnight" "$result"
-pass "Cursor collector requests windows that start at local midnight"
-
-[[ $(jq -c '[.record.recentDays[] | .messageCount]' <<<"$result") == '[0,0,0,0,0,11,116]' ]] ||
-  fail "Cursor collector builds the seven-day token series" "$result"
-pass "Cursor collector builds the seven-day token series"
-
-[[ $(jq -c '.record.modelUsage' <<<"$result") == '{"default":{"inputTokens":12,"outputTokens":8,"cacheReadInputTokens":104,"cacheCreationInputTokens":1},"kimi-k3-max":{"inputTokens":1,"outputTokens":1,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}' ]] ||
-  fail "Cursor collector maps Cursor token names onto the record contract" "$result"
-pass "Cursor collector maps Cursor token names onto the record contract"
-
-[[ $(jq -c '{today: .record.todayTotalTokens, byModel: .record.todayTokensByModel, activeDays: .record.activeDays}' <<<"$result") == '{"today":116,"byModel":{"default":116},"activeDays":2}' ]] ||
-  fail "Cursor collector separates today from the rest of the week" "$result"
-pass "Cursor collector separates today from the rest of the week"
-
-[[ $(jq -r '.carriedRecentDays' <<<"$result") == "true" && $(jq -r '.carriedSkipsAggregation' <<<"$result") == "true" ]] ||
-  fail "Cursor collector keeps the token sections on --limits-only" "$result"
-pass "Cursor collector keeps the token sections on --limits-only"
-
-[[ $(jq -r '.refetched' <<<"$result") == "7" ]] ||
-  fail "Cursor collector fetches tokens again once the carried scan is old" "$result"
-pass "Cursor collector fetches tokens again once the carried scan is old"
-
-[[ $(jq -c '.record | {limitsStale, fetched: (.limitsFetchedAt > 0)}' <<<"$result") == '{"limitsStale":false,"fetched":true}' ]] ||
-  fail "Cursor collector stamps fresh limits" "$result"
-pass "Cursor collector stamps fresh limits"
-
-[[ $(jq -c '{same: (.down.limits == .record.limits), stamp: (.down.limitsFetchedAt >= .record.limitsFetchedAt), stale: .down.limitsStale, tier: .down.tierLabel, status: .down.usageStatusText, week: (.down.recentDays == .record.recentDays)}' <<<"$result") == '{"same":true,"stamp":true,"stale":true,"tier":"Ultra","status":"","week":true}' ]] ||
-  fail "Cursor collector keeps the last good limits, stale, after a failed check" "$result"
-pass "Cursor collector keeps the last good limits, stale, after a failed check"
-
-[[ $(jq -c '{stale: .refused.limitsStale, status: .refused.usageStatusText, kept: (.refused.limits | length)}' <<<"$result") == '{"stale":true,"status":"Sign-in expired","kept":4}' ]] ||
-  fail "Cursor collector says a refused sign-in has expired" "$result"
-pass "Cursor collector says a refused sign-in has expired"
-
-[[ $(jq -c '.other | {limits, tierLabel, todayTotalTokens, counts: [.recentDays[].messageCount], last: .recentDays[6].date, modelUsage}' <<<"$result") == "{\"limits\":[],\"tierLabel\":\"\",\"todayTotalTokens\":0,\"counts\":[0,0,0,0,0,0,0],\"last\":\"$(TZ=UTC date +%F)\",\"modelUsage\":{}}" ]] ||
-  fail "Cursor collector never carries another account's numbers" "$result"
-pass "Cursor collector never carries another account's numbers"
-
-[[ $(jq -c '.overnight | {todayTotalTokens, todayTokensByModel, counts: [.recentDays[].messageCount], last: .recentDays[6].date}' <<<"$result") == "{\"todayTotalTokens\":0,\"todayTokensByModel\":{},\"counts\":[6,5,4,3,2,1,0],\"last\":\"$(TZ=UTC date +%F)\"}" ]] ||
-  fail "Cursor collector moves a scan from yesterday onto today's week" "$result"
-[[ $(jq -c '.overnight | {model: .modelUsage["carried-model"].inputTokens, activeDays, dates: (.activeDates | length)}' <<<"$result") == '{"model":21,"activeDays":6,"dates":6}' ]] ||
-  fail "Cursor collector drops the day that left the week from the model totals" "$result"
-[[ $(jq -c '.overnightLegacy | {todayTotalTokens, counts: [.recentDays[].messageCount]}' <<<"$result") == '{"todayTotalTokens":0,"counts":[6,5,4,3,2,1,0]}' ]] ||
-  fail "Cursor collector moves an older cached scan onto today's week" "$result"
-pass "Cursor collector moves a scan from yesterday onto today's week"
-
-[[ $(jq -c '.lapsed' <<<"$result") == '[["Included total",0,""],["Auto models",12,"2099-09-03T06:25:26+00:00"]]' ]] ||
-  fail "Cursor collector resets a kept limit whose cycle ended" "$result"
-[[ $(jq -c '.lapsedOnDemand | {label, title, zero: (.percent == 0), resetsAt}' <<<"$result") == '{"label":"On-demand $0.00 / $10.00","title":"On-demand $0.00 / $10.00 Monthly","zero":true,"resetsAt":""}' ]] ||
-  fail "Cursor collector renames an on-demand meter that reset with its new spend" "$result"
-pass "Cursor collector resets a kept limit whose cycle ended"
+write_json(stats_path, dict(yesterday_scan, stats={k: v for k, v in yesterday_scan["stats"].items() if k != "days"}))
+overnight = module.carried_stats(key, TODAY)
+expect("an older cached scan moves onto today's week too",
+       [overnight["todayTotalTokens"], [day["messageCount"] for day in overnight["recentDays"]]], [0, [6, 5, 4, 3, 2, 1, 0]], overnight)
 
 # Days that spring forward or fall back are 23 or 25 hours long.
-dst=$(TZ=America/New_York python3 - "$ROOT/bin/omarchy-agent-usage-cursor" <<'PY'
-import importlib.machinery
-import importlib.util
-import sys
-from datetime import date
-
-loader = importlib.machinery.SourceFileLoader("cursor_collector", sys.argv[1])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
-
-spring = collector.day_windows(date(2026, 3, 9), 2)
-fall = collector.day_windows(date(2026, 11, 1), 1)
-hours = [(end - start) / 3_600_000 for _, start, end in spring + fall]
-print(" ".join(str(int(h)) for h in hours), spring[0][2] == spring[1][1])
-PY
-)
-[[ $dst == "23 24 25 True" ]] || fail "Cursor collector sizes daily windows across DST" "$dst"
-pass "Cursor collector sizes daily windows across DST"
-
-# Cursor installed but signed in nowhere: the agent is in use, so it says it
-# is waiting for a sign-in. A machine without Cursor at all stays unused.
-mkdir -p "$TEST_HOME/unsigned/cursor"
-unsigned=$(HOME="$TEST_HOME/unsigned-home" XDG_CONFIG_HOME="$TEST_HOME/unsigned" XDG_CACHE_HOME="$TEST_HOME/unsigned-cache" \
-  CURSOR_API_KEY="" "$ROOT/bin/omarchy-agent-usage-cursor")
-[[ $(jq -c '{ready, usageStatusText, limits, help: (.authHelpText != "")}' <<<"$unsigned") == '{"ready":true,"usageStatusText":"Waiting for auth","limits":[],"help":true}' ]] ||
-  fail "Cursor collector waits for a sign-in where Cursor is installed" "$unsigned"
-# The last seven local days ending today, none with messages: an unused
-# record still carries the full week, zeroed.
-empty_week=$(for offset in 6 5 4 3 2 1 0; do date -d "$(date +%F) 12:00 $offset days ago" +%F; done | jq -Rsc 'split("\n")[:-1] | map({date: ., messageCount: 0})')
-[[ $(jq -c '{ready, usageStatusText, authHelpText, limits, todayPrompts, recentDays, modelUsage}' <<<"$no_token") == '{"ready":false,"usageStatusText":"","authHelpText":"","limits":[],"todayPrompts":0,"recentDays":'"$empty_week"',"modelUsage":{}}' ]] ||
-  fail "Cursor collector prints an unused record where Cursor isn't installed" "$no_token"
-pass "Cursor collector waits for a sign-in only where Cursor is installed"
-
-contract=$(python3 - "$ROOT/bin/omarchy-agent-usage-cursor" "$TEST_HOME/contract" <<'PY'
-import base64
-import importlib.machinery
-import importlib.util
-import json
-import os
-import sqlite3
-import sys
-import time
-from pathlib import Path
-
-root = Path(sys.argv[2])
-os.environ["HOME"] = str(root / "home")
-os.environ["XDG_CONFIG_HOME"] = str(root / "config")
-os.environ["XDG_CACHE_HOME"] = str(root / "cache")
-os.environ.pop("CURSOR_API_KEY", None)
+os.environ["TZ"] = "America/New_York"
+time.tzset()
+spring = module.day_windows(date(2026, 3, 9), 2)
+fall = module.day_windows(date(2026, 11, 1), 1)
 os.environ["TZ"] = "UTC"
 time.tzset()
+expect("daily windows are sized across DST",
+       [[(end - start) // 3_600_000 for _, start, end in spring + fall], spring[0][2] == spring[1][1]], [[23, 24, 25], True])
 
-loader = importlib.machinery.SourceFileLoader("cursor_collector", sys.argv[1])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
-RealClient = collector.CursorClient
+# ------------------------------------------------------------- the sign-in
 
-
-def jwt(sub, exp):
-  claims = base64.urlsafe_b64encode(json.dumps({"sub": sub, "exp": exp}).encode()).decode().rstrip("=")
-  return f"h.{claims}.s"
-
-
-auth = root / "config" / "cursor" / "auth.json"
-auth.parent.mkdir(parents=True)
-auth.write_text(json.dumps({"accessToken": jwt("u-main", time.time() + 3600)}))
-
-PERIOD = {"planUsage": {"totalPercentUsed": 40, "autoPercentUsed": 20, "apiPercentUsed": 60},
-          "spendLimitUsage": {"individualLimit": "2000", "individualUsed": "500"}}
-calls = []
-answers = {"GetPlanInfo": {"planInfo": {"planName": "Pro"}}, "GetCurrentPeriodUsage": PERIOD}
-
-
-class Stub(RealClient):
-  def call(self, method, payload):
-    calls.append(method)
-    answer = answers.get(method, {"aggregations": [{"modelIntent": "default", "inputTokens": "3"}]})
-    if isinstance(answer, Exception):
-      raise answer
-    return answer
-
-
-def run(client=Stub, **kwargs):
-  collector.CursorClient = client
-  del calls[:]
-  record = collector.scan("https://api.example", auth, kwargs.pop("limits_only", False), **kwargs)
-  return record, list(calls)
-
-
-out = {}
-# Without a billing cycle end there is no reset time, as "" rather than null.
-fresh, _ = run(force=True)
-out["fresh"] = {key: fresh[key] for key in ("tierLabel", "usageStatusText", "authHelpText", "limitsStale")}
-out["titles"] = [limit["title"] for limit in fresh["limits"]]
-out["resets"] = sorted({limit["resetsAt"] for limit in fresh["limits"]})
-
-# A second run straight after asks nothing: the limits answer and the token
-# scan are both this recent.
-reused, asked = run()
-out["reused"] = {"asked": asked, "same": reused["limits"] == fresh["limits"], "stale": reused["limitsStale"],
-                 "help": reused["authHelpText"], "tokens": reused["todayTotalTokens"]}
-_, asked = run(limits_only=True)
-out["limitsOnlyReused"] = asked
-_, asked = run(force=True)
-out["forced"] = sorted(set(asked))
-
-# GetPlanInfo failing leaves the plan the account last had.
-answers["GetPlanInfo"] = collector.CursorError("Cursor's dashboard returned status 500.")
-planless, _ = run(force=True)
-out["planKept"] = planless["tierLabel"]
-answers["GetPlanInfo"] = {"planInfo": {"planName": "Pro"}}
-
-# A failure that isn't Cursor's error keeps the limits and the tokens too.
-answers["GetCurrentPeriodUsage"] = RuntimeError("boom")
-broken, _ = run(force=True)
-out["broken"] = {"kept": len(broken["limits"]), "stale": broken["limitsStale"], "status": broken["usageStatusText"],
-                 "tokens": broken["todayTotalTokens"], "retry": broken.get("retryAdvised", False)}
-answers["GetCurrentPeriodUsage"] = PERIOD
-
-
-# retryAdvised only when nothing answered at all.
-def urlopen_raising(error):
-  def urlopen(request, timeout=None):
-    raise error
-  return urlopen
-
-
-transport = {}
-for name, error in (
-  ("dns", collector.urllib.error.URLError("no route")),
-  ("timeout", TimeoutError()),
-  ("status", collector.urllib.error.HTTPError("https://api.example", 500, "", {}, None)),
-):
-  collector.urllib.request.urlopen = urlopen_raising(error)
-  record, _ = run(RealClient, force=True)
-  transport[name] = [record.get("retryAdvised", False), record["limitsStale"], len(record["limits"]), record["usageStatusText"]]
-out["transport"] = transport
+# Cursor installed but signed in nowhere: the agent is in use, so it says it
+# is waiting for a sign-in.
+sandbox()
+(config_home() / "cursor").mkdir(parents=True)
+record = cursor()
+expect("Cursor installed but signed in nowhere waits for a sign-in",
+       [record["ready"], record["usageStatusText"], record["limits"], record["authHelpText"] != ""], [True, "Waiting for auth", [], True], record)
 
 # A lapsed sign-in isn't sent: the CLI or editor renews it when it runs.
-collector.urllib.request.urlopen = urlopen_raising(AssertionError("a lapsed token was sent"))
-auth.write_text(json.dumps({"accessToken": jwt("u-main", time.time() - 60)}))
-paused, _ = run(RealClient, force=True)
-out["paused"] = [paused["usageStatusText"], paused["limitsStale"], len(paused["limits"])]
+sandbox()
+cli_signed_in()
+cursor()
+cli_signed_in(expires_in=-60)
+record = cursor()
+expect("a lapsed sign-in pauses the limits without asking",
+       [record["usageStatusText"], record["limitsStale"], len(record["limits"]), cursor.requests], ["Limits paused", True, 4, []], record)
 
-# ...but a live editor sign-in stands in for a lapsed CLI one.
-db = root / "config" / "Cursor" / "User" / "globalStorage" / "state.vscdb"
-db.parent.mkdir(parents=True)
-conn = sqlite3.connect(db)
-conn.execute("CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
-conn.execute("INSERT INTO ItemTable VALUES ('cursorAuth/accessToken', ?)", (jwt("u-editor", time.time() + 3600),))
-conn.commit()
-conn.close()
-out["fallthrough"] = collector.account_key(collector.cursor_token(auth)) == collector.account_key(jwt("u-editor", 0))
+# ---------------------------------------------------------------- contract
+
+sandbox()
+
+
+def grow():
+  grown["tokens"] += 1
+
+
+# A probe asks for the period and the plan, and a forced one scans the
+# week's seven days too.
+adapter = Adapter("cursor", plant=cli_signed_in, answer=ROUTES, requests_per_probe=9, grow=grow)
+check_limits_contract(adapter)
+check_scan_cache(adapter)
+grown["tokens"] = 0
+
+# Without a billing cycle end there is no reset time, as "" rather than null,
+# and every meter is titled after the billing period.
+sandbox()
+cli_signed_in()
+routes = dict(ROUTES)
+routes[RPC + "GetCurrentPeriodUsage"] = {"planUsage": {"totalPercentUsed": 40, "autoPercentUsed": 20, "apiPercentUsed": 60},
+                                         "spendLimitUsage": {"individualLimit": "2000", "individualUsed": "500"}}
+record = cursor(routes=routes)
+expect("the meters are titled after the billing period",
+       [limit["title"] for limit in record["limits"]], ["Monthly", "Auto models Monthly", "Named models Monthly", "On-demand $5.00 / $20.00 Monthly"], record)
+expect("an unknown reset is an empty string", sorted({limit["resetsAt"] for limit in record["limits"]}), [""], record)
+
+# GetPlanInfo failing leaves the plan the account last had.
+record = cursor(routes=dict(routes, **{RPC + "GetPlanInfo": 500}))
+expect("the plan is kept when GetPlanInfo fails", [record["tierLabel"], record["limitsStale"]], ["Ultra", False], record)
+
+# A failure that isn't Cursor's error keeps the limits and the tokens too.
+with contextlib.redirect_stderr(io.StringIO()):
+  record = cursor(routes=dict(routes, **{RPC + "GetCurrentPeriodUsage": RuntimeError("boom")}))
+expect("an unexpected failure keeps the limits and the tokens",
+       [len(record["limits"]), record["limitsStale"], record["usageStatusText"], record["todayTotalTokens"], record.get("retryAdvised", False)],
+       [4, True, "", 116, False], record)
 
 # Untrusted numbers never break the record.
-out["robust"] = [collector.fraction("nan"), collector.fraction("inf"), collector.fraction(True), collector.number("1e400"), collector.iso("9" * 30)]
-print(json.dumps(out))
+expect("untrusted numbers read as nothing",
+       [module.fraction("nan"), module.fraction("inf"), module.fraction(True), module.number("1e400"), module.iso("9" * 30)], [0.0, 0.0, 0.0, 0, ""])
 PY
-)
-
-[[ $(jq -c '.fresh' <<<"$contract") == '{"tierLabel":"Pro","usageStatusText":"","authHelpText":"","limitsStale":false}' ]] ||
-  fail "Cursor collector clears the help text when healthy" "$contract"
-pass "Cursor collector clears the help text when healthy"
-
-[[ $(jq -c '.titles' <<<"$contract") == '["Monthly","Auto models Monthly","Named models Monthly","On-demand $5.00 / $20.00 Monthly"]' ]] ||
-  fail "Cursor collector titles its meters after the billing period" "$contract"
-pass "Cursor collector titles its meters after the billing period"
-
-[[ $(jq -c '.resets' <<<"$contract") == '[""]' ]] ||
-  fail "Cursor collector gives an unknown reset as an empty string" "$contract"
-pass "Cursor collector gives an unknown reset as an empty string"
-
-[[ $(jq -c '.reused' <<<"$contract") == '{"asked":[],"same":true,"stale":false,"help":"","tokens":3}' && $(jq -c '.limitsOnlyReused' <<<"$contract") == '[]' ]] ||
-  fail "Cursor collector reuses a recent limits answer and token scan" "$contract"
-[[ $(jq -c '.forced' <<<"$contract") == '["GetAggregatedUsageEvents","GetCurrentPeriodUsage","GetPlanInfo"]' ]] ||
-  fail "Cursor collector asks again on --force" "$contract"
-pass "Cursor collector reuses a recent probe, and --force asks again"
-
-[[ $(jq -r '.planKept' <<<"$contract") == "Pro" ]] ||
-  fail "Cursor collector keeps the plan when GetPlanInfo fails" "$contract"
-pass "Cursor collector keeps the plan when GetPlanInfo fails"
-
-[[ $(jq -c '.broken' <<<"$contract") == '{"kept":4,"stale":true,"status":"","tokens":3,"retry":false}' ]] ||
-  fail "Cursor collector keeps limits and tokens through an unexpected failure" "$contract"
-pass "Cursor collector keeps limits and tokens through an unexpected failure"
-
-[[ $(jq -c '.transport' <<<"$contract") == '{"dns":[true,true,4,""],"timeout":[true,true,4,""],"status":[false,true,4,""]}' ]] ||
-  fail "Cursor collector advises a retry only when the dashboard can't be reached" "$contract"
-pass "Cursor collector advises a retry only when the dashboard can't be reached"
-
-[[ $(jq -c '.paused' <<<"$contract") == '["Limits paused",true,4]' && $(jq -r '.fallthrough' <<<"$contract") == "true" ]] ||
-  fail "Cursor collector pauses on a lapsed sign-in, preferring a live one" "$contract"
-pass "Cursor collector pauses on a lapsed sign-in, preferring a live one"
-
-[[ $(jq -c '.robust' <<<"$contract") == '[0.0,0.0,0.0,0,""]' ]] ||
-  fail "Cursor collector shrugs off untrusted numbers" "$contract"
-pass "Cursor collector shrugs off untrusted numbers"
