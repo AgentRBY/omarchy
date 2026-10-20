@@ -962,10 +962,15 @@ assert_launch qwen qwen --yolo "--prompt-interactive=Review this project"
 printf '%s\n' qwen >"$agent_file"
 omarchy-agent-prompt '-n --help; echo literal'
 assert_launched qwen "keeps an option-like prompt literal" qwen --yolo "--prompt-interactive=-n --help; echo literal"
-assert_launch dsh env DSH_PERMISSION_MODE=danger-full-access dsh headless -- -- "Review this project"
+# DSH's browser UI takes no prompt, and its headless profile would run one with
+# full access in a window that closes with the answer.
+: >"$notification_history"
 printf '%s\n' dsh >"$agent_file"
 omarchy-agent-prompt '-n --help; echo literal'
-assert_launched dsh "keeps an option-like prompt literal" env DSH_PERMISSION_MODE=danger-full-access dsh headless -- -- '-n --help; echo literal'
+assert_launched dsh "opens its browser UI for a prompt" env DSH_PERMISSION_MODE=danger-full-access dsh web
+[[ $(<"$clipboard_log") == '-n --help; echo literal' ]] || fail "DSH launcher puts the prompt on the clipboard"
+mapfile -d '' -t notification_args <"$notification_history"
+[[ ${notification_args[*]} == *"DeepSeek Harness takes no starting prompt"* ]] || fail "DSH launcher says where the prompt went"
 assert_launch mcode mcode -- "Review this project"
 assert_launch kiro-cli kiro-cli chat --trust-all-tools -- "Review this project"
 : >"$notification_history"

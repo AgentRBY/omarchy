@@ -146,14 +146,11 @@ qwen)
   [[ -n ${prompt:-} ]] && command+=("--prompt-interactive=$prompt")
   ;;
 dsh)
-  # The browser UI has no prompt option, so a prompt runs once through the
-  # headless profile. The launcher consumes one separator; the profile needs
-  # its own so a prompt starting with a dash stays literal.
-  if [[ -n ${prompt:-} ]]; then
-    command=(env DSH_PERMISSION_MODE=danger-full-access dsh headless -- -- "$prompt")
-  else
-    command=(env DSH_PERMISSION_MODE=danger-full-access dsh web)
-  fi
+  # The browser UI has no prompt option, and the headless profile would run the
+  # prompt with full access in a window that closes with its answer, so a
+  # prompt goes to the clipboard below instead.
+  command=(env DSH_PERMISSION_MODE=danger-full-access dsh web)
+  prompt_via_clipboard="DeepSeek Harness"
   ;;
 mcode)
   # The TUI has no no-approval flag; permission options belong to exec mode.
