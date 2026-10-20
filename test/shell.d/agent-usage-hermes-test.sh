@@ -123,6 +123,15 @@ expect("Hermes reads HERMES_HOME and every named profile",
        [record["modelUsage"]["gpt-6-astra"]["inputTokens"], record["modelUsage"]["gpt-6-sol"]["inputTokens"], record["totalSessions"], record["totalPrompts"]],
        [100, 1000, 2, 2], record)
 
+# A profile that is a link to the home is the home: counted once.
+sandbox()
+state_db(home() / ".hermes" / "state.db", ("gpt-6-astra", 100))
+(home() / ".hermes" / "profiles").mkdir()
+(home() / ".hermes" / "profiles" / "default").symlink_to(home() / ".hermes")
+record = hermes()
+expect("Hermes counts a profile linked to its home once",
+       [record["modelUsage"]["gpt-6-astra"]["inputTokens"], record["totalSessions"], record["totalPrompts"]], [100, 1, 1], record)
+
 # An unreadable state.db says Hermes is unavailable, naming it in the help
 # text, while the readable profiles still count, and that scan isn't cached.
 sandbox()
