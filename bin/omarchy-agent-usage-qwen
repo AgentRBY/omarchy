@@ -69,8 +69,9 @@ THOUGHTS_IN_OUTPUT_AUTH_TYPES = ("openai", "qwen-oauth")
 PROMPT_SUBTYPES = (None, "mid_turn_user_message")
 
 # Rows keep each record's time as written, so the index outlives the day and
-# zone it was built in; version 1 kept parsed seconds.
-INDEX_VERSION = 2
+# zone it was built in; version 1 kept parsed seconds, and version 2 kept an
+# undated record undated, so it counted as today's on every day after.
+INDEX_VERSION = 3
 INDEX_HEAD_BYTES = 4096
 
 MAX_MODEL_NAME_LEN = 120
@@ -248,6 +249,11 @@ def parse_file(path, entry):
       offset += len(raw)
       row = parse_line(raw, path.stem)
       if row is not None:
+        # A record with no time is dated once, by when the file was last
+        # written as it is read: the index keeps it past today, and it must
+        # not count as today's on every day after.
+        if row[2] is None:
+          row[2] = stat.st_mtime
         rows.append(row)
   return {
     "size": stat.st_size,

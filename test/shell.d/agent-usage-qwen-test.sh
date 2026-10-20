@@ -107,6 +107,17 @@ with (chats() / "s.jsonl").open("a") as torn:
 record = qwen()
 expect("Qwen skips bad times, bad token fields, and a torn last line", [record["todayPrompts"], record["todayTotalTokens"]], [0, 12], record)
 
+# A record with no time is dated once, by the transcript's time as it is
+# read, so it isn't today's again on every day after.
+sandbox()
+undated = transcript(chats() / "u.jsonl", [prompt("nt1", "u", None), response("nt2", "u", None, "m", "openai", 10, 2, 0, 0, "nt")])
+three_days_ago = time.time() - 3 * 86400
+os.utime(undated, (three_days_ago, three_days_ago))
+record = qwen()
+expect("an undated record is dated by its transcript, once",
+       [record["todayPrompts"], record["todayTotalTokens"], record["totalPrompts"], record["activeDates"]],
+       [0, 0, 1, [datetime.fromtimestamp(three_days_ago).strftime("%Y-%m-%d")]], record)
+
 # ---------------------------------------------------------------- locations
 
 sandbox()
