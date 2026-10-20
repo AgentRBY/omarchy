@@ -254,6 +254,20 @@ class InputMethodTest(unittest.TestCase):
     with self.assertRaises(ValueError):
       setup.font_set(self.config, "XX")
 
+  def test_chinese_and_japanese_seed_maple_mono_and_korean_does_not(self):
+    # Maple Mono NF CN has kana and Han but no Hangul.
+    for method, family in [("mozc", "Maple Mono NF CN"), ("pinyin", "Maple Mono NF CN"), ("chewing", "Maple Mono NF CN"), ("cangjie5", "Maple Mono NF CN"), ("hangul", None), ("none", None)]:
+      with self.subTest(method=method):
+        setup.subprocess.run.reset_mock()
+        setup.monospace_default(method)
+        calls = [call.args[0] for call in setup.subprocess.run.call_args_list]
+        self.assertEqual(calls, [["omarchy-font-set", "--seed", family]] if family else [])
+
+  def test_installer_seed_sets_the_monospace_font(self):
+    with patch.object(setup, "monospace_default") as monospace:
+      self.seed("mozc")
+    monospace.assert_called_once_with("mozc")
+
   def test_font_command_sets_seeds_and_clears_the_variant(self):
     font = self.config / "fontconfig/conf.d/50-omarchy-input-method.conf"
     def command(*args):

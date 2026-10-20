@@ -104,18 +104,25 @@ class TypingSetupTest(unittest.TestCase):
 
   def test_a_cjk_language_adds_its_engine_only_to_a_keyboard_only_group(self):
     with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"XDG_CONFIG_HOME": temporary}):
-      with patch.object(typing.setup, "live_group", return_value=("Default", "us", [["keyboard-us", ""]])), patch.object(typing, "save_inputs") as save:
+      with patch.object(typing.setup, "live_group", return_value=("Default", "us", [["keyboard-us", ""]])), patch.object(typing, "save_inputs") as save, patch.object(typing.setup, "monospace_default"):
         typing.seed_language("mozc")
       save.assert_called_once_with(["mozc"])
       self.assertIn("Noto Sans CJK JP", (Path(temporary) / "fontconfig/conf.d/50-omarchy-input-method.conf").read_text())
     with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"XDG_CONFIG_HOME": temporary}):
-      with patch.object(typing.setup, "live_group", return_value=("Default", "us", [["keyboard-us", ""], ["hangul", ""]])), patch.object(typing, "save_inputs") as save:
+      with patch.object(typing.setup, "live_group", return_value=("Default", "us", [["keyboard-us", ""], ["hangul", ""]])), patch.object(typing, "save_inputs") as save, patch.object(typing.setup, "monospace_default"):
         typing.seed_language("mozc")
       save.assert_not_called()
 
+  def test_a_cjk_language_seeds_its_monospace_font_even_with_an_engine(self):
+    for method in ("mozc", "pinyin", "chewing", "hangul"):
+      with self.subTest(method=method), tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"XDG_CONFIG_HOME": temporary}):
+        with patch.object(typing.setup, "live_group", return_value=("Default", "us", [["keyboard-us", ""], ["hangul", ""]])), patch.object(typing.setup, "monospace_default") as monospace:
+          typing.seed_language(method)
+        monospace.assert_called_once_with(method)
+
   def test_a_cjk_language_without_fcitx_still_seeds_its_glyph_forms(self):
     with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"XDG_CONFIG_HOME": temporary}):
-      with patch.object(typing.setup, "live_group", side_effect=subprocess.CalledProcessError(1, "busctl")), patch("sys.stderr") as error:
+      with patch.object(typing.setup, "live_group", side_effect=subprocess.CalledProcessError(1, "busctl")), patch("sys.stderr") as error, patch.object(typing.setup, "monospace_default"):
         typing.seed_language("pinyin")
       self.assertIn("Setup > Typing > Input Methods", "".join(call.args[0] for call in error.write.call_args_list))
       self.assertIn("Noto Sans CJK SC", (Path(temporary) / "fontconfig/conf.d/50-omarchy-input-method.conf").read_text())

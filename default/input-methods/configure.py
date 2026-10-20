@@ -241,6 +241,17 @@ def font_default(config_home, method, variant=None):
   font_set(config_home, variant)
 
 
+def monospace_default(method):
+  # Maple Mono NF CN draws kana and Han in the terminal, but no Hangul, so
+  # Korean keeps the default font. Only someone still on it is switched.
+  family = PRESETS.get(method, {}).get("monospace")
+  if family:
+    try:
+      subprocess.run(["omarchy-font-set", "--seed", family], stdout=subprocess.DEVNULL, check=False)
+    except OSError as error:
+      print(f"Monospace font left as it was: {error}", file=sys.stderr)
+
+
 def live_group():
   group = run(["fcitx5-remote", "-q"])
   info = json.loads(run(CONTROLLER[:1] + ["--json=short"] + CONTROLLER[1:] + ["InputMethodGroupInfo", "s", group]))["data"]
@@ -301,6 +312,7 @@ def configure_inner(args, config_home, running):
     defaults(config_home, fresh=True)
     activation_default()
     font_default(config_home, method)
+    monospace_default(method)
     return
 
   fresh = stock_profile(original)

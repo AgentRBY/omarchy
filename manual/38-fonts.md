@@ -13,3 +13,5 @@ Maple Mono NF CN comes installed as well, for terminals that show Chinese or Jap
 ## Chinese, Japanese, and Korean
 
 Chinese, Japanese, and Korean share many characters but draw some of them differently, so the same character looks right to one reader and foreign to another. Picking one of these languages under _Setup > Language_, or its input method, sets the matching forms. To choose them yourself, use _Style > Font > Chinese, Japanese, Korean_, or `omarchy font cjk jp`, `kr`, `sc`, `tc` (Taiwan), or `hk` (Hong Kong) from a terminal; `omarchy font cjk default` goes back to the system's choice, which is Japanese forms. Text a web page or document marks with its own language, and the whole desktop while it is in one of these languages, keeps that language's forms.
+
+Picking Chinese or Japanese under _Setup > Language_, or that keyboard at install, also switches the monospace font to Maple Mono NF CN, unless you have already chosen one under _Style > Font_. Korean keeps the default, since Maple Mono has no Hangul.
