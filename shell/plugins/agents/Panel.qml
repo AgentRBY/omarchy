@@ -639,6 +639,7 @@ Panel {
   function statusDisplayText(status) {
     var value = String(status || "")
     if (value === "Balance unavailable") return Commons.I18n.t("agents.balanceUnavailable")
+    if (value === "Out of credits") return Commons.I18n.t("agents.outOfCredits")
     var limits = value.match(/^(.+) limits unavailable$/)
     if (limits) return Commons.I18n.t("agents.providerLimitsUnavailable").arg(limits[1])
     var provider = value.match(/^(.+) unavailable$/)
