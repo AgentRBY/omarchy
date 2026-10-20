@@ -150,11 +150,16 @@ kimi_package="npm:@moonshot-ai/kimi-code"
 qwen_package="qwen"
 dsh_tool="npm:@deepseek-ai/dsh"
 dsh_package="$dsh_tool@0.2.0-rc.2"
-mcode_package="npm:@minimax-ai/code[allow_builds=better-sqlite3]"
-kiro_cli_package="http:kiro-cli[platforms_linux_x64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-x86_64-linux.tar.gz,platforms_linux_arm64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-aarch64-linux.tar.gz,version_list_url=https://prod.download.cli.kiro.dev/stable/latest/manifest.json,version_json_path=.version]"
+# Omarchy declares a tool with backend options under its bare name; the
+# bracketed package is what a user without the declarations gets.
+mcode_tool="npm:@minimax-ai/code"
+mcode_package="$mcode_tool[allow_builds=better-sqlite3]"
+kiro_cli_tool="http:kiro-cli"
+kiro_cli_package="$kiro_cli_tool[platforms_linux_x64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-x86_64-linux.tar.gz,platforms_linux_arm64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-aarch64-linux.tar.gz,version_list_url=https://prod.download.cli.kiro.dev/stable/latest/manifest.json,version_json_path=.version]"
 freebuff_package="npm:freebuff"
 kilo_package="npm:@kilocode/cli"
-devin_package="http:devin[platforms_linux_x64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-x86_64-unknown-linux.tar.gz,platforms_linux_arm64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-aarch64-unknown-linux.tar.gz,bin_path=bin,version_list_url=https://static.devin.ai/cli/current/manifest.json,version_json_path=.version]"
+devin_tool="http:devin"
+devin_package="$devin_tool[platforms_linux_x64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-x86_64-unknown-linux.tar.gz,platforms_linux_arm64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-aarch64-unknown-linux.tar.gz,bin_path=bin,version_list_url=https://static.devin.ai/cli/current/manifest.json,version_json_path=.version]"
 amp_package="amp"
 commandcode_package="npm:command-code"
 cursor_agent_package="cursor-agent"
@@ -205,16 +210,33 @@ grep -Eq "^$qwen_package = \\{ version = \"latest\", lazy = true, auto_update = 
 # A tool without registry bin metadata names the commands mise shims for it.
 declare -A declared_bins=(
   [$amp_package]='"amp"'
-  ["\"$mcode_package\""]='"mcode"'
-  ["\"$kiro_cli_package\""]='"kiro-cli"'
   ["\"$freebuff_package\""]='"freebuff"'
   ["\"$kilo_package\""]='"kilo"'
-  ["\"$devin_package\""]='"devin"'
   ["\"$commandcode_package\""]='"commandcode"'
 )
 for tool in "${!declared_bins[@]}"; do
   grep -Fx "$tool = { version = \"latest\", lazy = true, auto_update = \"4h\", lazy_bins = [${declared_bins[$tool]}], minimum_release_age = \"0s\" }" "$lazy_config" >/dev/null ||
     fail "user setup declares $tool as a self-updating native lazy tool with its commands"
+done
+# mise drops bracket options from a table-valued key, so a tool with backend
+# options is declared by its bare name with the options inside the table: the
+# same options the launcher hands a user without the declarations.
+declare -A declared_option_bins=(
+  [mcode]='"mcode"'
+  [kiro_cli]='"kiro-cli"'
+  [devin]='"devin"'
+)
+for agent in "${!declared_option_bins[@]}"; do
+  tool_var="${agent}_tool"
+  package_var="${agent}_package"
+  declaration=$(grep -F "\"${!tool_var}\" = { version = \"latest\", lazy = true, auto_update = \"4h\", lazy_bins = [${declared_option_bins[$agent]}], minimum_release_age = \"0s\", " "$lazy_config") ||
+    fail "user setup declares ${!tool_var} as a self-updating native lazy tool with its commands"
+  options=${!package_var#*[}
+  IFS=, read -ra options <<<"${options%]}"
+  for option in "${options[@]}"; do
+    [[ $declaration == *" ${option%%=*} = \"${option#*=}\""* ]] ||
+      fail "user setup declares ${!tool_var} with ${option%%=*} inside its table"
+  done
 done
 # Every DSH release is a prerelease, so it stays pinned and doesn't update itself.
 grep -Fx "\"$dsh_tool\" = { version = \"${dsh_package##*@}\", lazy = true, lazy_bins = [\"dsh\"], minimum_release_age = \"0s\" }" "$lazy_config" >/dev/null ||
@@ -820,10 +842,15 @@ pass "Muse installs visibly through mise and opens directly"
 
 saved_agent=$(<"$agent_file")
 for agent in qwen dsh mcode kiro-cli freebuff kilo devin amp commandcode; do
+  tool_var="${agent//-/_}_tool"
   package_var="${agent//-/_}_package"
+  declared_tool=${!tool_var:-${!package_var}}
   : >"$mise_history"
   omarchy-default-agent --install "$agent" >/dev/null
-  grep -Fx "install ${!package_var}" "$mise_history" >/dev/null || fail "visible $agent installation installs Omarchy's declaration"
+  grep -Fx "install $declared_tool" "$mise_history" >/dev/null || fail "visible $agent installation installs Omarchy's declaration"
+  : >"$mise_history"
+  OMARCHY_TEST_AGENT_INSTALLED=true omarchy-default-agent "$agent" >/dev/null
+  grep -Fx "where $declared_tool" "$mise_history" >/dev/null || fail "$agent selection looks for Omarchy's declaration"
   grep -q '^use ' "$mise_history" && fail "$agent selection leaves the user config alone when the system config declares it"
   [[ $(omarchy-default-agent) == "$agent" ]] || fail "visible $agent installation changes the selection"
 done

@@ -48,18 +48,20 @@ dsh | deepseek | deepseek-harness)
   # release exists upstream.
   agent_tool="npm:@deepseek-ai/dsh"; agent_package="$agent_tool@0.2.0-rc.2"
   ;;
-mcode | minimax-code | minimax) agent="mcode"; name="MiniMax Code"; agent_package="npm:@minimax-ai/code[allow_builds=better-sqlite3]" ;;
+mcode | minimax-code | minimax) agent="mcode"; name="MiniMax Code"; agent_tool="npm:@minimax-ai/code"; agent_package="$agent_tool[allow_builds=better-sqlite3]" ;;
 kiro-cli | kiro)
   agent="kiro-cli"; name="Kiro CLI"
   # Kiro publishes per-platform archives behind a manifest of the stable release.
-  agent_package="http:kiro-cli[platforms_linux_x64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-x86_64-linux.tar.gz,platforms_linux_arm64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-aarch64-linux.tar.gz,version_list_url=https://prod.download.cli.kiro.dev/stable/latest/manifest.json,version_json_path=.version]"
+  agent_tool="http:kiro-cli"
+  agent_package="$agent_tool[platforms_linux_x64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-x86_64-linux.tar.gz,platforms_linux_arm64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-aarch64-linux.tar.gz,version_list_url=https://prod.download.cli.kiro.dev/stable/latest/manifest.json,version_json_path=.version]"
   ;;
 freebuff) agent="freebuff"; name="Freebuff"; agent_package="npm:freebuff" ;;
 kilo | kilocode | kilo-code) agent="kilo"; name="Kilo"; agent_package="npm:@kilocode/cli" ;;
 devin | devin-cli)
   agent="devin"; name="Devin CLI"
   # Cognition publishes per-platform archives behind a manifest of the current release.
-  agent_package="http:devin[platforms_linux_x64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-x86_64-unknown-linux.tar.gz,platforms_linux_arm64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-aarch64-unknown-linux.tar.gz,bin_path=bin,version_list_url=https://static.devin.ai/cli/current/manifest.json,version_json_path=.version]"
+  agent_tool="http:devin"
+  agent_package="$agent_tool[platforms_linux_x64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-x86_64-unknown-linux.tar.gz,platforms_linux_arm64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-aarch64-unknown-linux.tar.gz,bin_path=bin,version_list_url=https://static.devin.ai/cli/current/manifest.json,version_json_path=.version]"
   ;;
 amp | ampcode) agent="amp"; name="Amp" ;;
 commandcode | command-code | cmdc) agent="commandcode"; name="Command Code"; agent_package="npm:command-code" ;;
@@ -70,7 +72,9 @@ commandcode | command-code | cmdc) agent="commandcode"; name="Command Code"; age
 esac
 
 agent_package=${agent_package:-$agent}
-# The name Omarchy declares the tool under, when the package also names a version.
+# Omarchy declares a tool that takes backend options under its bare name, with
+# the options inside the declaration's table, because mise drops bracket options
+# from a table-valued key. The bracketed package is only for the user's config.
 agent_tool=${agent_tool:-$agent_package}
 
 # Hermes and OpenClaw are not mise tools: each is a self-updating runtime in
@@ -93,14 +97,14 @@ else
     [[ -x $HOME/.local/bin/$agent ]] &&
       { [[ -L $HOME/.local/bin/$agent ]] || ! grep -q '^mise use -g' "$HOME/.local/bin/$agent"; }
   }
-  agent_present() { user_install || mise where "$agent_package" &>/dev/null; }
+  agent_present() { user_install || mise where "$agent_tool" &>/dev/null; }
   # Omarchy declares the default agents as mise tools, so installing one is
   # enough and leaves the user's config alone. A user who removed the
   # preinstalls, like one without Omarchy's declarations, selects it instead.
   agent_install() {
     user_install && return
     if omarchy-mise-default-tools declares "$agent_tool"; then
-      mise install "$agent_package"
+      mise install "$agent_tool"
     else
       mise use -g "$agent_package"
     fi
