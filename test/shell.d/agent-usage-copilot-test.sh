@@ -115,6 +115,20 @@ configured(monthlyCredits=3000, remote=False)
 record = copilot()
 expect("the estimate follows the monthlyCredits budget", [record["tierLabel"], record["limits"][0]["percent"]], ["", 0.0005], record)
 
+# The store is opened by its URI, so a home whose path holds URI syntax
+# (? # %) still reads.
+sandbox()
+configured(remote=False)
+odd_home = home() / "co?pilot#50%"
+os.environ["COPILOT_HOME"] = str(odd_home)
+copilot_home_was = copilot_home
+copilot_home = lambda: odd_home
+store([("sess-odd", NOW, "gpt-5.2", 0, 10, 1, 0, 0, 0)])
+record = copilot()
+copilot_home = copilot_home_was
+del os.environ["COPILOT_HOME"]
+expect("a store under a path with URI syntax in it is read", [record["todayPrompts"], record["modelUsage"].get("gpt-5.2", {}).get("inputTokens")], [1, 10], record)
+
 # Lifetime totals cover the whole store, however many rows it holds.
 sandbox()
 configured(remote=False)

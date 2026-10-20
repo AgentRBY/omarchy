@@ -44,11 +44,9 @@ import datetime as dt
 import hashlib
 import json
 import os
-import shutil
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -97,12 +95,6 @@ API_PLAN_LABELS = {
   "free": "Free",
   "max": "Max",
 }
-
-# The session store is mutable and grows without bound, so it is size-capped
-# before it is snapshotted. Every scan aggregates as it streams, so the record's
-# size depends on days and models, never on the number of rows.
-MAX_DB_BYTES = 512 * 1024 * 1024
-
 
 def expand_path(value: str) -> Path:
   return Path(os.path.expandvars(os.path.expanduser(value))).resolve()
@@ -200,44 +192,30 @@ def utc_month_key(value: Any) -> str:
 # ------------------------------------------------------------------ database
 
 
-def open_store(path: Path) -> tuple[sqlite3.Connection | None, Path | None]:
-  """Open a private snapshot of the session store.
+def open_store(path: Path) -> sqlite3.Connection | None:
+  """Open the session store read-only, or None when it can't be read.
 
-  The CLI writes to this database continuously in WAL mode. Raw-copying the
-  main file and its -wal sibling cannot be made safe: a checkpoint between
-  the two copies pairs an old database with a newer WAL generation. SQLite's
-  online backup API takes the read lock it needs to produce a consistent
-  copy instead, without ever blocking the writer. The caller must remove the
-  returned temp dir once the connection is closed.
+  The CLI writes to this database continuously in WAL mode. A read-only
+  connection reads it in place: each query sees one consistent state of the
+  store, without blocking the writer and without copying a store that grows
+  without bound. Every scan aggregates as it streams, so the record's size
+  depends on days and models, never on the number of rows.
   """
-  if not path.exists():
-    return None, None
+  if not path.is_file():
+    return None
   try:
-    if path.stat().st_size > MAX_DB_BYTES:
-      return None, None
-  except OSError:
-    return None, None
-
-  tmpdir = None
-  source = None
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5.0)
+  except sqlite3.Error:
+    return None
   try:
-    tmpdir = Path(tempfile.mkdtemp(prefix="omarchy-copilot-"))
-    source = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
-    target = sqlite3.connect(tmpdir / "snapshot.db")
-    with target:
-      source.backup(target)
-    target.row_factory = sqlite3.Row
-    return target, tmpdir
-  except (OSError, sqlite3.Error):
-    if tmpdir is not None:
-      shutil.rmtree(tmpdir, ignore_errors=True)
-    return None, None
-  finally:
-    if source is not None:
-      try:
-        source.close()
-      except sqlite3.Error:
-        pass
+    conn.execute("PRAGMA query_only = ON")
+    # A file that isn't a database only says so when it is first read.
+    conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchall()
+  except sqlite3.Error:
+    conn.close()
+    return None
+  conn.row_factory = sqlite3.Row
+  return conn
 
 
 def has_table(conn: sqlite3.Connection, name: str) -> bool:
@@ -511,11 +489,10 @@ def scan_transcripts(session_root: Path) -> dict[str, Any]:
 
 
 # The stats, and whether they are complete: a store that is there but could
-# not be snapshotted (busy, or too large) leaves only the transcripts, which
-# newer CLIs may not write.
+# not be read leaves only the transcripts, which newer CLIs may not write.
 def direct_scan(home_dir: Path) -> tuple[dict[str, Any], bool]:
   store = home_dir / "session-store.db"
-  conn, tmpdir = open_store(store)
+  conn = open_store(store)
   if conn is None:
     return scan_transcripts(home_dir / "session-state"), not store.exists()
   try:
@@ -528,8 +505,6 @@ def direct_scan(home_dir: Path) -> tuple[dict[str, Any], bool]:
     return scan_transcripts(home_dir / "session-state"), True
   finally:
     conn.close()
-    if tmpdir is not None:
-      shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ------------------------------------------------------------ remote quota
