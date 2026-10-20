@@ -28,7 +28,7 @@ CREDITS = {
   "key-pair": {"serverless": True, "tier": "teams", "remaining": 5, "has_credits": True},
 }
 BUDGETS = {
-  "key-sprint": {"period": {"startTime": "2026-10-01T00:00:00Z", "endTime": "2026-10-15T00:00:00Z"}, "budgets": [
+  "key-sprint": {"period": {"startTime": iso_in(-7 * 86400), "endTime": iso_in(7 * 86400)}, "budgets": [
     {"scope": "TEAM_POOLED", "scopeId": "t-1", "budgetLimitUsd": "100", "totalSpendUsd": "10", "providerBudgets": [
       {"provider": "openai", "limitType": "CAPPED", "budgetLimitUsd": "20", "usageUsd": "5"},
     ]},
@@ -98,7 +98,7 @@ def reply(id, model, usage, timestamp="now"):
 
 
 def kept(record):
-  return {"stale": record["limitsStale"], "tierLabel": record["tierLabel"], "limits": len(record["limits"]),
+  return {"stale": record["limitsStale"], "tierLabel": record["tierLabel"], "limits": record["limits"],
           "credits": (record.get("balance") or {}).get("remaining"), "retry": record.get("retryAdvised"), "status": record["usageStatusText"]}
 
 
@@ -184,16 +184,17 @@ expect("another key never shows the last key's numbers", [record["tierLabel"], r
 
 # One endpoint failing keeps that endpoint's last answer and takes the other's
 # fresh one, without letting the half that came back replace the cache.
-kimchi(key="key-budget")
+BUDGET_LIMITS = kimchi(key="key-budget")["limits"]
+check("key-budget answers two limits", len(BUDGET_LIMITS) == 2, BUDGET_LIMITS)
 broken["budget"] = DOWN
 record = kimchi(key="key-budget")
 expect("a failed budget endpoint keeps its last limits beside fresh credits", kept(record),
-       {"stale": True, "tierLabel": "Teams", "limits": 2, "credits": 30.0, "retry": True, "status": ""}, record)
+       {"stale": True, "tierLabel": "Teams", "limits": BUDGET_LIMITS, "credits": 30.0, "retry": True, "status": ""}, record)
 broken.clear()
 broken["credits"] = DOWN
 record = kimchi(key="key-budget")
 expect("a failed credits endpoint keeps its last plan and balance beside fresh limits", kept(record),
-       {"stale": True, "tierLabel": "Teams", "limits": 2, "credits": 30.0, "retry": True, "status": ""}, record)
+       {"stale": True, "tierLabel": "Teams", "limits": BUDGET_LIMITS, "credits": 30.0, "retry": True, "status": ""}, record)
 broken.clear()
 
 # A reply of an unexpected shape is a failed check, not an empty account: the
@@ -205,7 +206,7 @@ for odd in ("budget", "credits"):
     record = kimchi(key="key-budget")
     broken.clear()
     expect(f"an unexpected {odd} reply ({json.dumps(body)}) keeps the last answer, stale", kept(record),
-           {"stale": True, "tierLabel": "Teams", "limits": 2, "credits": 30.0, "retry": None, "status": ""}, record)
+           {"stale": True, "tierLabel": "Teams", "limits": BUDGET_LIMITS, "credits": 30.0, "retry": None, "status": ""}, record)
 
 # A part that fails before anything was cached is missing, not current: the
 # record is stale, but a server that answered with an error isn't retried
