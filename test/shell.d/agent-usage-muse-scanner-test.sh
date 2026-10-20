@@ -254,6 +254,21 @@ again = collect("muse")
 expect("Muse serves native stats past a corrupt opencode database, uncached",
        [record["todayTotalTokens"], record["ready"], again["todayTotalTokens"], scan_cache_files("muse")], [33, True, 33, []], record)
 
+# An unreadable native session leaves the scan incomplete: the sessions that
+# could be read are served, and that partial scan is never cached.
+if os.geteuid() != 0:
+  new_muse_home()
+  session("sess-readable", completion("native-model", input=30, output=3))
+  unreadable = session("sess-unreadable", completion("native-model", input=500, output=50))
+  unreadable.chmod(0)
+  record = muse()
+  again = collect("muse")
+  unreadable.chmod(0o644)
+  expect("Muse serves readable native sessions past an unreadable one, uncached",
+         [record["todayTotalTokens"], again["todayTotalTokens"], scan_cache_files("muse")], [33, 33, []], record)
+  record = collect("muse")
+  expect("Muse counts the session once it can be read", record["todayTotalTokens"], 583, record)
+
 # A microsecond epoch written as a string lands on its real day; a boolean
 # stamp falls back on the file's time rather than 1970; an opencode time that
 # isn't an object reads as no time (today), tokens that aren't an object skip
