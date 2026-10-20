@@ -78,6 +78,12 @@ def scan(path, totals, today):
       if date[0]:
         totals["dates"].add(date[0])
 
+    # A Hermes that keeps no usage table yet still has its sessions and
+    # prompts to count.
+    tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "session_model_usage" not in tables:
+      return
+
     # Usage is kept per session and model, so a session's tokens land on the
     # day it started.
     for day, model, uncached, output, cache_read, cache_write in conn.execute(

@@ -75,6 +75,17 @@ expect("Hermes reads each model's usage, today's totals, and its prompts and ses
   "counts": [1, 1, 1, 1],
 }, record)
 
+# A state.db with no usage table still counts its sessions and prompts.
+sandbox()
+bare = state_db(home() / ".hermes" / "state.db")
+conn = sqlite3.connect(bare)
+conn.execute("DROP TABLE session_model_usage")
+conn.commit()
+conn.close()
+record = hermes()
+expect("a state.db without a usage table still counts its sessions and prompts",
+       [record["usageStatusText"], record["totalSessions"], record["todayPrompts"], record["modelUsage"]], ["", 1, 1, {}], record)
+
 # Named profiles live under ~/.hermes/profiles even when HERMES_HOME moves the
 # default home elsewhere.
 sandbox()
