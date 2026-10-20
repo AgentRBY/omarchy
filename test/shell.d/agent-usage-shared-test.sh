@@ -393,6 +393,35 @@ reset = error_of(failing(ConnectionResetError()))
 check("a reset connection is transport, not a reply cut short", (reset.transport, reset.cut_short) == (True, False))
 refused = error_of(failing(urllib.error.HTTPError("u", 429, "slow down", {"retry-after": "30"}, None)))
 check("a refusal carries its own headers", refused.status == 429 and refused.headers.get("retry-after") == "30" and not refused.cut_short)
+# Over a real socket: a server that stops short of its Content-Length and
+# hangs up hands a sized read only what arrived, which is cut short, not an
+# invalid answer.
+import socket  # noqa: E402
+
+
+def short_server():
+  listener = socket.socket()
+  listener.bind(("127.0.0.1", 0))
+  listener.listen(1)
+
+  def serve():
+    conn, _ = listener.accept()
+    with conn:
+      conn.recv(65536)
+      conn.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{"a": 1, "b"')
+    listener.close()
+
+  threading.Thread(target=serve, daemon=True).start()
+  return f"http://127.0.0.1:{listener.getsockname()[1]}/"
+
+
+os.environ["no_proxy"] = "*"
+try:
+  collectors.open_json(urllib.request.Request(short_server()), timeout=5)
+  short = None
+except collectors.HttpError as error:
+  short = error
+check("a body short of its Content-Length over a socket is cut short", short is not None and (short.transport, short.invalid, short.cut_short) == (False, True, True), repr(short and vars(short)))
 handlers = [handler for handler in urllib.request._opener.handlers if isinstance(handler, urllib.request.HTTPRedirectHandler)]
 check("requests refuse redirects", handlers and handlers[0].redirect_request(None, None, 302, "Found", {}, "https://elsewhere") is None)
 

@@ -1089,6 +1089,9 @@ def open_json(request: urllib.request.Request, timeout: float = 10, limit: int =
   try:
     with urllib.request.urlopen(request, timeout=timeout) as response:
       body = response.read(limit + 1)
+      # A sized read hands back what arrived when the server stops short of
+      # its Content-Length, with the rest still owed.
+      owed = getattr(response, "length", None)
   except urllib.error.HTTPError as error:
     try:
       body = error.read(limit) or b""
@@ -1107,6 +1110,8 @@ def open_json(request: urllib.request.Request, timeout: float = 10, limit: int =
     raise HttpError(cut_short=True) from error
   if len(body) > limit:
     raise HttpError()
+  if isinstance(owed, int) and owed > 0:
+    raise HttpError(cut_short=True)
   try:
     return json.loads(body.decode("utf-8", errors="replace"))
   except ValueError as error:
