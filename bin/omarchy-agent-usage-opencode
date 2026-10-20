@@ -140,13 +140,19 @@ def read_auth_key(path):
   # Only the subscription's own provider ids: a custom gateway named like
   # "opencode-local" holds a key for somewhere else, never to be sent here.
   # An entry is an {type, key} object, or the key as a plain string.
+  # A pi `$VAR` or `!command` entry is resolved by pi alone, never sent.
   entries = [parsed[provider] for provider in PROVIDERS if provider in parsed]
   for entry in entries:
-    if isinstance(entry, str) and entry.strip():
+    if isinstance(entry, dict):
+      entry = entry.get("key")
+    if isinstance(entry, str) and entry.strip() and not entry.strip().startswith(("!", "$")):
       return entry.strip()
-    if isinstance(entry, dict) and isinstance(entry.get("key"), str) and entry["key"].strip():
-      return entry["key"].strip()
   return ""
+
+
+def pi_agent_dir():
+  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
+  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
 
 
 def read_store_credentials(db):
@@ -199,7 +205,8 @@ def credential_candidates():
   tokens = [str(os.environ.get(name, "")).strip() for name in ("OPENCODE_API_KEY", "OPENCODE_GO_API_KEY")]
   tokens += store_keys
   tokens.append(read_auth_key(data_home() / "opencode" / "auth.json"))
-  tokens.append(read_auth_key(Path.home() / ".pi" / "agent" / "auth.json"))
+  tokens.append(read_auth_key(pi_agent_dir() / "auth.json"))
+  tokens.append(read_auth_key(Path.home() / ".omp" / "agent" / "auth.json"))
   candidates = []
   for token in tokens:
     if token and token not in [c.token for c in candidates]:
