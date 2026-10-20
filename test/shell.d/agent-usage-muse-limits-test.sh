@@ -1,281 +1,153 @@
 #!/bin/bash
 
+# The Muse collector's limits: the login the Muse CLI keeps, Muse's key
+# endpoint and the subscription windows, plan and pay-as-you-go answers it
+# gives. The unused-machine record is held centrally by the partition test,
+# the limits cache by the contract checks, run here against a real stand-in
+# for the key endpoint, and Muse's local stats by its scanner test.
+
 set -euo pipefail
 
-source "$(dirname "$0")/base-test.sh"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+source "$SHELL_TEST_DIR/agent-usage-helpers.sh"
 
-require_command jq
-require_command python3
+agent_sandbox
 
-unset MUSE_DATA_DIR MUSE_AUTH_PATH MUSE_KEY_ENDPOINT PI_CODING_AGENT_DIR OPENCODE_DB
+python3 - <<'PY'
+from agent_usage_fixtures import *
 
-TEST_HOME=$(mktemp -d)
-trap 'rm -rf "$TEST_HOME"' EXIT
+SUBSCRIBER = {"body": {"subs_tier_name": "Power Usage", "subs_usage": {
+  "window": {"used_percent": 8, "window_duration_mins": 300, "resets_at": 4102444800},
+  "weekly": {"used_percent": 15, "resets_at": 4103049600}}}}
+PAYG = {"body": {"api_key": "minted", "is_subs_active": False, "subs_tier_name": None}}
+state = {"spec": SUBSCRIBER}
 
-mkdir -p "$TEST_HOME/.config/muse" "$TEST_HOME/.cache"
-cat >"$TEST_HOME/.config/muse/auth.json" <<'EOF'
-{"schema_version":1,"providers":{"meta":{"access_token":"test-token","api_base_url":"https://api.meta.ai/v1"}}}
-EOF
-touch -d '2026-01-01 00:00:00' "$TEST_HOME/.config/muse/auth.json"
-auth_state() {
-  stat -c '%Y %s' "$TEST_HOME/.config/muse/auth.json"
-  sha256sum <"$TEST_HOME/.config/muse/auth.json"
-}
-auth_before=$(auth_state)
 
-# A stub key service: records the Authorization header it was called with
-# and answers from a canned payload file. The collector must send the OAuth
-# token as a Bearer token and never persist it anywhere.
-cat >"$TEST_HOME/stub.py" <<'EOF'
-import http.server
-import json
-import os
-import sys
+# A stand-in for Muse's key endpoint, answering the POST from state["spec"]:
+# a body, or a status, or raw bytes.
+def key_endpoint(request):
+  spec = state["spec"]
+  if spec.get("status", 200) != 200:
+    return spec["status"], b""
+  return spec.get("raw") or spec.get("body", {})
 
-seen_file = os.environ["STUB_SEEN_FILE"]
-payload_file = os.environ["STUB_PAYLOAD_FILE"]
 
-class Handler(http.server.BaseHTTPRequestHandler):
-  def do_POST(self):
-    length = int(self.headers.get("Content-Length") or 0)
-    self.rfile.read(length)
-    with open(seen_file, "a") as handle:
-      handle.write((self.headers.get("Authorization") or "") + "\n")
-    try:
-      with open(payload_file) as handle:
-        spec = json.load(handle)
-    except OSError:
-      spec = {"status": 500}
-    status = spec.get("status", 200)
-    self.send_response(status)
-    if status != 200:
-      self.end_headers()
-      return
-    raw = spec.get("raw")
-    body = raw.encode() if isinstance(raw, str) else json.dumps(spec.get("body", {})).encode()
-    self.send_header("Content-Type", "application/json")
-    self.send_header("Content-Length", str(len(body)))
-    self.end_headers()
-    self.wfile.write(body)
+ENDPOINT, reqs = stub_server(key_endpoint)
+ENDPOINT += "/key"
 
-  def log_message(self, *args):
-    pass
 
-http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
-EOF
+@contextlib.contextmanager
+def serve(mode):
+  os.environ["MUSE_KEY_ENDPOINT"] = ENDPOINT
+  if mode in ("down", "timeout"):
+    with FakeHttp(mode=mode):
+      yield
+    return
+  state["spec"] = SUBSCRIBER if mode == "up" else {"status": mode}
+  yield
 
-port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
-export STUB_SEEN_FILE="$TEST_HOME/seen-headers"
-export STUB_PAYLOAD_FILE="$TEST_HOME/stub-payload.json"
-: >"$STUB_SEEN_FILE"
-printf '{"status":500}' >"$STUB_PAYLOAD_FILE"
-python3 "$TEST_HOME/stub.py" "$port" & stub_pid=$!
-trap 'kill "$stub_pid" 2>/dev/null; rm -rf "$TEST_HOME"' EXIT
-for _ in $(seq 1 50); do
-  (echo >/dev/tcp/127.0.0.1/"$port") 2>/dev/null && break
-  sleep 0.1
-done
 
-run_collector() {
-  HOME="$TEST_HOME" XDG_DATA_HOME="$TEST_HOME/.local/share" XDG_CACHE_HOME="$TEST_HOME/.cache" XDG_CONFIG_HOME="$TEST_HOME/.config" \
-    MUSE_KEY_ENDPOINT="http://127.0.0.1:$port/key" \
-    "$ROOT/bin/omarchy-agent-usage-muse" "$@"
-}
+def muse(spec=None, *args, fresh_cache=True):
+  """A run against the key endpoint answering `spec`, from no cache unless
+  fresh_cache is False."""
+  if fresh_cache:
+    for path in limits_cache_files("muse"):
+      path.unlink()
+  os.environ["MUSE_KEY_ENDPOINT"] = ENDPOINT
+  if spec is not None:
+    state["spec"] = spec
+  return collect("muse", *(args or ("--force",)))
 
-set_payload() {
-  printf '%s' "$1" >"$STUB_PAYLOAD_FILE"
-  : >"$STUB_SEEN_FILE"
-  # Each stub case starts without a previous probe's cache, so fallback
-  # behavior never leaks across cases.
-  rm -f "$TEST_HOME"/.cache/omarchy/agent-usage/muse-limits-*.json
-}
 
-# Subscriber with usage: window + weekly percents, resets, tier.
-set_payload '{"body":{"subs_tier_name":"Power Usage","subs_usage":{"window":{"used_percent":8,"window_duration_mins":300,"resets_at":4102444800},"weekly":{"used_percent":15,"resets_at":4103049600}}}}'
-result=$(run_collector --force)
+def auth_path():
+  return config_home() / "muse" / "auth.json"
 
-[[ $(jq -c '[.limits[]|{label,percent}]' <<<"$result") == '[{"label":"Session (5-hour)","percent":0.08},{"label":"Weekly (7-day)","percent":0.15}]' ]] ||
-  fail "Muse collector reports window and weekly limits from the key endpoint" "$result"
-pass "Muse collector reports window and weekly limits from the key endpoint"
 
-[[ $(jq -r '.limits[0].resetsAt' <<<"$result") == "2100-01-01T00:00:00+00:00" ]] ||
-  fail "Muse collector converts window reset times to ISO" "$result"
-pass "Muse collector converts window reset times to ISO"
+def signed_in(token="test-token"):
+  write_json(auth_path(), {"schema_version": 1, "providers": {"meta": {"access_token": token, "api_base_url": "https://api.meta.ai/v1"}}})
 
-[[ $(jq -r '.tierLabel' <<<"$result") == "Power Usage" ]] ||
-  fail "Muse collector reports the subscription tier" "$result"
-pass "Muse collector reports the subscription tier"
 
-[[ $(cat "$STUB_SEEN_FILE") == "Bearer test-token" ]] ||
-  fail "Muse collector authenticates the probe with the saved token" "$(cat "$STUB_SEEN_FILE")"
-pass "Muse collector authenticates the probe with the saved token"
+def auth_state():
+  return (auth_path().stat().st_mtime, auth_path().read_bytes(), sorted(path.name for path in auth_path().parent.iterdir()))
 
-# Token and minted key must not leak into the record or the caches.
-grep -rq "test-token" "$TEST_HOME/.cache" "$TEST_HOME/.local" 2>/dev/null &&
-  fail "Muse collector keeps the token out of caches" "$(grep -r "test-token" "$TEST_HOME/.cache" 2>/dev/null)"
-pass "Muse collector keeps the token out of caches"
 
-# A fresh probe result is reused briefly, so repeated panel opens do not
-# turn into a request per flick.
-: >"$STUB_SEEN_FILE"
-second=$(run_collector)
-[[ -s $STUB_SEEN_FILE ]] &&
-  fail "Muse collector reuses a recent probe result" "$(cat "$STUB_SEEN_FILE")"
-pass "Muse collector reuses a recent probe result"
+# ---------------------------------------------------------------- contract
 
-[[ $(jq -r '.tierLabel' <<<"$second") == "Power Usage" ]] ||
-  fail "Muse collector reuses the cached tier" "$second"
-pass "Muse collector reuses the cached tier"
+sandbox()
+signed_in()
+os.utime(auth_path(), (1767225600, 1767225600))
+auth_before = auth_state()
 
-[[ $(jq -c '{stale: .limitsStale, stamped: (.limitsFetchedAt > 0)}' <<<"$result") == '{"stale":false,"stamped":true}' ]] ||
-  fail "Muse collector stamps fresh limits" "$result"
-pass "Muse collector stamps fresh limits"
+fresh = check_limits_contract(Adapter("muse", serve=serve, count=lambda: len(reqs)))
+expect("Muse reads the session and weekly windows, their resets, and the plan from the key endpoint",
+       [fresh["tierLabel"], [[entry["label"], entry["percent"], entry["resetsAt"]] for entry in fresh["limits"]]],
+       ["Power Usage", [["Session (5-hour)", 0.08, "2100-01-01T00:00:00+00:00"], ["Weekly (7-day)", 0.15, "2100-01-08T00:00:00+00:00"]]], fresh)
+expect("Muse authenticates the probe with the saved token", reqs[-1]["headers"].get("Authorization"), "Bearer test-token")
 
-# A failed check keeps the last good windows, marked stale with when they
-# were measured; a rejected sign-in does too, and says so.
-printf '{"status":500}' >"$STUB_PAYLOAD_FILE"
-down=$(run_collector --force)
-[[ $(jq -c --argjson fresh "$result" '{same: (.limits == $fresh.limits), stale: .limitsStale, stamp: (.limitsFetchedAt == $fresh.limitsFetchedAt), tier: .tierLabel, status: .usageStatusText}' <<<"$down") == '{"same":true,"stale":true,"stamp":true,"tier":"Power Usage","status":""}' ]] ||
-  fail "Muse collector keeps the last good limits, stale, after a failed check" "$down"
-pass "Muse collector keeps the last good limits, stale, after a failed check"
+leaks = [str(path) for path in home().rglob("*") if path.is_file() and path != auth_path() and b"test-token" in path.read_bytes()]
+expect("Muse keeps the token out of every cache and file of its own", leaks, [])
 
-printf '{"status":401}' >"$STUB_PAYLOAD_FILE"
-refused=$(run_collector --force)
-[[ $(jq -c '{kept: (.limits | length), stale: .limitsStale, status: .usageStatusText}' <<<"$refused") == '{"kept":2,"stale":true,"status":"Sign-in expired"}' ]] ||
-  fail "Muse collector keeps the last limits through a rejected sign-in" "$refused"
-pass "Muse collector keeps the last limits through a rejected sign-in"
-
-# A kept window that has since reset comes back at zero, with no reset time
-# until a check succeeds again.
-limits_cache=$(echo "$TEST_HOME"/.cache/omarchy/agent-usage/muse-limits-*.json)
-jq '.limits[0].resetsAt = "2020-01-01T00:00:00+00:00"' "$limits_cache" >"$limits_cache.tmp" && mv "$limits_cache.tmp" "$limits_cache"
-printf '{"status":500}' >"$STUB_PAYLOAD_FILE"
-lapsed=$(run_collector --force)
-[[ $(jq -c '[.limits[] | {zero: (.percent == 0), reset: (.resetsAt != "")}]' <<<"$lapsed") == '[{"zero":true,"reset":false},{"zero":false,"reset":true}]' ]] ||
-  fail "Muse collector resets a kept window once it has ended" "$lapsed"
-pass "Muse collector resets a kept window once it has ended"
+# The plan is kept with the windows, so a reused or kept answer still names it.
+with serve(500):
+  reused = collect("muse")
+  kept = collect("muse", "--force")
+expect("a reused and a kept Muse answer keep the plan", [reused["tierLabel"], kept["tierLabel"], kept["limitsStale"]], ["Power Usage", "Power Usage", True], kept)
 
 # The login file belongs to the Muse CLI: every run so far only read it.
-[[ $(auth_state) == "$auth_before" && $(ls -A "$TEST_HOME/.config/muse") == "auth.json" ]] ||
-  fail "Muse collector never writes the login file" "$(ls -lA --time-style=+%s "$TEST_HOME/.config/muse")"
-pass "Muse collector never writes the login file"
+expect("Muse never writes the login file", auth_state(), auth_before)
 
-# Pay-as-you-go: key mints fine but there is no subscription window to
-# meter, and no plan name to invent. Silent local metering — not an error,
-# not expired.
-set_payload '{"body":{"api_key":"minted","is_subs_active":false,"subs_tier_name":null}}'
-payg=$(run_collector --force)
-[[ $(jq -c '[.limits,.tierLabel,.usageStatusText,.authHelpText]' <<<"$payg") == '[[],"","",""]' ]] ||
-  fail "Muse collector stays silent for pay-as-you-go accounts" "$payg"
-pass "Muse collector stays silent for pay-as-you-go accounts"
+# ------------------------------------------------------- answers without windows
 
-[[ $(jq 'has("retryAdvised")' <<<"$payg") == "false" ]] ||
-  fail "Muse collector does not retry a pay-as-you-go answer" "$payg"
-pass "Muse collector does not retry a pay-as-you-go answer"
+# Pay-as-you-go: the key mints, but there is no subscription window to meter
+# and no plan name to invent. Local metering only: not an error, not expired.
+payg = muse(PAYG)
+expect("Muse stays silent for a pay-as-you-go account",
+       [payg["limits"], payg["tierLabel"], payg["usageStatusText"], payg["authHelpText"], "retryAdvised" in payg], [[], "", "", "", False], payg)
 
-# Active plan without usage windows (live Muse Code Power Usage shape):
-# keep the tier, show local metering only — silent, not an error.
-set_payload '{"body":{"api_key":"minted","is_subs_active":true,"subs_tier_name":"Muse Code Everyday Usage"}}'
-nosnap=$(run_collector --force)
-[[ $(jq -c '[.limits,.tierLabel,.usageStatusText,.authHelpText]' <<<"$nosnap") == '[[],"Muse Code Everyday Usage","",""]' ]] ||
-  fail "Muse collector stays silent for an active plan without usage windows" "$nosnap"
-pass "Muse collector stays silent for an active plan without usage windows"
+# An active plan without usage windows (the live Muse Code shape) keeps its
+# name and shows local metering only.
+plan = muse({"body": {"api_key": "minted", "is_subs_active": True, "subs_tier_name": "Muse Code Everyday Usage"}})
+expect("Muse stays silent for an active plan without usage windows",
+       [plan["limits"], plan["tierLabel"], plan["usageStatusText"], plan["authHelpText"], "retryAdvised" in plan],
+       [[], "Muse Code Everyday Usage", "", "", False], plan)
+expect("a Muse sign-in shows before its first session, pay-as-you-go included", [payg["ready"], plan["ready"]], [True, True])
 
-# A sign-in shows before its first session, pay-as-you-go included.
-[[ $(jq -r '.ready' <<<"$nosnap") == "true" && $(jq -r '.ready' <<<"$payg") == "true" ]] ||
-  fail "Muse collector shows a signed-in plan without sessions" "$nosnap"
-pass "Muse collector shows a signed-in plan without sessions"
+# A plan that moved to pay-as-you-go leaves its old windows behind: a failed
+# check after that brings none of them back. The answer is reused like any
+# other, so a panel flick doesn't mint a key again.
+muse(SUBSCRIBER)
+muse(PAYG, fresh_cache=False)
+asked = len(reqs)
+reused = collect("muse")
+expect("a recent pay-as-you-go answer is reused", [len(reqs) - asked, reused["limits"]], [0, []], reused)
+switched = muse({"status": 500}, fresh_cache=False)
+expect("a former plan's windows stay out after it moved to pay-as-you-go", switched["limits"], [], switched)
 
-[[ $(jq 'has("retryAdvised")' <<<"$nosnap") == "false" ]] ||
-  fail "Muse collector does not retry an active plan without usage windows" "$nosnap"
-pass "Muse collector does not retry an active plan without usage windows"
+# Neither active nor pay-as-you-go and no windows: a warning, never invented
+# meters.
+unknown = muse({"body": {"api_key": "minted", "subs_tier_name": "Mystery"}})
+expect("Muse reports unavailable limits for an answer of unknown shape", unknown["usageStatusText"], "Muse limits unavailable", unknown)
 
-# A plan that has moved to pay-as-you-go leaves its old windows behind: a
-# failed check after that brings none of them back. The answer is reused
-# like any other, so a panel flick doesn't mint a key again.
-set_payload '{"body":{"subs_tier_name":"Power Usage","subs_usage":{"window":{"used_percent":8,"window_duration_mins":300,"resets_at":4102444800},"weekly":{"used_percent":15,"resets_at":4103049600}}}}'
-run_collector --force >/dev/null
-printf '%s' '{"body":{"api_key":"minted","is_subs_active":false,"subs_tier_name":null}}' >"$STUB_PAYLOAD_FILE"
-run_collector --force >/dev/null
-: >"$STUB_SEEN_FILE"
-reused=$(run_collector)
-[[ ! -s $STUB_SEEN_FILE && $(jq -c '.limits' <<<"$reused") == '[]' ]] ||
-  fail "Muse collector reuses a recent pay-as-you-go answer" "$reused"
-printf '{"status":500}' >"$STUB_PAYLOAD_FILE"
-switched=$(run_collector --force)
-[[ $(jq -c '.limits' <<<"$switched") == '[]' ]] ||
-  fail "Muse collector keeps a former plan's windows out after it moved to pay-as-you-go" "$switched"
-pass "Muse collector keeps a former plan's windows out after it moved to pay-as-you-go"
+hours = muse({"body": {"subs_tier_name": "T", "subs_usage": {"window": {"used_percent": 5, "window_duration_mins": 120, "resets_at": 4102444800},
+                                                           "weekly": {"used_percent": 1, "resets_at": 4103049600}}}})
+expect("Muse labels a whole-hour session window in hours", hours["limits"][0]["label"], "Session (2-hour)", hours)
 
-# Neither active nor PAYG and no windows: still a warning, never invented meters.
-set_payload '{"body":{"api_key":"minted","subs_tier_name":"Mystery"}}'
-unknown=$(run_collector --force)
-[[ $(jq -r '.usageStatusText' <<<"$unknown") == "Muse limits unavailable" ]] ||
-  fail "Muse collector reports unavailable limits for an unknown shape" "$unknown"
-pass "Muse collector reports unavailable limits for an unknown shape"
+# ---------------------------------------------------------------- the login
 
-# A rejected sign-in is an auth problem, not missing data: say so.
-set_payload '{"status":401}'
-expired=$(run_collector --force)
-[[ $(jq -r '.usageStatusText' <<<"$expired") == "Sign-in expired" ]] ||
-  fail "Muse collector reports an expired sign-in" "$expired"
-pass "Muse collector reports an expired sign-in"
+# A malformed login file is a missing credential, not a crash: the Muse CLI is
+# set up here, so it waits for a sign-in.
+for malformed in ("[1,2]", '"nope"', '{"providers":[]}', '{"providers":{"meta":7}}'):
+  auth_path().write_text(malformed)
+  garbled = muse(SUBSCRIBER)
+  expect(f"Muse waits for a sign-in past a malformed login file ({malformed})",
+         [garbled["limits"], garbled["usageStatusText"], garbled["ready"]], [[], "Waiting for auth", True], garbled)
 
-# A malformed login file is a missing credential, not a crash: the Muse CLI
-# is set up here, so it waits for a sign-in.
-for malformed in '[1,2]' '"nope"' '{"providers":[]}' '{"providers":{"meta":7}}'; do
-  printf '%s' "$malformed" >"$TEST_HOME/.config/muse/auth.json"
-  garbled=$(run_collector --force) ||
-    fail "Muse collector survives a malformed login file" "$malformed"
-  [[ $(jq -c '[.limits,.usageStatusText,.ready]' <<<"$garbled") == '[[],"Waiting for auth",true]' ]] ||
-    fail "Muse collector survives a malformed login file" "$malformed -> $garbled"
-done
-pass "Muse collector survives a malformed login file"
-printf '{"providers":{"meta":{"access_token":"test-token"}}}' >"$TEST_HOME/.config/muse/auth.json"
-
-# The override must win over a different login at the default location.
-export MUSE_AUTH_PATH="$TEST_HOME/custom auth.json"
-printf '{"providers":{"meta":{"access_token":"test-token"}}}' >"$MUSE_AUTH_PATH"
-printf '{"providers":{"meta":{"access_token":"default-token"}}}' >"$TEST_HOME/.config/muse/auth.json"
-set_payload '{"body":{"subs_tier_name":"T","subs_usage":{"window":{"used_percent":5,"window_duration_mins":300}}}}'
-custom=$(run_collector --force)
-[[ $(cat "$STUB_SEEN_FILE") == "Bearer test-token" ]] ||
-  fail "Muse collector honors MUSE_AUTH_PATH over the default login" "$(cat "$STUB_SEEN_FILE")"
-pass "Muse collector honors MUSE_AUTH_PATH over the default login"
-unset MUSE_AUTH_PATH
-
-# A session window that is a whole number of hours says so in hours.
-set_payload '{"body":{"subs_tier_name":"T","subs_usage":{"window":{"used_percent":5,"window_duration_mins":120,"resets_at":4102444800},"weekly":{"used_percent":1,"resets_at":4103049600}}}}'
-hours=$(run_collector --force)
-[[ $(jq -r '.limits[0].label' <<<"$hours") == "Session (2-hour)" ]] ||
-  fail "Muse collector labels a whole-hour session window in hours" "$hours"
-pass "Muse collector labels a whole-hour session window in hours"
-
-# A probe this recent is reused, and --force asks again.
-run_collector --force >/dev/null
-: >"$STUB_SEEN_FILE"
-run_collector --limits-only >/dev/null
-[[ ! -s $STUB_SEEN_FILE ]] || fail "Muse collector reuses a probe under 15 seconds old" "$(cat "$STUB_SEEN_FILE")"
-run_collector --force >/dev/null
-[[ -s $STUB_SEEN_FILE ]] || fail "Muse collector re-probes on --force" "nothing seen"
-pass "Muse collector reuses a recent probe, and --force asks again"
-
-# A server that answered with an error isn't retried sooner; one that can't be
-# reached at all is.
-printf '{"status":500}' >"$STUB_PAYLOAD_FILE"
-errored=$(run_collector --force)
-[[ $(jq 'has("retryAdvised")' <<<"$errored") == "false" ]] ||
-  fail "Muse collector doesn't retry a server error sooner" "$errored"
-closed=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
-unreachable=$(HOME="$TEST_HOME" XDG_DATA_HOME="$TEST_HOME/.local/share" XDG_CACHE_HOME="$TEST_HOME/.cache" XDG_CONFIG_HOME="$TEST_HOME/.config" \
-  MUSE_KEY_ENDPOINT="http://127.0.0.1:$closed/key" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -c '{retry: .retryAdvised, stale: .limitsStale, kept: (.limits | length > 0), status: .usageStatusText}' <<<"$unreachable") == '{"retry":true,"stale":true,"kept":true,"status":""}' ]] ||
-  fail "Muse collector retries an unreachable endpoint sooner, keeping the last limits" "$unreachable"
-pass "Muse collector advises a retry only when the endpoint can't be reached"
-
-# A machine that never ran Muse prints an unused record.
-unused=$(HOME="$TEST_HOME/nobody" XDG_DATA_HOME="$TEST_HOME/nobody/data" XDG_CACHE_HOME="$TEST_HOME/nobody/cache" XDG_CONFIG_HOME="$TEST_HOME/nobody/config" \
-  MUSE_KEY_ENDPOINT="http://127.0.0.1:$port/key" "$ROOT/bin/omarchy-agent-usage-muse")
-[[ $(jq -c '{ready, tierLabel, usageStatusText, authHelpText, limits, totalPrompts}' <<<"$unused") == '{"ready":false,"tierLabel":"","usageStatusText":"","authHelpText":"","limits":[],"totalPrompts":0}' ]] ||
-  fail "Muse collector prints an unused record on a machine without Muse" "$unused"
-pass "Muse collector prints an unused record on a machine without Muse"
+# MUSE_AUTH_PATH wins over a different login at the default place.
+signed_in("default-token")
+custom = home() / "custom auth.json"
+write_json(custom, {"providers": {"meta": {"access_token": "custom-token"}}})
+os.environ["MUSE_AUTH_PATH"] = str(custom)
+muse(SUBSCRIBER)
+del os.environ["MUSE_AUTH_PATH"]
+expect("Muse honors MUSE_AUTH_PATH over the default login", reqs[-1]["headers"].get("Authorization"), "Bearer custom-token")
+PY
