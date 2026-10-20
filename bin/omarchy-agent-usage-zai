@@ -64,6 +64,11 @@ PLATFORMS = {
 }
 QUOTA_PATH = "/api/monitor/usage/quota/limit"
 
+# A key with no Coding Plan behind it (a pay-as-you-go account) gets the same
+# answer every time, so it is asked again hourly rather than on every run;
+# --force asks at once, for someone who just subscribed.
+NO_PLAN_RECHECK_SECONDS = 3600
+
 # The pi/omp provider names whose turns this subscription bills. Exact names:
 # a custom `zai-proxy` gateway is not this subscription.
 PROVIDERS = ("zai", "zhipu")
@@ -278,17 +283,25 @@ def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
     result.update(limits=cache.limits, tierLabel=str(cache.data.get("tierLabel") or ""), live=True, fetchedAtMs=cache.fetched_at if cache.limits else 0)
     return result
 
-  # --force is a person asking for fresh numbers, so it skips the reuse
-  # window; the interval absorbs repeated panel opens, not a refresh press.
-  # A key without a plan is an answer too, and stands in like any other.
-  if cache.fresh(force, allow_empty=True):
+  def no_plan() -> bool:
+    return cache.data.get("noWindows") is True
+
+  def stands_in() -> bool:
+    # --force is a person asking for fresh numbers, so it skips the reuse
+    # window; the interval absorbs repeated panel opens, not a refresh press.
+    # A key without a plan is an answer too, and stands in for longer.
+    if no_plan() and not force and cache.younger_than(NO_PLAN_RECHECK_SECONDS):
+      return True
+    return cache.fresh(force, allow_empty=True)
+
+  if stands_in():
     return reuse()
 
   with cache.lock():
     if not force:
       # Another run may have probed while this one waited for the lock.
       cache.reload()
-      if cache.fresh(force, allow_empty=True):
+      if stands_in():
         return reuse()
 
     probe = fetch_limits(api_key, platform)
@@ -315,11 +328,14 @@ def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
   # measured has been renewed, so it is untouched rather than unknown.
   fallback, fetched_at = cache.kept()
   result.update(limits=fallback, tierLabel=str(cache.data.get("tierLabel") or ""), fetchedAtMs=fetched_at)
-  result["authHelpText"] = probe["detail"]
   if probe.get("keyRejected"):
-    result["usageStatusText"] = "Sign-in expired"
-  elif not fallback:
-    result["usageStatusText"] = "Z.ai limits unavailable"
+    result.update(usageStatusText="Sign-in expired", authHelpText=probe["detail"])
+  elif fallback:
+    result["authHelpText"] = probe["detail"]
+  elif not no_plan():
+    # A key that last said it has no plan has no limits to lose, so a
+    # failed recheck is no news.
+    result.update(usageStatusText="Z.ai limits unavailable", authHelpText=probe["detail"])
   return result
 
 

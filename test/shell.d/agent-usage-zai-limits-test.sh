@@ -85,20 +85,28 @@ expect("Z.ai collector treats a no-plan key as healthy, without limits",
        ["", "", False, [], False], record)
 
 # A confirmed no-plan answer replaces the lapsed plan's windows, so an outage
-# right after it can't bring the cancelled allowance or its tier back.
+# right after it can't bring the cancelled allowance or its tier back, and
+# with no limits to lose, the failed check is no news either.
 sandbox()
 keyed()
 zai(ANSWER)
 zai({"success": False, "msg": "This API key has no coding plan"})
 record, _ = zai(mode="down")
-expect("Z.ai collector does not restore a cancelled plan's windows after a failed check",
-       [record["limits"], record["tierLabel"], record["limitsStale"], record["usageStatusText"]], [[], "", False, "Z.ai limits unavailable"], record)
+expect("Z.ai collector does not restore a cancelled plan's windows after a failed check, nor call it trouble",
+       [record["limits"], record["tierLabel"], record["limitsStale"], record["usageStatusText"], record["authHelpText"]],
+       [[], "", False, "", ""], record)
 
-# The no-plan answer stands in for a probe like any other.
+# The same answer comes every time, so a no-plan key is asked again hourly,
+# not every run.
 zai({"success": False, "msg": "This API key has no coding plan"})
+edit_limits_cache("zai", fetched_ago=1800)
 record, http = zai(mode="down", args=())
-expect("Z.ai collector reuses a recent no-plan answer",
+expect("Z.ai collector reuses a no-plan answer for an hour",
        [len(http.requests), record["usageStatusText"], record["limits"]], [0, "", []], record)
+edit_limits_cache("zai", fetched_ago=3601)
+record, http = zai(mode="down", args=())
+expect("Z.ai collector asks a no-plan key again after an hour, and a failure then is still no trouble",
+       [len(http.requests), record["usageStatusText"], record["authHelpText"], record["limits"]], [1, "", "", []], record)
 
 # With nothing kept, a failed check says the limits are unavailable; only a
 # transport failure asks for an early retry.
