@@ -2,7 +2,8 @@
 # omarchy:summary=Print the Qwen Code usage record as JSON
 # omarchy:args=[--force] [--limits-only]
 # omarchy:hidden=true
-"""Collect Qwen Code usage into one display-ready JSON record.
+"""Collect Qwen Code and Alibaba Qwen plan usage into one display-ready JSON
+record.
 
 Qwen Code records each session as JSONL under
 ~/.qwen/projects/<project>/chats/<session>.jsonl (QWEN_HOME moves ~/.qwen;
@@ -10,8 +11,16 @@ QWEN_RUNTIME_DIR or settings.json's advanced.runtimeOutputDir move the
 projects). Every API response it bills lands there as a ui_telemetry record
 carrying the model and the provider's token counts, the same records Qwen
 Code's own usage statistics are rebuilt from, and every typed prompt as a
-user record. Qwen Code reads no quota of its own, so the record carries no
-meters. The agents panel only ever reads the JSON this prints.
+user record.
+
+pi, omp and opencode turns billed by Alibaba's Qwen plans count here too:
+Model Studio's Coding Plan and Token Plan, in their international and
+mainland-China forms, and omp's Qwen OAuth (portal.qwen.ai) sign-in.
+
+Neither Qwen Code nor Alibaba publishes a way to read a plan's quota: the
+Coding Plan's usage shows on its console page alone, and Qwen Code reads none
+of its own. So the record carries no meters, and nothing waits on a
+credential. The agents panel only ever reads the JSON this prints.
 """
 
 from __future__ import annotations
@@ -33,9 +42,13 @@ from collectors import (  # noqa: E402
   emit,
   local_day,
   obj,
+  opencode_db,
+  pi_session_roots,
   read_json,
   scan_cache_paths,
   scan_max_age,
+  scan_opencode,
+  scan_pi_sessions,
   token_count,
   warn,
   write_json,
@@ -61,6 +74,26 @@ INDEX_VERSION = 2
 INDEX_HEAD_BYTES = 4096
 
 MAX_MODEL_NAME_LEN = 120
+
+# The pi, omp and opencode provider ids whose turns Alibaba's Qwen plans bill.
+# Exact names: Alibaba's pay-as-you-go `alibaba` and `alibaba-cn` keys carry
+# no plan and are left out.
+# - opencode (models.dev) and omp: the Coding Plan, `alibaba-coding-plan` and
+#   opencode's mainland `alibaba-coding-plan-cn`.
+# - opencode and omp: the Token Plan, `alibaba-token-plan` and opencode's
+#   `alibaba-token-plan-cn`; pi names it `qwen-token-plan`, `-cn` and
+#   `-individual`.
+# - omp: `qwen-portal`, the Qwen OAuth sign-in Qwen Code also offered.
+PROVIDERS = (
+  "alibaba-coding-plan",
+  "alibaba-coding-plan-cn",
+  "alibaba-token-plan",
+  "alibaba-token-plan-cn",
+  "qwen-token-plan",
+  "qwen-token-plan-cn",
+  "qwen-token-plan-individual",
+  "qwen-portal",
+)
 
 
 def model_label(raw):
@@ -233,10 +266,9 @@ def load_index(path):
   return {}
 
 
-def summarize(rows):
+def summarize(rows, stats):
   # Qwen Code's prompts are its user records, not its replies: a reply adds
   # its tokens, and a prompt only its session and day.
-  stats = Stats()
   seen = set()
 
   for row in rows:
@@ -258,7 +290,6 @@ def summarize(rows):
       stats.add(day, session, model, input_tokens, output_tokens, cache_read, 0, prompts=0)
     else:
       stats.add_prompts(day, session)
-  return stats.snapshot()
 
 
 def index_path():
@@ -268,9 +299,9 @@ def index_path():
   return cache_file.with_name(cache_file.name.replace("-scan-", "-index-", 1))
 
 
-def scan():
-  """Every transcript's rows, summarized. Returns (stats, complete); a scan
-  that couldn't read a transcript is not cached."""
+def scan_transcripts(stats):
+  """Every transcript's rows, added to `stats`, and whether every transcript
+  was read."""
   try:
     index_file = index_path()
   except Exception:
@@ -293,7 +324,36 @@ def scan():
       write_json(index_file, {"version": INDEX_VERSION, "files": current})
     except Exception as exc:
       warn(f"could not write transcript index ({exc})")
-  return summarize(rows), complete
+  summarize(rows, stats)
+  return complete
+
+
+# pi, omp, and opencode name the provider alike.
+def billed_here(provider, model, entry):
+  return provider.lower() in PROVIDERS
+
+
+def scan():
+  """Qwen Code's transcripts and the Qwen plan turns in pi/omp sessions and
+  both of opencode's message stores. Returns (stats, complete); a scan that
+  couldn't read every source is not cached."""
+  stats = Stats()
+  # Every source runs, so one unreadable source still leaves the others.
+  transcripts_complete = scan_transcripts(stats)
+  pattern = r'"provider"\s*:\s*"(' + "|".join(PROVIDERS) + r')"'
+  pi_rows, pi_complete = scan_pi_sessions(pattern, billed_here)
+  # The closing quote makes the database's prefilter match the whole id.
+  db_rows, db_complete = scan_opencode([provider + '"' for provider in PROVIDERS], billed_here)
+  for row in pi_rows + db_rows:
+    # pi and opencode count each reply as the prompt that asked for it.
+    stats.add_row(row, model_label(row.model) or "qwen")
+  return stats.snapshot(), transcripts_complete and pi_complete and db_complete
+
+
+def scan_sources():
+  # Every data path the scan reads: Qwen Code's directories, the pi/omp
+  # session roots and the opencode database.
+  return [*runtime_dirs(), *pi_session_roots(), opencode_db()]
 
 
 def main():
@@ -304,13 +364,13 @@ def main():
   parser.add_argument("--limits-only", action="store_true")
   args = parser.parse_args()
 
-  # The digest covers every directory the scan reads, so another home or
-  # runtime directory never reuses this one's numbers.
-  stats = cached_scan(AGENT_ID, runtime_dirs(), scan_max_age(args.force, args.limits_only), scan)
+  # The digest covers every path the scan reads, so another home, runtime
+  # directory, session root or database never reuses this one's numbers.
+  stats = cached_scan(AGENT_ID, scan_sources(), scan_max_age(args.force, args.limits_only), scan)
 
   # There is no quota to read, so nothing waits on a sign-in: the status stays
-  # empty and local stats show alone. A machine that never ran Qwen Code
-  # prints a record the panel skips.
+  # empty and local stats show alone. A machine that never ran Qwen Code or a
+  # Qwen plan prints a record the panel skips.
   record = base_record(AGENT_ID, AGENT_NAME, ready=stats["totalSessions"] > 0, hasLocalStats=True)
   record.update(stats)
   emit(record)

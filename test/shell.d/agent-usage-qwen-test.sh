@@ -2,10 +2,12 @@
 
 # The Qwen Code collector's own sources: its chat transcripts, read the way
 # Qwen Code's own statistics read them, where QWEN_HOME, QWEN_RUNTIME_DIR and
-# settings.json put them, and the per-transcript index. The unused-machine
-# record is held by the partition test, and the scan cache by the contract
-# check. Qwen Code publishes no limits, so there is no limits contract to
-# hold.
+# settings.json put them, the per-transcript index, and the pi, omp and
+# opencode turns on Alibaba's Qwen plan provider ids. The unused-machine
+# record and exactly-once counting across collectors are held by the
+# partition test, and the scan cache by the contract check. Neither Qwen Code
+# nor Alibaba publishes a way to read a plan's quota, so there is no limits
+# contract to hold.
 
 set -euo pipefail
 
@@ -120,6 +122,44 @@ write_json(home() / ".qwen" / "settings.json", {"advanced": {"runtimeOutputDir":
 transcript(home() / "out" / "projects" / "p" / "chats" / "s.jsonl", [response("d", "s", NOW, "m", "openai", 1000, 0, 0, 0, "rd")])
 record = qwen()
 expect("Qwen reads the runtimeOutputDir from settings.json", record["todayTotalTokens"], 1100, record)
+
+# ------------------------------------------------- Qwen plans in pi and opencode
+
+# pi, omp and opencode turns on Alibaba's Qwen plans count beside Qwen Code's
+# own transcripts: every plan id once, and nothing on a pay-as-you-go key, a
+# custom gateway that only starts with a plan's name, or a bare `qwen`.
+sandbox()
+PLAN_IDS = ["alibaba-coding-plan", "alibaba-coding-plan-cn", "alibaba-token-plan", "alibaba-token-plan-cn",
+            "qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual", "qwen-portal"]
+OTHER_IDS = ["alibaba", "alibaba-cn", "alibaba-coding-plan-proxy", "qwen", "dashscope"]
+transcript(chats() / "s.jsonl", [prompt("u", "s", NOW), response("r", "s", NOW, "qwen3-coder-plus", "openai", 1, 0, 0, 0, "rq")])
+write_pi_session(home() / ".pi" / "agent" / "sessions" / "p" / "pi.jsonl",
+                 [pi_reply(provider, 10 ** index, id=f"pi-{provider}", model=f"pi/{provider}") for index, provider in enumerate(PLAN_IDS[:4])]
+                 + [pi_reply(provider, 7, id=f"pi-{provider}", model="other") for provider in OTHER_IDS])
+write_pi_session(home() / ".omp" / "agent" / "sessions" / "p" / "omp.jsonl",
+                 [pi_reply(provider, 10 ** index, id=f"omp-{provider}", model=f"omp/{provider}") for index, provider in enumerate(PLAN_IDS[4:], 4)])
+opencode_db(message=[(f"m-{provider}", "oc1", oc_v1(provider, 3, model=f"oc-{provider}")) for provider in PLAN_IDS + OTHER_IDS],
+            session_message=[("v2-coding", "oc2", "assistant", oc_v2("alibaba-coding-plan", 5, model="qwen3-coder-next"))])
+record = qwen()
+expect("Qwen counts every Qwen plan id from pi, omp and opencode once, beside its own transcripts", {
+  "tokens": record["todayTotalTokens"],
+  "models": sorted(record["modelUsage"]),
+  "prompts": record["todayPrompts"],
+  "sessions": record["todaySessions"],
+}, {
+  "tokens": 1 + sum(10 ** index for index in range(len(PLAN_IDS))) + 3 * len(PLAN_IDS) + 5,
+  "models": sorted(["qwen3-coder-plus", "qwen3-coder-next"] + PLAN_IDS + [f"oc-{provider}" for provider in PLAN_IDS]),
+  "prompts": 1 + len(PLAN_IDS) + len(PLAN_IDS) + 1,
+  "sessions": 5,
+}, record)
+# Qwen plan usage alone makes the tab: there is no quota to wait on a
+# sign-in for, so the status stays empty and no meters show.
+sandbox()
+opencode_db(session_message=[("only", "oc", "assistant", oc_v2("qwen-portal", 5))])
+record = qwen()
+expect("Qwen shows Qwen plan usage without Qwen Code transcripts or a sign-in",
+       [record["ready"], record["usageStatusText"], record["authHelpText"], record["limits"], record["todayTotalTokens"]],
+       [True, "", "", [], 5], record)
 
 # ---------------------------------------------------------------- contract
 

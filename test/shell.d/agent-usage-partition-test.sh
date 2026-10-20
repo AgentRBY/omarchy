@@ -149,6 +149,16 @@ PROVIDERS = [
   ("synthetic", "synthetic-pt", "", "synthetic", "synthetic"),
   ("mistral", "devstral-pt", "", "vibe", "vibe"),
   ("meta", "muse-spark-pt", "", "muse", "muse"),
+  ("alibaba-coding-plan", "qwen-pt", "", "qwen", "qwen"),
+  ("alibaba-coding-plan-cn", "qwen-pt", "", "qwen", "qwen"),
+  ("alibaba-token-plan", "qwen-pt", "", "qwen", "qwen"),
+  ("alibaba-token-plan-cn", "qwen-pt", "", "qwen", "qwen"),
+  ("qwen-token-plan", "qwen-pt", "", "qwen", "qwen"),
+  ("qwen-token-plan-cn", "qwen-pt", "", "qwen", "qwen"),
+  ("qwen-token-plan-individual", "qwen-pt", "", "qwen", "qwen"),
+  ("qwen-portal", "qwen-pt", "", "qwen", "qwen"),
+  # Alibaba's pay-as-you-go keys carry no plan.
+  ("alibaba", "qwen-pt", "", None, None),
   ("acme-unclaimed", "acme-pt", "", None, None),
 ]
 
