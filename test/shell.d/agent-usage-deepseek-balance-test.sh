@@ -152,4 +152,20 @@ expect("DeepSeek collector reads pi's key where PI_CODING_AGENT_DIR moves it", s
 pi_auth(home() / "pi-moved", "deepseek", "!pass show deepseek")
 pi_auth(home() / ".omp" / "agent", "deepseek", "$DEEPSEEK_KEY")
 expect("DeepSeek collector never takes a pi !command or $VAR entry as a key", saved_key(), "")
+opencode_auth(None, "deepseek", "key-opencode")
+expect("DeepSeek collector reads the key opencode saved", saved_key(), "key-opencode")
+pi_auth(home() / ".omp" / "agent", "deepseek", "key-omp")
+expect("DeepSeek collector prefers omp's key to opencode's", saved_key(), "key-omp")
+
+# The balance is kept per API host: another host, the same key or not, is
+# another account, and never shows this one's balance.
+sandbox()
+os.environ["DEEPSEEK_API_KEY"] = "key-123"
+deepseek()
+with FakeHttp(mode="down") as http:
+  other = collect("deepseek", "--force", "--api-base-url", "https://deepseek.example")
+record, _ = deepseek("down")
+expect("DeepSeek collector keeps one key's balance per API host",
+       [http.requests[0]["url"], "balance" in other, other["usageStatusText"], record["balance"]["remaining"], record["limitsStale"]],
+       ["https://deepseek.example/user/balance", False, "Balance unavailable", float(answer["total"]), True], other)
 PY
