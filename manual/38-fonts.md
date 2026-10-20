@@ -6,9 +6,9 @@ Omarchy uses JetBrainsMono Nerd Font as both the terminal and system font by def
 
 You can change this through the _Style > Font_ menu in the Omarchy menu (`Super + Space`). That sets the monospace font everywhere: the terminal, the bar, and anything else that asks for it.
 
-You can install other popular programming fonts via _Install > Style > Font_ in the Omarchy menu: Cascadia Mono, Meslo LG Mono, Fira Code, Victor Code, Bitstream Vera Mono, and Iosevka are all one click away, in their Nerd Font versions so the glyphs in the bar and terminal keep working. After installing one, pick it under _Style > Font_.
+You can install other popular programming fonts via _Install > Style > Font_ in the Omarchy menu: Cascadia Mono, Meslo LG Mono, Fira Code, Victor Code, Bitstream Vera Mono, Iosevka, and Maple Mono CN are all one click away, in their Nerd Font versions so the glyphs in the bar and terminal keep working. After installing one, pick it under _Style > Font_.
 
-Maple Mono NF CN comes installed as well, for terminals that show Chinese or Japanese: it draws Han and kana itself, each two cells wide, beside its Latin and Nerd Font glyphs.
+Maple Mono CN is the one to pick for a terminal that shows Chinese or Japanese: it draws Han and kana itself, each two cells wide, beside its Latin and Nerd Font glyphs.
 
 ## Chinese, Japanese, and Korean
 

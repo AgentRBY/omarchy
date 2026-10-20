@@ -22,7 +22,3 @@ fonts=$(PATH="$work/stubs:$PATH" "$ROOT/bin/omarchy-font-list")
 expected=$'JetBrainsMono Nerd Font\nLiberation Mono\nMaple Mono NF CN'
 [[ $fonts == "$expected" ]] || fail "the font list offers single and dual width monospace fonts once each" "$fonts"
 pass "the font list offers single and dual width monospace fonts once each"
-
-grep -qx 'maplemono-nf-cn' "$ROOT/install/omarchy-base.packages" || fail "Maple Mono NF CN is installed by default"
-grep -lx 'omarchy-pkg-add maplemono-nf-cn' "$ROOT"/migrations/*.sh >/dev/null || fail "existing installs get Maple Mono NF CN"
-pass "Maple Mono NF CN is installed on new and existing installs"
