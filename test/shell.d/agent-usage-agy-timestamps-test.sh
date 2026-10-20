@@ -176,7 +176,8 @@ for zone in ZONES:
 
 # The collector run as a command in each zone: local history alone puts
 # Antigravity in use here, waiting for a sign-in, and a --limits-only run
-# reuses that scan, with nothing on stderr either time.
+# reuses that scan, a step written since included, with nothing on stderr
+# either time.
 stubs = home() / "bin"
 stubs.mkdir()
 (stubs / "secret-tool").write_text("#!/bin/bash\nexit 1\n")
@@ -186,6 +187,9 @@ for zone in ZONES:
   write_fixture(root, ("0001-01-01 00:00:00+00:00", None, "not a date"))
   env = dict(os.environ, AGY_DIR=str(root), XDG_CACHE_HOME=str(root / "cache"), PATH=f"{stubs}{os.pathsep}{os.defpath}", TZ=zone)
   for flag in ("--force", "--limits-only"):
+    if flag == "--limits-only":
+      with (root / "brain/valid/.system_generated/logs/transcript.jsonl").open("a") as transcript:
+        transcript.write("\n" + json.dumps(dict(created_at="2026-10-02T12:00:00Z", model="dated", usage=dict(input_tokens=100, output_tokens=1))))
     result = subprocess.run([str(ROOT / "bin" / "omarchy-agent-usage-agy"), flag], env=env, capture_output=True, text=True, timeout=30)
     record = json.loads(result.stdout or "{}")
     expect(f"Antigravity collector runs cleanly as a command ({zone}, {flag})",
