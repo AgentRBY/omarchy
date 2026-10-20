@@ -65,7 +65,9 @@ expect_jq "Antigravity collector files flat step counts under the selected model
   '{"inputTokens":10,"outputTokens":4,"cacheReadInputTokens":100,"cacheCreationInputTokens":6}' "$record"
 expect_jq "Antigravity collector takes a step's own model and skips counts it can't read" \
   '[.modelUsage["gemini-3.9-ultra"].inputTokens, (.modelUsage | has("gemini-3.8-pro")), (.modelUsage | has("unknown")), .todayTotalTokens]' '[7,false,false,290]' "$record"
-expect_jq "Antigravity collector counts a transcript's days as active" '.activeDates | index("2020-02-02") != null' 'true' "$record"
+# The step's day is its local one, in the zone the test runs in.
+old_day=$(date -d "2020-02-02T12:00:00Z" +%F)
+expect_jq "Antigravity collector counts a transcript's days as active" ".activeDates | index(\"$old_day\") != null" 'true' "$record"
 
 # A subagent's conversation belongs to the one that spawned it, and
 # history may key a prompt by sessionId.
