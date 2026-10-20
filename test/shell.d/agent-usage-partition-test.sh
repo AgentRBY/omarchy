@@ -22,6 +22,15 @@ require_command timeout
 COLLECTOR_TIMEOUT=${AGENT_USAGE_PARTITION_TIMEOUT:-60}
 TIMEOUT=$(command -v timeout)
 
+# Every fixture row is today's, and the collectors run as their own processes,
+# where no frozen clock reaches. A run that crossed local midnight would see
+# its rows land on yesterday, so one that would start that close waits for the
+# new day instead.
+seconds_to_midnight=$(( $(date -d 'tomorrow 00:00' +%s) - $(date +%s) ))
+if (( seconds_to_midnight < 120 )); then
+  sleep $(( seconds_to_midnight + 1 ))
+fi
+
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
