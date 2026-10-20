@@ -419,8 +419,6 @@ Panel {
     return parts.join(" · ")
   }
 
-  // A lapsed or missing sign-in is something you can fix from here; any other
-  // trouble is only reported.
   // Only the agents `omarchy-agent-account-add` signs in get the link; any
   // other agent's sign-in trouble stays text, with its own help to follow.
   function supportsSignIn(p) {
@@ -429,6 +427,8 @@ Panel {
     return false
   }
 
+  // A lapsed or missing sign-in is something you can fix from here; any other
+  // trouble is only reported.
   function needsSignIn(item) {
     if (item && item.providerId && !supportsSignIn(item)) return false
     var status = String(item && item.usageStatusText || "")
