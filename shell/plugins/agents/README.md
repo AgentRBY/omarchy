@@ -82,7 +82,7 @@ Adding an agent needs no QML changes: ship a collector that follows the contract
 | `hermes` | None (Hermes has no subscription of its own) | `state.db` in Hermes' home and in each named profile under `~/.hermes/profiles`, read-only, scanned once per refresh window |
 | `devin` | The daily and weekly quota (plus credit buckets on credit plans) from the GetUserStatus answer the Devin CLI caches in `$XDG_CACHE_HOME/devin/cli/user_status.*.bin`; no network call | the CLI's `$XDG_DATA_HOME/devin/cli/sessions.db` (per-message metrics and `prompt_history`), plus pi/omp and opencode sessions on the `devin` provider |
 | `vibe` | None (Mistral publishes no usage limits) | Vibe's per-session `meta.json` under `~/.vibe/logs/session` (`VIBE_HOME`), only sessions on a Mistral-served model, plus pi/omp and opencode sessions on the `mistral` provider |
-| `qwen` | None (Qwen Code reads no quota) | Session transcripts under `~/.qwen/projects/*/chats` (`QWEN_HOME`, `QWEN_RUNTIME_DIR`, `advanced.runtimeOutputDir`): billed API responses and typed prompts |
+| `qwen` | None (neither Qwen Code nor Alibaba publishes a way to read a Coding Plan or Token Plan quota) | Session transcripts under `~/.qwen/projects/*/chats` (`QWEN_HOME`, `QWEN_RUNTIME_DIR`, `advanced.runtimeOutputDir`): billed API responses and typed prompts, plus pi, omp, and opencode sessions on Alibaba's Coding Plan, Token Plan, and Qwen OAuth providers |
 | `opencode` | OpenCode Go's usage endpoint (rolling + weekly + monthly), with an API key or the Console session; a key without a Go plan shows local usage alone | pi and omp sessions (profiles included) on the Zen and Go providers, plus opencode's own `message` and `session_message` stores |
 | `zai` | Z.ai's coding-plan monitor endpoint (5-hour session + 7-day weekly), for keys that carry a GLM Coding Plan | pi, omp, and opencode sessions on the `zai` and `zhipu` providers (`glm-*` models) |
 | `ollama` | Ollama Cloud's usage endpoint (5-hour session + 7-day weekly, without reset times) | pi, omp, and opencode sessions on the `ollama-cloud` provider, plus cloud-tagged models reached through the local daemon's `ollama` provider |
@@ -182,7 +182,11 @@ Vibe writes a `meta.json` per session under `~/.vibe/logs/session` (moved by `VI
 
 ### Qwen Code
 
-Qwen Code writes each session to `projects/<project>/chats/<session>.jsonl` under `~/.qwen` (`QWEN_HOME`), or under `QWEN_RUNTIME_DIR` or the `advanced.runtimeOutputDir` setting when either moves it. Every billed API response is a telemetry line there with the model and the provider's token counts, the same lines Qwen Code's own usage statistics are rebuilt from, read by the same rules: the prompt count includes its cached part, and thinking is added to output only where the provider counts it apart. Typed prompts come from the user lines, and a branched session's repeated lines count once. Qwen Code reads no quota of its own, so there is no meter.
+Qwen Code writes each session to `projects/<project>/chats/<session>.jsonl` under `~/.qwen` (`QWEN_HOME`), or under `QWEN_RUNTIME_DIR` or the `advanced.runtimeOutputDir` setting when either moves it. Every billed API response is a telemetry line there with the model and the provider's token counts, the same lines Qwen Code's own usage statistics are rebuilt from, read by the same rules: the prompt count includes its cached part, and thinking is added to output only where the provider counts it apart. Typed prompts come from the user lines, and a branched session's repeated lines count once.
+
+pi, omp, and opencode turns that Alibaba's Qwen plans bill count here too, on exact provider ids: the Model Studio Coding Plan as `alibaba-coding-plan` (opencode and omp) and `alibaba-coding-plan-cn` (opencode's mainland-China one), the Token Plan as `alibaba-token-plan` (opencode and omp), `alibaba-token-plan-cn` (opencode), or `qwen-token-plan`, `qwen-token-plan-cn`, and `qwen-token-plan-individual` (pi), and omp's Qwen OAuth sign-in as `qwen-portal`. Alibaba's pay-as-you-go `alibaba` and `alibaba-cn` keys carry no plan and stay out.
+
+There is no meter. Alibaba shows a Coding Plan's 5-hour, weekly, and monthly request quotas only on its console page and documents no API to read them, and Qwen Code reads none of its own, so nothing waits on a credential and the tab shows sessions and tokens alone.
 
 ### OpenCode
 
