@@ -422,6 +422,12 @@ try:
 except collectors.HttpError as error:
   short = error
 check("a body short of its Content-Length over a socket is cut short", short is not None and (short.transport, short.invalid, short.cut_short) == (False, True, True), repr(short and vars(short)))
+check(
+  "a credential goes over HTTPS, or plain HTTP to loopback, and never to a URL with credentials in it",
+  [collectors.trusted_endpoint(url) for url in ("https://example.com/x", "http://127.0.0.1:9/x", "http://localhost/x", "http://[::1]:9/x",
+                                                "http://example.com/x", "ftp://example.com", "https://u:p@example.com", "http://[bad", "")]
+  == [True, True, True, True, False, False, False, False, False],
+)
 handlers = [handler for handler in urllib.request._opener.handlers if isinstance(handler, urllib.request.HTTPRedirectHandler)]
 check("requests refuse redirects", handlers and handlers[0].redirect_request(None, None, 302, "Found", {}, "https://elsewhere") is None)
 

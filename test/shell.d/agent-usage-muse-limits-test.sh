@@ -96,6 +96,18 @@ expect("a reused and a kept Muse answer keep the plan", [reused["tierLabel"], ke
 # The login file belongs to the Muse CLI: every run so far only read it.
 expect("Muse never writes the login file", auth_state(), auth_before)
 
+# MUSE_KEY_ENDPOINT moves the endpoint, but the token only goes over HTTPS or
+# plain HTTP to loopback.
+before = len(reqs)
+for path in limits_cache_files("muse"):
+  path.unlink()
+with FakeHttp({"/key": SUBSCRIBER["body"]}) as http:
+  os.environ["MUSE_KEY_ENDPOINT"] = "http://muse.example.com/key"
+  plain = collect("muse", "--force")
+os.environ["MUSE_KEY_ENDPOINT"] = ENDPOINT
+expect("the Muse token never goes to a plain HTTP endpoint off loopback",
+       [http.requests, len(reqs) - before, "HTTPS" in plain["authHelpText"]], [[], 0, True], plain)
+
 # ------------------------------------------------------- answers without windows
 
 # Pay-as-you-go: the key mints, but there is no subscription window to meter

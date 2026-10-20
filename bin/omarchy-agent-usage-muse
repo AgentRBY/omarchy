@@ -70,6 +70,7 @@ from collectors import (  # noqa: E402
   scan_opencode,
   scan_pi_sessions,
   token_count,
+  trusted_endpoint,
   warn,
   write_json,
 )
@@ -498,6 +499,10 @@ def normalize_reset_at(value) -> str:
 
 
 def probe_key(access_token: str) -> dict:
+  # MUSE_KEY_ENDPOINT moves the endpoint, never the token onto a connection
+  # anyone on the way can read.
+  if not trusted_endpoint(key_endpoint()):
+    return {"ok": False, "helpText": "MUSE_KEY_ENDPOINT must use HTTPS (plain HTTP only for loopback). Local Muse stats are still shown."}
   request = urllib.request.Request(
     key_endpoint(),
     data=json.dumps({}).encode(),

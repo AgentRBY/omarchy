@@ -18,7 +18,6 @@ import argparse
 import json
 import os
 import sys
-import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta, timezone
@@ -47,6 +46,7 @@ from collectors import (  # noqa: E402
   scan_cache_paths,
   scan_max_age,
   token_lapsed,
+  trusted_endpoint,
 )
 
 AGENT_ID = "cursor"
@@ -336,19 +336,6 @@ def kept_limits(cache: LimitsCache) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------- assembly
-
-
-def trusted_endpoint(url: str) -> bool:
-  """Whether the sign-in may go to `url`: HTTPS, or plain HTTP to loopback
-  alone, and no credentials of its own in the URL."""
-  try:
-    parts = urllib.parse.urlsplit(url)
-  except ValueError:
-    return False
-  if parts.username is not None or parts.password is not None:
-    return False
-  loopback = (parts.hostname or "").lower() in ("localhost", "127.0.0.1", "::1")
-  return parts.scheme == "https" or (parts.scheme == "http" and loopback)
 
 
 def scan(api_base_url: str, auth_path: Path, limits_only: bool, state_db: Path | None = None, force: bool = False) -> dict[str, Any]:

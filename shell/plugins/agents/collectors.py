@@ -31,6 +31,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -1120,6 +1121,20 @@ def open_json(request: urllib.request.Request, timeout: float = 10, limit: int =
     return json.loads(body.decode("utf-8", errors="replace"))
   except ValueError as error:
     raise HttpError() from error
+
+
+def trusted_endpoint(url: str) -> bool:
+  """Whether a credential may go to `url`, an endpoint the environment can
+  move: HTTPS, or plain HTTP to loopback alone, and no credentials of its
+  own in the URL."""
+  try:
+    parts = urllib.parse.urlsplit(url)
+  except ValueError:
+    return False
+  if parts.username is not None or parts.password is not None:
+    return False
+  loopback = (parts.hostname or "").lower() in ("localhost", "127.0.0.1", "::1")
+  return parts.scheme == "https" or (parts.scheme == "http" and loopback)
 
 
 # ---------------------------------------------------------------- sign-ins
