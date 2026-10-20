@@ -243,12 +243,14 @@ del os.environ["COPILOT_QUOTA_TOKEN"]
 # ---------------------------------------------------------------------- gh
 
 # The quota as gh's account sees it: a fake gh logs every run, and hosts.yml
-# names who it is signed in as, so a reused answer needs no gh at all.
+# names who it is signed in as, so a reused answer needs no gh at all. Its
+# token is only handed over for github.com, never the GH_HOST it follows
+# otherwise.
 sandbox()
 copilot_home().mkdir()
 configured(monthlyCredits=3000)
 gh_log = home() / "gh.log"
-for name, body in (("gh", f'printf "%s\\n" "$*" >>{gh_log}\n[[ $1 == "auth" && $2 == "token" ]] && echo gh-token\n'), ("broken-gh", "exit 1\n")):
+for name, body in (("gh", f'printf "%s\\n" "$*" >>{gh_log}\n[[ $* == "auth token --hostname github.com" ]] && echo gh-token\n'), ("broken-gh", "exit 1\n")):
   stub = home() / name / "gh"
   stub.parent.mkdir()
   stub.write_text("#!/bin/bash\n" + body)
@@ -264,8 +266,10 @@ def gh_runs():
   return len(gh_log.read_text().splitlines()) if gh_log.exists() else 0
 
 
+os.environ["GH_HOST"] = "github.example.com"
 record = copilot(routes=GH_ROUTES)
-expect("the quota is asked as gh's account", [meter(record), gh_runs(), copilot.asked],
+del os.environ["GH_HOST"]
+expect("the quota is asked as gh's github.com account", [meter(record), gh_runs(), copilot.asked],
        [{"limits": [["Monthly allowance", 0.1, True]], "stale": False, "status": "", "retry": False, "tier": "Pro"}, 1, ["Bearer gh-token"]], record)
 copilot(routes=GH_ROUTES, force=False)
 copilot("--limits-only", routes=GH_ROUTES)

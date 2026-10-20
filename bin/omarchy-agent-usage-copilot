@@ -524,7 +524,9 @@ def gh_token() -> str:
     return ""
   try:
     result = subprocess.run(
-      [exe, "auth", "token"],
+      # gh follows GH_HOST without --hostname, and an Enterprise token must
+      # never go to api.github.com.
+      [exe, "auth", "token", "--hostname", "github.com"],
       capture_output=True,
       text=True,
       timeout=REMOTE_TIMEOUT,
