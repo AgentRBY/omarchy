@@ -309,4 +309,27 @@ record = copilot(routes=GH_ROUTES, mode="down")
 expect("an answer cached under the old name is adopted",
        [meter(record)["limits"], record["limitsStale"], legacy.exists(), (cache_root() / f"copilot-limits-{digest}.json").exists()],
        [[["Monthly allowance", 0.4, True]], True, False, True], record)
+del os.environ["COPILOT_QUOTA_TOKEN"]
+
+# ------------------------------------------------------------ the token
+
+# An exported token comes ahead of gh: COPILOT_QUOTA_TOKEN, then GH_TOKEN,
+# then GITHUB_TOKEN, each asked with as it is.
+sandbox()
+copilot_home().mkdir()
+configured(monthlyCredits=3000)
+asked, gh_before = [], gh_runs()
+for name, token in (("GITHUB_TOKEN", "github-token"), ("GH_TOKEN", "gh-env-token"), ("COPILOT_QUOTA_TOKEN", "quota-token")):
+  os.environ[name] = token
+  copilot(routes=GH_ROUTES)
+  asked.append(copilot.asked)
+expect("the quota token comes from COPILOT_QUOTA_TOKEN, GH_TOKEN, then GITHUB_TOKEN, ahead of gh",
+       [asked, gh_runs() - gh_before], [[["Bearer github-token"], ["Bearer gh-env-token"], ["Bearer quota-token"]], 0])
+
+# "remote": true asks GitHub even where the Copilot CLI never ran.
+configured(remote=True)
+record = copilot("--force", "--copilot-home", str(home() / "never-ran"), routes=GH_ROUTES)
+expect("remote: true asks GitHub without a Copilot CLI home", [copilot.asked, meter(record)["limits"]], [["Bearer quota-token"], [["Monthly allowance", 0.1, True]]], record)
+for name in ("COPILOT_QUOTA_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
+  del os.environ[name]
 PY
