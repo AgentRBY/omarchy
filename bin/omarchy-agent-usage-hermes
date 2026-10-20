@@ -26,6 +26,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.environ["OMARCHY_PATH"], "shell", "plugins", "agents"))
 from collectors import (  # noqa: E402
+  NUMBER_CEILING,
   base_record,
   cached_scan,
   emit,
@@ -63,6 +64,12 @@ def day_start(day):
   return datetime(day.year, day.month, day.day).astimezone().timestamp()
 
 
+# A column's sum over the rows whose count can be trusted: a negative row
+# would net out real usage, and text or a count past the ceiling is none.
+def trusted_sum(column):
+  return f"SUM(CASE WHEN typeof({column}) IN ('integer', 'real') AND {column} >= 0 AND {column} < {NUMBER_CEILING} THEN {column} ELSE 0 END)"
+
+
 # One database's share of the stats, added into the running totals.
 def scan(path, totals, today):
   conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
@@ -91,11 +98,10 @@ def scan(path, totals, today):
     # day it started.
     for day, model, uncached, output, cache_read, cache_write in conn.execute(
       """SELECT date(s.started_at, 'unixepoch', 'localtime'), smu.model,
-                SUM(smu.input_tokens), SUM(smu.output_tokens),
-                SUM(smu.cache_read_tokens), SUM(smu.cache_write_tokens)
+                {}, {}, {}, {}
          FROM session_model_usage smu
          JOIN sessions s ON s.id = smu.session_id
-         GROUP BY 1, 2"""
+         GROUP BY 1, 2""".format(*(trusted_sum("smu." + column) for column in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")))
     ):
       # Counts from disk are untrusted: a negative, non-finite, absurdly large
       # or non-numeric value counts as nothing.

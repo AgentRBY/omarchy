@@ -99,6 +99,18 @@ record = hermes()
 expect("text and future times count in the totals but not today",
        [record["totalSessions"], record["todaySessions"], record["totalPrompts"], record["todayPrompts"]], [3, 1, 3, 1], record)
 
+# A negative count is no count; it never nets out another row's usage.
+sandbox()
+netted = state_db(home() / ".hermes" / "state.db", ("gpt-6-astra", 10))
+conn = sqlite3.connect(netted)
+conn.execute("INSERT INTO sessions VALUES ('session-2', ?)", (time.time(),))
+conn.execute("INSERT INTO session_model_usage VALUES ('session-2', 'gpt-6-astra', -5, 'many', 1e300, 0)")
+conn.commit()
+conn.close()
+record = hermes()
+expect("negative, text and huge counts are left out of the sums",
+       record["modelUsage"]["gpt-6-astra"], {"inputTokens": 10, "outputTokens": 20, "cacheReadInputTokens": 30, "cacheCreationInputTokens": 40}, record)
+
 # Named profiles live under ~/.hermes/profiles even when HERMES_HOME moves the
 # default home elsewhere.
 sandbox()
