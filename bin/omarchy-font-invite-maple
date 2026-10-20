@@ -7,7 +7,12 @@
 # the Latin beside it. One invitation only; Install > Style > Font keeps it.
 family="Maple Mono NF CN"
 
+# The marker claims the one invitation; a send that fails gives it back, so a
+# notification service that was down at first boot does not cost the offer.
 if [[ $(omarchy-font-current) != "$family" ]] && omarchy-done ensure maple-font-invitation; then
-  omarchy-notification-send -u critical -g  "$(omarchy-i18n font.mapleInvitation)" "$(omarchy-i18n font.mapleInvitationBody)" \
-    --exec omarchy-install-font "Maple Mono CN" maplemono-nf-cn "$family"
+  if ! omarchy-notification-send -u critical -g  "$(omarchy-i18n font.mapleInvitation)" "$(omarchy-i18n font.mapleInvitationBody)" \
+    --exec omarchy-install-font "Maple Mono CN" maplemono-nf-cn "$family"; then
+    rm -f "$HOME/.local/state/omarchy/done/maple-font-invitation"
+    exit 1
+  fi
 fi

@@ -10,6 +10,7 @@ export OMARCHY_PATH=$ROOT TEST_LOG=$work/log CURRENT_FONT="JetBrainsMono Nerd Fo
 
 cat >"$work/stubs/omarchy-notification-send" <<'SH'
 #!/bin/bash
+[[ -n ${NOTIFY_FAILS:-} ]] && exit 1
 while (($# > 0)); do
   if [[ $1 == "--exec" ]]; then shift; echo "exec:$*" >>"$TEST_LOG"; break; fi
   shift
@@ -39,6 +40,14 @@ CURRENT_FONT="Maple Mono NF CN" invite "$work/maple-home"
 [[ ! -s $TEST_LOG && ! -e $work/maple-home/.local/state/omarchy/done/maple-font-invitation ]] ||
   fail "someone already on Maple Mono is not invited, and keeps the invitation for later"
 pass "someone already on Maple Mono is not invited"
+
+: >"$TEST_LOG"
+if NOTIFY_FAILS=1 invite "$work/down-home" 2>/dev/null; then
+  fail "an invitation that could not be sent reports failure"
+fi
+invite "$work/down-home"
+[[ -s $TEST_LOG ]] || fail "an invitation that could not be sent is offered again"
+pass "an invitation that could not be sent is offered again"
 
 # First boot invites a Chinese keyboard, and no other.
 for method in pinyin chewing cangjie5 mozc hangul none; do
