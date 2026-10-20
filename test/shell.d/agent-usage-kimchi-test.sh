@@ -120,6 +120,9 @@ expect("the US region asks the US gateway", kimchi.asked, ["https://llm.kimchi.d
 signed_in("key-coder", "eu")
 kimchi()
 expect("the EU region asks the EU gateway", kimchi.asked, ["https://llm.eu.kimchi.dev/v1/budget", "https://llm.eu.kimchi.dev/v1/credits"])
+signed_in("key-coder", "EU")
+kimchi()
+expect("a region is matched whatever its case", kimchi.asked, ["https://llm.eu.kimchi.dev/v1/budget", "https://llm.eu.kimchi.dev/v1/credits"])
 kimchi(KIMCHI_BASE_URL="https://gateway.example/openai/v1/")
 expect("KIMCHI_BASE_URL names the gateway, without its OpenAI path", kimchi.asked, ["https://gateway.example/v1/budget", "https://gateway.example/v1/credits"])
 

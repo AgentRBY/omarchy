@@ -109,7 +109,7 @@ def gateway():
   base = os.environ.get("KIMCHI_BASE_URL") or config.get("llmEndpoint") or ""
   if not base:
     region = os.environ.get("KIMCHI_REGION") or config.get("region")
-    base = REGION_LLM_BASE.get(str(region or ""), REGION_LLM_BASE["us"])
+    base = REGION_LLM_BASE.get(str(region or "").strip().lower(), REGION_LLM_BASE["us"])
   base = str(base).strip().rstrip("/")
   if base.lower().endswith("/openai/v1"):
     base = base[: -len("/openai/v1")]
