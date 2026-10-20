@@ -655,8 +655,14 @@ def probe_limits(access_token: str) -> dict[str, Any]:
         help_text = "Anthropic's usage endpoint is rate limiting checks right now" + (
           f" (retry after {retry_after}s)" if retry_after else ""
         ) + ". Local Claude Code stats are still shown."
-      else:
-        help_text = f"Anthropic's usage endpoint returned status {error.status}. Local Claude Code stats are still shown."
+        return {"ok": False, "rateLimited": True, "helpText": help_text}
+      if error.status in (401, 403):
+        return {
+          "ok": False,
+          "refused": True,
+          "helpText": "Anthropic refused Claude Code's sign-in. Start Claude Code, or run `claude auth login`, to sign in again.",
+        }
+      help_text = f"Anthropic's usage endpoint returned status {error.status}. Local Claude Code stats are still shown."
       return {"ok": False, "helpText": help_text}
     if error.transport:
       # A transport failure reached no server at all — no route, no DNS. Any
@@ -770,10 +776,16 @@ def collect_limits(access_token: str, expires_at_ms: int, refresh_expires_at_ms:
     result["retryAdvised"] = True
   if fallback:
     result["limits"] = fallback
-    result["live"] = cache.younger_than(CURRENT_ENOUGH_SECONDS)
+    result["authHelpText"] = probe["helpText"]
+    # Anthropic rate-limits this endpoint readily, and a 429 only says "ask
+    # later": numbers measured minutes ago still describe the account. Any
+    # other failure leaves them stale, as the collector contract has it.
+    result["live"] = bool(probe.get("rateLimited")) and cache.younger_than(CURRENT_ENOUGH_SECONDS)
   else:
     result["usageStatusText"] = "Claude limits unavailable"
     result["authHelpText"] = probe["helpText"]
+  if probe.get("refused"):
+    result["usageStatusText"] = "Sign-in expired"
   return result
 
 

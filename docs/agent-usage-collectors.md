@@ -84,7 +84,7 @@ The detail goes in `authHelpText`: what failed and the one thing to do about it.
   - A connection that fails or drops before any reply (no DNS, no route, refused, reset, a timeout, a server hanging up without a word) is transport: nothing answered, so `retryAdvised: true` asks the panel to try again soon.
   - A reply that arrived but was cut short or garbled on the way (`http.client.HTTPException`: an incomplete read, a bad status line) is an answer, `cut_short` and not `transport`, so there is no sooner retry. Neither is there for an error status or a body that isn't the expected JSON.
 - The cache is read whatever its file time, so a clock that went back doesn't lose it, and every age check is `0 <= age < N`. Stamps are floored (`int(time.time() * 1000)`), never rounded: a stamp half a millisecond ahead reads as a clock that went back, and the next run probes again.
-- A failed check keeps the cached limits with `limitsStale: true` and their `limitsFetchedAt`. The panel shows their age on hover.
+- A failed check keeps the cached limits with `limitsStale: true` and their `limitsFetchedAt`. The panel shows their age on hover. The one exception is a service that rate-limits its own usage endpoint (Claude's answers 429 readily): a 429 only says "ask later", so numbers measured within the last 15 minutes still read as current.
 - A kept window whose `resetsAt` has passed comes back at `percent: 0` with `resetsAt: ""`, never dropped: a reset allowance is untouched, not unknown. A window with no reset time is kept as it is. Reset times are only ever the service's own, never computed.
 - A meter for a balance or allowance is a real ratio of the service's numbers, never estimated from local usage unless its label says `(est.)`.
 

@@ -115,47 +115,17 @@ def add_session():
                    [pi_reply("anthropic", 10, id=f"grown-{add_session.count}", model="claude-opus")])
 
 
-# Claude keeps a failed re-check of numbers measured in the last 15 minutes as
-# current (CURRENT_ENOUGH_SECONDS, for Anthropic's ready rate limiting), so the
-# failure checks run below against an answer aged past that instead.
 adapter = Adapter("claude", plant=signed_in, answer=ROUTES, grow=add_session,
-                  pi_root=lambda: home() / ".pi" / "agent" / "sessions",
-                  skip=("stale", "retry", "elapsed", "refused"))
+                  pi_root=lambda: home() / ".pi" / "agent" / "sessions")
 fresh = check_limits_contract(adapter)
 expect("Claude's plan and windows come from its sign-in and Anthropic's answer",
        [fresh["tierLabel"], labels(fresh), [entry["percent"] for entry in fresh["limits"]]],
        ["Max 5x", ["Session (5-hour)", "Weekly (7-day)"], [0.4, 0.1]], fresh)
 check_scan_cache(adapter)
 
-# The failure checks of the contract, past the 15 minutes.
-for path in limits_cache_files("claude"):
-  path.unlink()
-claude()
-edit_limits_cache("claude", fetched_ago=1800)
-fetched_at = json.loads(limits_cache_files("claude")[0].read_text())["fetchedAtMs"]
-record, _ = claude(mode=500)
-check("claude: a failed check keeps the last limits, stale, with when they were measured",
-      record["limits"] == fresh["limits"] and record["limitsStale"] is True and record["limitsFetchedAt"] == fetched_at
-      and record["usageStatusText"] == "" and not record.get("retryAdvised"), record)
-for mode in ("down", "timeout"):
-  record, _ = claude(mode=mode)
-  check(f"claude: an unreachable service ({mode}) advises a retry and keeps the last limits, stale",
-        record.get("retryAdvised") is True and record["limits"] == fresh["limits"] and record["limitsStale"] is True
-        and record["limitsFetchedAt"] == fetched_at and record["usageStatusText"] == "", record)
-# A refused credential advises no retry and shows nothing as live. Claude
-# keeps no "Sign-in expired" for it (see the report), so only that is held.
-record, _ = claude(mode=401)
-check("claude: a refused credential advises no retry and shows nothing as live",
-      not record.get("retryAdvised") and record["limitsStale"] is True and record["limits"] == fresh["limits"], record)
-edit_limits_cache("claude", resets_past=True)
-runs = [claude(mode=500)[0], claude("--limits-only", mode=500)[0]]
-expect("claude: kept windows whose reset passed read 0 with no reset, past a failed check",
-       [[(entry["percent"], entry["resetsAt"]) for entry in run["limits"]] for run in runs] + [runs[0]["limitsStale"]],
-       [[(0.0, ""), (0.0, "")]] * 2 + [True], runs)
-
-# Anthropic rate-limits its usage endpoint readily. A refused re-check of
-# numbers measured minutes ago still describes the account; only older numbers
-# count as stale, and either way the record says when they were measured.
+# Anthropic rate-limits its usage endpoint readily, and a 429 only says "ask
+# later": numbers measured minutes ago still describe the account, so only
+# older ones count as stale. Either way the record says when they were measured.
 for ago, age, live in ((60, "a minute", True), (1800, "half an hour", False)):
   kept_limits(ago, [{"label": "Session (5-hour)", "percent": 0.4, "resetsAt": iso_in(3 * 3600)}])
   fetched_at = json.loads((cache_root() / "claude-limits.json").read_text())["fetchedAtMs"]
