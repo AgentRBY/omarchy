@@ -255,6 +255,18 @@ expect("an unexpected failure keeps the limits and the tokens",
        [len(record["limits"]), record["limitsStale"], record["usageStatusText"], record["todayTotalTokens"], record.get("retryAdvised", False)],
        [4, True, "", 116, False], record)
 
+# A usage section of the wrong type is a reply this doesn't read: a failed
+# check that keeps the known limits, stale, rather than no meters. A plan
+# with nothing in it, its sections left out or null, is a real answer.
+wrong = {name: cursor(routes=dict(routes, **{RPC + "GetCurrentPeriodUsage": dict(routes[RPC + "GetCurrentPeriodUsage"], **{name: []})}))
+         for name in ("planUsage", "spendLimitUsage")}
+expect("a wrongly typed usage section keeps the known limits, stale",
+       {name: [len(record["limits"]), record["limitsStale"], record["authHelpText"] != ""] for name, record in wrong.items()},
+       {"planUsage": [4, True, True], "spendLimitUsage": [4, True, True]}, wrong)
+empty = [cursor(routes=dict(routes, **{RPC + "GetCurrentPeriodUsage": period})) for period in ({}, {"planUsage": None, "spendLimitUsage": None})]
+expect("an empty plan is an answer with no meters",
+       [[record["limits"], record["limitsStale"], record["usageStatusText"]] for record in empty], [[[], False, ""]] * 2, empty)
+
 # Untrusted numbers never break the record.
 expect("untrusted numbers read as nothing",
        [module.fraction("nan"), module.fraction("inf"), module.fraction(True), module.number("1e400"), module.iso("9" * 30)], [0.0, 0.0, 0.0, 0, ""])

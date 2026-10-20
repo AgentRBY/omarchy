@@ -275,6 +275,19 @@ def week_stats(client: CursorClient, today: date, key: str, max_age_seconds: flo
 # ------------------------------------------------------------------ limits
 
 
+# One section of the period reply. Connect's JSON leaves an empty message out
+# (or sends null), so a missing section is a plan with nothing in it; one of
+# another type is a reply this doesn't read, which must not pass for no meters
+# and replace the known limits.
+def usage_section(period: dict[str, Any], key: str) -> dict[str, Any]:
+  section = period.get(key)
+  if section is None:
+    return {}
+  if not isinstance(section, dict):
+    raise CursorError("Cursor's dashboard sent usage in a form this doesn't read.")
+  return section
+
+
 def summarize_limits(period: dict[str, Any]) -> list[dict[str, Any]]:
   """Cursor's own percentages, never a percentage derived from spend.
 
@@ -287,10 +300,8 @@ def summarize_limits(period: dict[str, Any]) -> list[dict[str, Any]]:
   panel attaches them to that row rather than showing four rows that each
   read "Monthly".
   """
-  plan = period.get("planUsage")
-  plan = plan if isinstance(plan, dict) else {}
-  spend = period.get("spendLimitUsage")
-  spend = spend if isinstance(spend, dict) else {}
+  plan = usage_section(period, "planUsage")
+  spend = usage_section(period, "spendLimitUsage")
   resets_at = iso(period.get("billingCycleEnd"))
   limits = []
 
