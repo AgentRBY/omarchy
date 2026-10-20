@@ -111,9 +111,10 @@ if [[ -r $omarchy_form_defaults ]]; then
 fi
 
 omarchy_prompt_keyboard() {
-  local choice status
+  local choice status default=${OMARCHY_FORM_KEYBOARD_DEFAULT:-English (US)}
+  # gum splits --selected on commas, so "Chinese (Simplified, Pinyin)" needs them escaped.
   choice=$(printf '%s\n' "$OMARCHY_KEYBOARD_LAYOUTS" | cut -d'|' -f1 |
-    gum choose --height 10 --selected "${OMARCHY_FORM_KEYBOARD_DEFAULT:-English (US)}" --header "Select keyboard layout") && status=0 || status=$?
+    gum choose --height 10 --selected "${default//,/\\,}" --header "Select keyboard layout") && status=0 || status=$?
   ((status == 0)) || return $status
 
   local selection
