@@ -151,16 +151,12 @@ qwen_package="qwen"
 dsh_tool="npm:@deepseek-ai/dsh"
 dsh_package="$dsh_tool@0.2.0-rc.2"
 mcode_package="npm:@minimax-ai/code[allow_builds=better-sqlite3]"
-goose_package="aqua:aaif-goose/goose"
 kiro_cli_package="http:kiro-cli[platforms_linux_x64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-x86_64-linux.tar.gz,platforms_linux_arm64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-aarch64-linux.tar.gz,version_list_url=https://prod.download.cli.kiro.dev/stable/latest/manifest.json,version_json_path=.version]"
-vibe_package="github:mistralai/mistral-vibe[matching=vibe-linux]"
 freebuff_package="npm:freebuff"
-zeroclaw_package="github:zeroclaw-labs/zeroclaw"
 kilo_package="npm:@kilocode/cli"
 devin_package="http:devin[platforms_linux_x64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-x86_64-unknown-linux.tar.gz,platforms_linux_arm64_url=https://static.devin.ai/cli/{{ version }}/devin-{{ version }}-aarch64-unknown-linux.tar.gz,bin_path=bin,version_list_url=https://static.devin.ai/cli/current/manifest.json,version_json_path=.version]"
 amp_package="amp"
 commandcode_package="npm:command-code"
-phantombot_package="github:phantomyard/phantombot"
 cursor_agent_package="cursor-agent"
 muse_package="muse"
 legacy_muse_package="http:muse[url=https://api.meta.ai/muse-launcher.sh,bin=muse,version_list_url=https://api.meta.ai/muse-code/channels/muse-stable,version_json_path=.version]"
@@ -210,15 +206,11 @@ grep -Eq "^$qwen_package = \\{ version = \"latest\", lazy = true, auto_update = 
 declare -A declared_bins=(
   [$amp_package]='"amp"'
   ["\"$mcode_package\""]='"mcode"'
-  ["\"$goose_package\""]='"goose"'
   ["\"$kiro_cli_package\""]='"kiro-cli"'
-  ["\"$vibe_package\""]='"vibe"'
   ["\"$freebuff_package\""]='"freebuff"'
-  ["\"$zeroclaw_package\""]='"zeroclaw", "zerocode"'
   ["\"$kilo_package\""]='"kilo"'
   ["\"$devin_package\""]='"devin"'
   ["\"$commandcode_package\""]='"commandcode"'
-  ["\"$phantombot_package\""]='"phantombot"'
 )
 for tool in "${!declared_bins[@]}"; do
   grep -Fx "$tool = { version = \"latest\", lazy = true, auto_update = \"4h\", lazy_bins = [${declared_bins[$tool]}], minimum_release_age = \"0s\" }" "$lazy_config" >/dev/null ||
@@ -227,12 +219,12 @@ done
 # Every DSH release is a prerelease, so it stays pinned and doesn't update itself.
 grep -Fx "\"$dsh_tool\" = { version = \"${dsh_package##*@}\", lazy = true, lazy_bins = [\"dsh\"], minimum_release_age = \"0s\" }" "$lazy_config" >/dev/null ||
   fail "user setup declares the pinned DeepSeek Harness prerelease as a native lazy tool"
-[[ $(grep -c 'auto_update = "4h"' "$lazy_config") == 24 ]] || fail "only the agent CLIs update themselves"
+[[ $(grep -c 'auto_update = "4h"' "$lazy_config") == 20 ]] || fail "only the agent CLIs update themselves"
 for tool in node uv; do
   grep -Eq "^$tool = \\{ version = \"latest\", lazy = true, minimum_release_age = \"0s\" \\}$" "$lazy_config" ||
     fail "user setup declares $tool as a native lazy tool"
 done
-[[ $(grep -c 'lazy = true' "$lazy_config") == 35 ]] || fail "user setup declares every default mise tool as lazy"
+[[ $(grep -c 'lazy = true' "$lazy_config") == 31 ]] || fail "user setup declares every default mise tool as lazy"
 grep -Fx "reshim --system" "$mise_history" >/dev/null || fail "user setup builds the system lazy bootstrap shims"
 pass "user setup configures system lazy tools from registry shorthands"
 : >"$stub_log"
@@ -587,14 +579,9 @@ declare -A expected_agents=(
   [mcode]="mcode"
   [minimax-code]="mcode"
   [minimax]="mcode"
-  [goose]="goose"
   [kiro-cli]="kiro-cli"
   [kiro]="kiro-cli"
-  [vibe]="vibe"
-  [mistral]="vibe"
-  [mistral-vibe]="vibe"
   [freebuff]="freebuff"
-  [zeroclaw]="zeroclaw"
   [kilo]="kilo"
   [kilocode]="kilo"
   [kilo-code]="kilo"
@@ -605,7 +592,6 @@ declare -A expected_agents=(
   [commandcode]="commandcode"
   [command-code]="commandcode"
   [cmdc]="commandcode"
-  [phantombot]="phantombot"
   [cursor]="cursor-agent"
   [cursor-agent]="cursor-agent"
   [muse]="muse"
@@ -628,16 +614,12 @@ declare -A expected_packages=(
   [qwen]="$qwen_package"
   [dsh]="$dsh_package"
   [mcode]="$mcode_package"
-  [goose]="$goose_package"
   [kiro-cli]="$kiro_cli_package"
-  [vibe]="$vibe_package"
   [freebuff]="$freebuff_package"
-  [zeroclaw]="$zeroclaw_package"
   [kilo]="$kilo_package"
   [devin]="$devin_package"
   [amp]="$amp_package"
   [commandcode]="$commandcode_package"
-  [phantombot]="$phantombot_package"
   [cursor-agent]="$cursor_agent_package"
   [muse]="$muse_package"
 )
@@ -837,7 +819,7 @@ mapfile -d '' -t agent_open_args <"$agent_open_log"
 pass "Muse installs visibly through mise and opens directly"
 
 saved_agent=$(<"$agent_file")
-for agent in qwen dsh mcode goose kiro-cli vibe freebuff zeroclaw kilo devin amp commandcode phantombot; do
+for agent in qwen dsh mcode kiro-cli freebuff kilo devin amp commandcode; do
   package_var="${agent//-/_}_package"
   : >"$mise_history"
   omarchy-default-agent --install "$agent" >/dev/null
@@ -950,17 +932,13 @@ printf '%s\n' dsh >"$agent_file"
 omarchy-agent-prompt '-n --help; echo literal'
 assert_launched dsh "keeps an option-like prompt literal" env DSH_PERMISSION_MODE=danger-full-access dsh headless -- -- '-n --help; echo literal'
 assert_launch mcode mcode -- "Review this project"
-assert_launch goose env GOOSE_MODE=auto goose run --interactive "--text=Review this project"
 assert_launch kiro-cli kiro-cli chat --trust-all-tools -- "Review this project"
-assert_launch vibe vibe --auto-approve -- "Review this project"
 : >"$notification_history"
 assert_launch freebuff freebuff
-assert_launch zeroclaw zerocode
 assert_launch kilo kilo --auto "--prompt=Review this project"
 assert_launch devin devin --permission-mode dangerous --respect-workspace-trust false -- "Review this project"
 assert_launch amp bash -c 'printf "%s\n" "$1" | exec amp --dangerously-allow-all' amp "Review this project"
 assert_launch commandcode commandcode --yolo -- "Review this project"
-assert_launch phantombot phantombot "--prompt=Review this project"
 [[ $(<"$clipboard_log") == "Review this project" ]] || fail "Freebuff launcher puts the prompt on the clipboard"
 mapfile -d '' -t notification_args <"$notification_history"
 [[ ${notification_args[*]} == *"Freebuff takes no starting prompt"* ]] || fail "Freebuff launcher says where the prompt went"
@@ -996,18 +974,14 @@ assert_bypass kimi kimi --yolo
 assert_bypass qwen qwen --yolo
 assert_bypass dsh env DSH_PERMISSION_MODE=danger-full-access dsh web
 assert_bypass mcode mcode
-assert_bypass goose env GOOSE_MODE=auto goose
 assert_bypass kiro-cli kiro-cli chat --trust-all-tools
-assert_bypass vibe vibe --auto-approve
 : >"$clipboard_log"
 : >"$notification_history"
 assert_bypass freebuff freebuff
-assert_bypass zeroclaw zerocode
 assert_bypass kilo kilo --auto
 assert_bypass devin devin --permission-mode dangerous --respect-workspace-trust false
 assert_bypass amp amp --dangerously-allow-all
 assert_bypass commandcode commandcode --yolo
-assert_bypass phantombot phantombot
 [[ ! -s $clipboard_log && ! -s $notification_history ]] || fail "Freebuff launcher leaves the clipboard alone without a prompt"
 pass "agent launcher skips permission prompts for every supported agent"
 

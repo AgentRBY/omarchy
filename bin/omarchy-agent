@@ -160,25 +160,10 @@ mcode)
   command=(mcode)
   [[ -n ${prompt:-} ]] && command+=(-- "$prompt")
   ;;
-goose)
-  # Goose has no bypass flag; GOOSE_MODE outranks a configured approve mode.
-  # --text= binds a prompt that starts with a dash, and --interactive keeps
-  # the session open after the prompted turn.
-  if [[ -n ${prompt:-} ]]; then
-    command=(env GOOSE_MODE=auto goose run --interactive "--text=$prompt")
-  else
-    command=(env GOOSE_MODE=auto goose)
-  fi
-  ;;
 kiro-cli)
   # A positional input seeds the interactive chat; -- keeps a prompt starting
   # with a dash literal.
   command=(kiro-cli chat --trust-all-tools)
-  [[ -n ${prompt:-} ]] && command+=(-- "$prompt")
-  ;;
-vibe)
-  # A positional prompt seeds the interactive session; -p would run it headless.
-  command=(vibe --auto-approve)
   [[ -n ${prompt:-} ]] && command+=(-- "$prompt")
   ;;
 freebuff)
@@ -186,12 +171,6 @@ freebuff)
   # prompt goes to the clipboard below instead.
   command=(freebuff)
   prompt_via_clipboard="Freebuff"
-  ;;
-zeroclaw)
-  # The terminal UI is zerocode, shipped in the same release. It takes no
-  # starting prompt, and autonomy is ZeroClaw configuration, not a flag.
-  command=(zerocode)
-  prompt_via_clipboard="ZeroClaw"
   ;;
 kilo)
   # Kilo is built on OpenCode and shares its flags. Bind the prompt so one
@@ -219,13 +198,6 @@ commandcode)
   # seeds the interactive session; -- keeps one starting with a dash literal.
   command=(commandcode --yolo)
   [[ -n ${prompt:-} ]] && command+=(-- "$prompt")
-  ;;
-phantombot)
-  # Permissions belong to the harness Phantombot runs underneath, so it has
-  # no bypass flag. --prompt= opens the TUI with the prompt as its first turn;
-  # the bound form is the one that keeps a leading dash literal.
-  command=(phantombot)
-  [[ -n ${prompt:-} ]] && command+=("--prompt=$prompt")
   ;;
 *)
   echo "Unsupported default agent: $agent" >&2

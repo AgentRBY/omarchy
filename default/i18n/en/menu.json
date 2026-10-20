@@ -512,9 +512,6 @@
   "setup.default.agent.freebuff": {
     "label": "Freebuff"
   },
-  "setup.default.agent.goose": {
-    "label": "Goose"
-  },
   "setup.default.agent.grok": {
     "label": "Grok"
   },
@@ -548,20 +545,11 @@
   "setup.default.agent.ori": {
     "label": "Ori"
   },
-  "setup.default.agent.phantombot": {
-    "label": "Phantombot"
-  },
   "setup.default.agent.pi": {
     "label": "Pi"
   },
   "setup.default.agent.qwen": {
     "label": "Qwen Code"
-  },
-  "setup.default.agent.vibe": {
-    "label": "Mistral Vibe"
-  },
-  "setup.default.agent.zeroclaw": {
-    "label": "ZeroClaw"
   },
   "setup.default.browser": {
     "label": "Browser",

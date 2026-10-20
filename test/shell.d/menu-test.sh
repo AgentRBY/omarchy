@@ -256,16 +256,12 @@ const expectedAgents = {
   qwen: { icon: '\ue90f', iconFont: 'omarchy', label: 'Qwen Code' },
   dsh: { icon: '\ue910', iconFont: 'omarchy', label: 'DeepSeek Harness' },
   mcode: { icon: '\ue911', iconFont: 'omarchy', label: 'MiniMax Code' },
-  goose: { icon: '\ue912', iconFont: 'omarchy', label: 'Goose' },
   'kiro-cli': { icon: '\ue913', iconFont: 'omarchy', label: 'Kiro CLI' },
-  vibe: { icon: '\ue914', iconFont: 'omarchy', label: 'Mistral Vibe' },
   freebuff: { icon: '\ue915', iconFont: 'omarchy', label: 'Freebuff' },
-  zeroclaw: { icon: '\u{f0b21}', label: 'ZeroClaw' },
   kilo: { icon: '\ue916', iconFont: 'omarchy', label: 'Kilo' },
   devin: { icon: '\ue917', iconFont: 'omarchy', label: 'Devin CLI' },
   amp: { icon: '\ue918', iconFont: 'omarchy', label: 'Amp' },
   commandcode: { icon: '\ue919', iconFont: 'omarchy', label: 'Command Code' },
-  phantombot: { icon: '\ue91a', iconFont: 'omarchy', label: 'Phantombot' },
   hermes: { icon: '\ue90a', iconFont: 'omarchy', label: 'Hermes' },
   openclaw: { icon: '\ue90c', iconFont: 'omarchy', label: 'OpenClaw' },
   copilot: { icon: '', label: 'Copilot' },
@@ -291,7 +287,7 @@ assertDeepEqual(
   defaultItems
     .filter(item => item.parent === 'setup.default.agent')
     .map(item => item.label),
-  ['Amp', 'Antigravity', 'Claude', 'Codex', 'Command Code', 'Copilot', 'Crush', 'Cursor CLI', 'DeepSeek Harness', 'Devin CLI', 'Freebuff', 'Goose', 'Grok', 'Hermes', 'Kilo', 'Kimi', 'Kiro CLI', 'MiniMax Code', 'Mistral Vibe', 'Muse Code', 'omp', 'OpenClaw', 'OpenCode', 'Ori', 'Phantombot', 'Pi', 'Qwen Code', 'ZeroClaw'],
+  ['Amp', 'Antigravity', 'Claude', 'Codex', 'Command Code', 'Copilot', 'Crush', 'Cursor CLI', 'DeepSeek Harness', 'Devin CLI', 'Freebuff', 'Grok', 'Hermes', 'Kilo', 'Kimi', 'Kiro CLI', 'MiniMax Code', 'Muse Code', 'omp', 'OpenClaw', 'OpenCode', 'Ori', 'Pi', 'Qwen Code'],
   'menu sorts coding agents alphabetically'
 )
 const expectedDefaults = {
