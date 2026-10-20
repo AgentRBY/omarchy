@@ -250,11 +250,13 @@ expect("Devin drops quota fetched before the last sign-in and says how to refres
        [record["ready"], record["tierLabel"], record["limits"], record["usageStatusText"], "Start Devin" in record["authHelpText"]],
        [True, "", [], "Devin limits unavailable", True], record)
 
-# Of the caches fetched since, the newest wins.
+# Of the caches fetched since, the newest wins, whichever name sorts first.
 signed_in_at(now - 600)
-write_status("b", now - 300, plan="Max", daily=0, weekly=0, dailyReset=now + 3600)
-expect("Devin serves the newest fetch under the current sign-in", devin()["tierLabel"], "Pro")
-(status_dir() / "user_status.b.bin").unlink()
+for name in ("0", "b"):
+  write_status(name, now - 300, plan="Max", daily=0, weekly=0, dailyReset=now + 3600)
+expect("Devin serves the newest fetch under the current sign-in, sorted between older ones", devin()["tierLabel"], "Pro")
+for name in ("0", "b"):
+  (status_dir() / f"user_status.{name}.bin").unlink()
 
 # The old account's last fetch can land in the seconds before a switch, inside
 # the allowance for the new account's first fetch. Having been served under
@@ -279,6 +281,14 @@ write_status("a", now, tier=16, hideDaily=1, daily=10, weekly=80, dailyReset=now
 record = devin()
 expect("Devin honors hidden windows, credit buckets and tier names",
        [record["tierLabel"], windows(record)], ["Devin Pro", [["Weekly", 0.2], ["Prompt credits", 0.25]]], record)
+
+write_status("a", now, plan="Pro", hideWeekly=1, daily=10, weekly=80, dailyReset=now + 3600, weeklyReset=now + 86400)
+expect("Devin honors a hidden weekly window", windows(devin()), [["Daily", 0.9]])
+
+# A fetch stamped ahead of the clock (one that went back) isn't current.
+write_status("a", now + 3600, plan="Pro", daily=10, weekly=80, dailyReset=now + 7200, weeklyReset=now + 86400)
+record = devin()
+expect("Devin reports a fetch stamped in the future stale", [record["limitsStale"], windows(record)], [True, [["Daily", 0.9], ["Weekly", 0.2]]], record)
 
 # A credit plan leaves the quota percents at their defaults with no reset:
 # those windows are not meters.
