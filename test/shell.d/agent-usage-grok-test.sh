@@ -181,6 +181,19 @@ expect("every Grok account reports its own plan and credits", {
   "switch": {"mode": "auto", "threshold": 90},
 }, record)
 
+# ------------------------------------------------------------ odd shapes
+
+# A ledger or settings cache of the wrong shape costs that field, never the
+# record.
+sandbox()
+signed_in(grok_home())
+write_json(grok_home() / "settings_cache.json", {"payload": json.dumps({"settings": "x"})})
+summary(grok_home(), "odd", iso_in(0), 1)
+write_json(grok_home() / "sessions" / "%2Fhome%2Fme" / "odd" / "usage.json", {"turns": [{"endedAt": iso_in(0), "modelUsage": ["grok-4.7-build"]}]})
+record = grok()
+expect("a list-shaped modelUsage and a non-object settings read as empty",
+       [record["ready"], record["tierLabel"], record["todayPrompts"], record["modelUsage"]], [True, "", 1, {}], record)
+
 # ---------------------------------------------------------- local stats
 
 # Sessions come from each session's summary; tokens and today's prompts from

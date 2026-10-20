@@ -35,6 +35,7 @@ from collectors import (  # noqa: E402
   emit,
   empty_bucket,
   number,
+  obj,
   open_json,
   read_json,
   registered_accounts,
@@ -103,7 +104,7 @@ def local_stats(home):
       days.add(day)
       if day == today:
         today_prompts += 1
-      for model, bucket in (turn.get("modelUsage") or {}).items():
+      for model, bucket in obj(turn.get("modelUsage")).items():
         if not isinstance(bucket, dict):
           continue
         # Grok's totalTokens leaves cache writes out; counting them here keeps
@@ -157,7 +158,7 @@ def login(home):
 def plan(home):
   cached = read_json(Path(home) / "settings_cache.json")
   try:
-    settings = json.loads(cached.get("payload") or "{}").get("settings") or {}
+    settings = obj(obj(json.loads(cached.get("payload") or "{}")).get("settings"))
   except Exception:
     return ""
   return str(settings.get("subscription_tier_display") or "")
