@@ -205,10 +205,7 @@ def add_request():
 # - elapsed: the cache keeps GitHub's answer itself, its reset date at the
 #   top level and no limit windows, so the contract's window rewrite can't
 #   reach it; the own check below rewrites the reset date instead.
-# - refused: with an allowance kept, a refused token keeps it, stale, with
-#   the refusal in the help and no status (a collector deviation, reported);
-#   the own check below holds a refusal with nothing kept.
-adapter = Adapter("copilot", plant=signed_in, answer=ROUTES, grow=add_request, skip=("elapsed", "refused"))
+adapter = Adapter("copilot", plant=signed_in, answer=ROUTES, grow=add_request, skip=("elapsed",))
 fresh = check_limits_contract(adapter)
 expect("the live allowance is read in credits, with GitHub's plan and reset date",
        [fresh["limits"][0]["label"], fresh["limits"][0]["percent"], fresh["tierLabel"], fresh["limits"][0]["resetsAt"]],

@@ -770,6 +770,9 @@ def allowance_limits(
     result["tierLabel"] = str(remote.get("planLabel") or "")
     if remote.get("stale"):
       result["authHelpText"] = quota_trouble(reason) + " Showing the last known allowance."
+      # A refused token is a sign-in to redo, kept allowance or not.
+      if reason in ("http-401", "http-403"):
+        result["usageStatusText"] = "Sign-in expired"
     if remote.get("unlimited") or float(remote.get("entitlement") or 0) <= 0:
       return result
     # GitHub's own reset date, or none: a kept window that has reset has no
