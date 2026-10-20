@@ -471,19 +471,26 @@ def scan_transcript(event_file: Path, session_key: str, tally: UsageTally) -> No
     tally.usage(model, day, {**empty_bucket(), "outputTokens": output})
 
 
-def scan_transcripts(session_root: Path) -> dict[str, Any]:
+# The stats, and whether every transcript was read: one that couldn't be
+# leaves the totals short, so they must not be cached.
+def scan_transcripts(session_root: Path) -> tuple[dict[str, Any], bool]:
   if not session_root.is_dir():
-    return blank_stats()
+    return blank_stats(), True
   tally = UsageTally()
-  for session_dir in sorted(p for p in session_root.iterdir() if p.is_dir()):
+  complete = True
+  try:
+    session_dirs = sorted(p for p in session_root.iterdir() if p.is_dir())
+  except OSError:
+    return blank_stats(), False
+  for session_dir in session_dirs:
     event_file = session_dir / "events.jsonl"
     if not event_file.is_file():
       continue
     try:
       scan_transcript(event_file, session_dir.name, tally)
     except OSError:
-      continue
-  return tally.stats()
+      complete = False
+  return tally.stats(), complete
 
 
 # ------------------------------------------------------------------- scan
@@ -495,7 +502,8 @@ def direct_scan(home_dir: Path) -> tuple[dict[str, Any], bool]:
   store = home_dir / "session-store.db"
   conn = open_store(store)
   if conn is None:
-    return scan_transcripts(home_dir / "session-state"), not store.exists()
+    stats, complete = scan_transcripts(home_dir / "session-state")
+    return stats, complete and not store.exists()
   try:
     if has_table(conn, "assistant_usage_events"):
       stats = scan_store(conn)
@@ -503,7 +511,7 @@ def direct_scan(home_dir: Path) -> tuple[dict[str, Any], bool]:
         return stats, True
     # A store without the usage table, or one that is still empty, falls back
     # to the transcripts exactly like a store-less machine.
-    return scan_transcripts(home_dir / "session-state"), True
+    return scan_transcripts(home_dir / "session-state")
   finally:
     conn.close()
 

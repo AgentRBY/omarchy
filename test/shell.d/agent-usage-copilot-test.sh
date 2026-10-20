@@ -179,6 +179,27 @@ for path in scan_cache_files("copilot"):
 record = copilot()
 expect("a scan the store couldn't join serves its run but isn't cached", [record["todayPrompts"], scan_cache_files("copilot")], [3, []], record)
 
+# A transcript that can't be read leaves the totals short, so that scan
+# serves its run but isn't cached either, store or no store.
+if os.geteuid() != 0:
+  for with_store in (False, True):
+    sandbox()
+    configured(remote=False)
+    if with_store:
+      copilot_home().mkdir(parents=True, exist_ok=True)
+      conn = sqlite3.connect(copilot_home() / "session-store.db")
+      conn.execute("CREATE TABLE sessions (id TEXT)")
+      conn.commit()
+      conn.close()
+    transcript("sess-read", [("user.message", {"content": "read"}, NOW)])
+    transcript("sess-locked", [("user.message", {"content": "locked"}, NOW)])
+    locked = copilot_home() / "session-state" / "sess-locked" / "events.jsonl"
+    locked.chmod(0)
+    record = copilot()
+    locked.chmod(0o644)
+    expect(f"a scan missing an unreadable transcript isn't cached ({'store without usage table' if with_store else 'no store'})",
+           [record["todayPrompts"], scan_cache_files("copilot")], [1, []], record)
+
 # A segment that spans midnight books its shutdown totals on the days its
 # replies landed on: output by each day's reply output (40 / 60), everything
 # else by reply count (2 / 1).
