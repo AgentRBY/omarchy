@@ -512,6 +512,36 @@ write_session(inner / "fork.jsonl", [inner_line], header={"type": "session", "pa
 inner_rows, _ = collectors.scan_pi_sessions(r'"provider"\s*:\s*"demo"', lambda provider, model, entry: True, roots=[inner])
 check("a copy timed only on its message counts once", [row.input_tokens for row in inner_rows] == [77], json.dumps([row._asdict() for row in inner_rows]))
 
+# A header naming a FIFO is no parent to read: opening one would hang.
+import signal  # noqa: E402
+
+piped = work / "piped" / "sessions"
+fifo = work / "piped" / "parent.fifo"
+fifo.parent.mkdir(parents=True)
+os.mkfifo(fifo)
+piped_line = {"type": "message", "id": "q1", "timestamp": inner_stamp, "message": {"role": "assistant", "provider": "demo", "model": "demo", "usage": {"input": 5}}}
+write_session(piped / "one.jsonl", [piped_line], header={"type": "session", "parentSession": str(fifo)})
+write_session(piped / "two.jsonl", [piped_line])
+
+
+# Not an OSError, which the reader would swallow as an unreadable header.
+class Hung(BaseException):
+  pass
+
+
+def hung(*_):
+  raise Hung()
+
+
+signal.signal(signal.SIGALRM, hung)
+signal.alarm(5)
+try:
+  piped_rows, _ = collectors.scan_pi_sessions(r'"provider"\s*:\s*"demo"', lambda provider, model, entry: True, roots=[piped])
+except Hung:
+  piped_rows = None
+signal.alarm(0)
+check("a parentSession naming a FIFO is never opened", piped_rows is not None and [row.input_tokens for row in piped_rows] == [5])
+
 harness = work / "harness" / "sessions"
 write_session(harness / "h.jsonl", [reply("demo", 300, "h1"), reply("demo", 100, "m1")])
 own_rows, own_complete = collectors.scan_pi_sessions(r'"provider"\s*:\s*"demo"', lambda provider, model, entry: True, roots=[harness])

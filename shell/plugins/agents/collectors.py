@@ -633,6 +633,10 @@ def canonical_roots(roots: Iterable[Path]) -> list[Path]:
 def pi_parent_session(path: str) -> str | None:
   """The session file a fork was cut from, as its header line names it."""
   try:
+    # A header can name any path; opening a FIFO or a device there would
+    # hang the scan, so only a regular file is read.
+    if not stat.S_ISREG(os.stat(path).st_mode):
+      return None
     with open(path, encoding="utf-8", errors="replace") as handle:
       header = json.loads(handle.readline())
   except (OSError, ValueError):
