@@ -133,7 +133,9 @@ class Credential(NamedTuple):
 def read_auth_key(path):
   try:
     parsed = json.loads(path.read_text(encoding="utf-8"))
-  except (OSError, ValueError):
+  except Exception:
+    # Unreadable, not JSON, or nested past the parser's depth (a
+    # RecursionError): no key here.
     return ""
   if not isinstance(parsed, dict):
     return ""
@@ -178,7 +180,8 @@ def read_store_credentials(db):
   for _, raw in rows:
     try:
       value = json.loads(raw)
-    except (TypeError, ValueError):
+    except Exception:
+      # Not JSON, or nested past the parser's depth: skip this row alone.
       continue
     if not isinstance(value, dict):
       continue

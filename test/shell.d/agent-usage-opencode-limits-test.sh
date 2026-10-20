@@ -171,6 +171,27 @@ expect("OpenCode collector reads V2 credentials, the Console session last",
        [(c.token, c.url.endswith("/inference/go/v1/usage"), c.headers) for c in found],
        [("store_key", False, {}), ("console_token", True, {"x-opencode-org-id": "org_1"})])
 
+# One value nested too deeply to parse (a RecursionError, not a ValueError)
+# costs only its own entry: the database's other key and pi's still count.
+DEEP = "[" * 100000 + "]" * 100000
+(data_home() / "opencode" / "auth.json").write_text(DEEP)
+pi_auth(None, "opencode", "from_pi")
+conn = sqlite3.connect(db)
+conn.execute("INSERT INTO credential VALUES ('c4', 'opencode-go', 1, 9, ?)", (DEEP,))
+conn.commit()
+conn.close()
+with FakeHttp({ZEN: USAGE, CONSOLE: USAGE}):
+  record = collect("opencode", "--force")
+expect("OpenCode collector skips a credential nested too deeply to parse",
+       [[c.token for c in load_collector("opencode").credential_candidates()], windows(record)],
+       [["store_key", "from_pi", "console_token"], [("Rolling (5h)", 0.16), ("Weekly (7-day)", 0.06), ("Monthly", 0.29)]], record)
+(data_home() / "opencode" / "auth.json").unlink()
+(home() / ".pi" / "agent" / "auth.json").unlink()
+conn = sqlite3.connect(db)
+conn.execute("DELETE FROM credential WHERE id = 'c4'")
+conn.commit()
+conn.close()
+
 
 def refuse_key(request):
   if "store_key" in request.get_header("Authorization"):
