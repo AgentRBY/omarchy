@@ -136,4 +136,42 @@ expect("Z.ai collector does not follow a planted lock symlink", sentinel.read_te
 sandbox()
 pi_auth(None, "zai", "pi-saved")
 expect("Z.ai collector reads the key pi saved in auth.json", list(load_collector("zai").credentials()), ["pi-saved", "zai"])
+pi_auth(home() / ".omp" / "agent", "zai", "omp-saved")
+expect("Z.ai collector prefers pi's auth.json to omp's", list(load_collector("zai").credentials()), ["pi-saved", "zai"])
+
+# A pi `$VAR` or `!command` entry is pi's to resolve, never a key to send.
+pi_auth(None, "zai", "$ZAI_KEY")
+pi_auth(home() / ".omp" / "agent", "zai", "!pass show zai")
+expect("Z.ai collector never sends a pi $VAR or !command entry as a key", list(load_collector("zai").credentials()), ["", "zai"])
+
+# Keys in omp's and pi's .env files, omp's first, each naming its platform.
+sandbox()
+(home() / ".pi" / "agent").mkdir(parents=True)
+(home() / ".pi" / "agent" / ".env").write_text("# pi\nZHIPU_API_KEY=pi-env\n")
+expect("Z.ai collector reads a Zhipu key from pi's .env", list(load_collector("zai").credentials()), ["pi-env", "zhipu"])
+(home() / ".omp" / "agent").mkdir(parents=True)
+(home() / ".omp" / "agent" / ".env").write_text("export ZAI_API_KEY='omp-env'\n")
+expect("Z.ai collector prefers omp's .env to pi's", list(load_collector("zai").credentials()), ["omp-env", "zai"])
+
+# A Zhipu key asks BigModel's host, with the raw key as its Authorization:
+# the endpoint takes no Bearer prefix.
+sandbox()
+os.environ["ZHIPU_API_KEY"] = "zhipu-key"
+BIGMODEL = "open.bigmodel.cn" + load_collector("zai").QUOTA_PATH
+with FakeHttp({BIGMODEL: ANSWER}) as http:
+  record = collect("zai", "--force")
+expect("a Zhipu key asks open.bigmodel.cn with the raw key, no Bearer",
+       [[request["url"] for request in http.requests], http.requests[0]["headers"].get("authorization"), len(record["limits"])],
+       [["https://" + BIGMODEL], "zhipu-key", 2], record)
+
+# The same key on the other platform is another account: its limits are kept
+# apart, per platform.
+write_json(config_home() / "omarchy" / "agents" / "zai.json", {"apiKey": "zhipu-key", "platform": "zai"})
+with FakeHttp(mode="down"):
+  other = collect("zai", "--force")
+(config_home() / "omarchy" / "agents" / "zai.json").unlink()
+with FakeHttp(mode="down"):
+  kept = collect("zai", "--force")
+expect("Z.ai collector keeps one key's limits per platform",
+       [other["limits"], other["usageStatusText"], len(kept["limits"]), kept["limitsStale"]], [[], "Z.ai limits unavailable", 2, True], kept)
 PY
