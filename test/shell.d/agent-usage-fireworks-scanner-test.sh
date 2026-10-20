@@ -68,8 +68,9 @@ def remaining(record):
 
 # check_limits_contract held to the balance instead of limit windows: a fresh
 # probe, the 15-second reuse for a normal and a --limits-only run, --force, a
-# failed check and an unreachable service keeping the last balance stale, and
-# a refused key. A candidate for the shared fixtures.
+# failed check, an answer cut short or garbled and an unreachable service
+# keeping the last balance stale, and a refused key. A candidate for the
+# shared fixtures.
 def check_balance_contract(plant, per_probe):
   for path in limits_cache_files("fireworks"):
     path.unlink()
@@ -89,6 +90,11 @@ def check_balance_contract(plant, per_probe):
   check("fireworks: a failed check keeps the last balance, stale, with when it was measured",
         kept.get("balance") == forced["balance"] and kept["limitsStale"] is True and kept["limitsFetchedAt"] == forced["limitsFetchedAt"]
         and kept["usageStatusText"] == "" and not kept.get("retryAdvised"), json.dumps(kept))
+  for mode in ("cut", "garbage"):
+    answered = fireworks(mode=mode)
+    check(f"fireworks: an answer {'cut short' if mode == 'cut' else 'that is not JSON'} keeps the last balance, stale, and advises no retry",
+          answered.get("balance") == forced["balance"] and answered["limitsStale"] is True and answered["limitsFetchedAt"] == forced["limitsFetchedAt"]
+          and answered["usageStatusText"] == "" and not answered.get("retryAdvised"), json.dumps(answered))
   for mode in ("down", "timeout"):
     unreachable = fireworks(mode=mode)
     check(f"fireworks: an unreachable service ({mode}) advises a retry and keeps the last balance, stale",
@@ -163,6 +169,49 @@ record = fireworks(mode="down", FIREWORKS_API_KEY="fw_other")
 expect("each key's answers are kept apart", [record.get("balance"), record["todayTotalTokens"], record["usageStatusText"]], [None, 0, "Fireworks unavailable"], record)
 record = fireworks(mode="down", FIREWORKS_ACCOUNT_ID="elsewhere")
 expect("each account's answers are kept apart", [record.get("balance"), record["todayTotalTokens"]], [None, 0], record)
+
+# ------------------------------------------------------------ the account
+
+# Without an account id anywhere, the key's one account is found and asked
+# about; a key reaching several can't be guessed at.
+sandbox()
+(home() / ".fireworks").mkdir()
+(home() / ".fireworks" / "auth.ini").write_text("[default]\napi_key = fw_discover\n")
+
+
+def accounts(*names):
+  return {"/v1/accounts?": {"accounts": [{"name": f"accounts/{name}"} for name in names]}}
+
+
+def asked_accounts(http):
+  return sorted({request["url"].split("/v1/accounts/")[1].split("/")[0].split(":")[0] for request in http.requests if "/v1/accounts/" in request["url"]})
+
+
+with FakeHttp(dict(accounts("acct-one"), **ROUTES)) as http:
+  record = collect("fireworks", "--force")
+expect("Fireworks finds the key's one account and asks about it",
+       [asked_accounts(http), record["todayTotalTokens"], remaining(record), record["usageStatusText"]], [["acct-one"], 120, 12.5, ""], record)
+with FakeHttp(dict(accounts("acct-one", "acct-two"), **ROUTES)) as http:
+  record = collect("fireworks", "--force")
+expect("Fireworks asks for an accountId when the key reaches several accounts",
+       [asked_accounts(http), record["limitsStale"], "Set accountId" in record["authHelpText"]], [[], True, True], record)
+
+# The key now reaching another account starts over: the first account's
+# usage and balance never stand in for it when its own checks fail.
+with FakeHttp(dict(accounts("acct-two"), **{":getBalance": 500, "/billingUsage": 500, "/usageCosts:query": 500})):
+  record = collect("fireworks", "--force")
+expect("Fireworks never keeps another account's answers when the key moves",
+       [record["todayTotalTokens"], "balance" in record, record["usageStatusText"]], [0, False, "Fireworks unavailable"], record)
+
+# A key that can rate costs only through the billing summary still gets an
+# estimate: the summary's line items are the spend since funding.
+sandbox()
+signed_in()
+SUMMARY = dict(ROUTES, **{":getBalance": 403, "/usageCosts:query": 403,
+                          "/billing/summary": {"lineItems": [{"totalCost": {"units": "3", "nanos": 250000000}}, {"totalCost": {"units": "1"}}, "x"]}})
+record = fireworks(routes=SUMMARY)
+expect("Fireworks falls back to the billing summary to estimate the balance", record.get("balance"),
+       {"remaining": 15.75, "funded": 20.0, "spent": 4.25, "currency": "USD", "estimated": True}, record)
 
 # ------------------------------------------------------------ the answer
 
