@@ -1,479 +1,247 @@
 #!/bin/bash
 
+# The Claude collector's local stats: Claude Code's own transcripts, read
+# through a per-file index that only reads what was appended, its
+# history.jsonl fallback, and its own filter over pi and opencode sessions
+# (the anthropic provider). How the shared pi and opencode readers work, and
+# the unused-machine record, are held centrally by the shared and partition
+# tests, and the scan cache by the contract check. Claude's limits and plan
+# have tests of their own.
+
 set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+source "$SHELL_TEST_DIR/agent-usage-helpers.sh"
 
-require_command jq
-require_command python3
+agent_sandbox
+require_command rg
 
-# Every fixture home lives under one scratch directory, cleaned up at exit.
-SCRATCH=$(mktemp -d)
-trap 'rm -rf "$SCRATCH"' EXIT
-TEST_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
-# pi's directory overrides would point every scan at the developer's own sessions.
-unset PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR
+python3 - <<'PY'
+from agent_usage_fixtures import *
 
-projects="$TEST_HOME/.claude/projects/example"
-mkdir -p "$projects"
-
-timestamp="$(date +%Y-%m-%d)T12:00:00Z"
-cat >"$projects/session.jsonl" <<EOF
-{"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-1","message":{"id":"message-1","role":"assistant","model":"claude-test","usage":{"input_tokens":2,"cache_creation_input_tokens":28857,"cache_read_input_tokens":0,"output_tokens":231}}}
-{"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-2","message":{"id":"message-1","role":"assistant","model":"claude-test","usage":{"input_tokens":2,"cache_creation_input_tokens":28857,"cache_read_input_tokens":0,"output_tokens":231}}}
-{"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-3","message":{"id":"message-2","role":"assistant","model":"claude-test","usage":{"input_tokens":2,"cache_creation_input_tokens":454,"cache_read_input_tokens":28857,"output_tokens":390}}}
-EOF
-
-result=$(HOME="$TEST_HOME" XDG_CACHE_HOME="$TEST_HOME/.cache" XDG_DATA_HOME="$TEST_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --force)
-
-[[ $(jq -r '.todayTotalTokens' <<<"$result") == "58793" ]] ||
-  fail "Claude collector counts each API message once" "$result"
-pass "Claude collector counts each API message once"
-
-[[ $(jq -c '.modelUsage["claude-test"]' <<<"$result") == '{"cacheCreationInputTokens":29311,"cacheReadInputTokens":28857,"inputTokens":4,"outputTokens":621}' ]] ||
-  fail "Claude collector keeps mutually exclusive token categories" "$result"
-pass "Claude collector keeps mutually exclusive token categories"
+STAMP = today_stamp()
 
 
-[[ $(jq -r '.id + "/" + .usageStatusText' <<<"$result") == "claude/Waiting for auth" ]] ||
-  fail "Claude collector identifies itself and reports missing auth" "$result"
-pass "Claude collector identifies itself and reports missing auth"
+def projects():
+  return home() / ".claude" / "projects" / "example"
+
+
+def message(message_id, input=0, output=0, cache_write=0, cache_read=0, model="claude-test", timestamp=STAMP, event=None):
+  line = {"timestamp": timestamp, "type": "assistant", "sessionId": "session-1",
+          "message": {"id": message_id, "role": "assistant", "model": model,
+                      "usage": {"input_tokens": input, "cache_creation_input_tokens": cache_write, "cache_read_input_tokens": cache_read, "output_tokens": output}}}
+  if event:
+    line["uuid"] = event
+  return line
+
+
+def transcript(*lines, name="session.jsonl", mode="w"):
+  path = projects() / name
+  path.parent.mkdir(parents=True, exist_ok=True)
+  with path.open(mode) as handle:
+    for line in lines:
+      handle.write(json.dumps(line) + "\n")
+  return path
+
+
+def claude(*args):
+  return collect("claude", *(args or ("--force",)))
+
+
+def rescan():
+  return collect("claude", "--cache-seconds", "0")
+
+
+# ------------------------------------------------------------- transcripts
+
+# A message repeated across events counts once, its token kinds apart, and a
+# Claude Code home with usage but no sign-in asks for one.
+sandbox()
+session = transcript(
+  message("message-1", 2, 231, cache_write=28857, event="event-1"),
+  message("message-1", 2, 231, cache_write=28857, event="event-2"),
+  message("message-2", 2, 390, cache_write=454, cache_read=28857, event="event-3"),
+)
+record = claude()
+expect("Claude counts each API message once, its token kinds kept apart, and asks a signed-out home to sign in", {
+  "today": record["todayTotalTokens"], "usage": record["modelUsage"]["claude-test"], "status": record["usageStatusText"],
+}, {
+  "today": 58793, "usage": {"cacheCreationInputTokens": 29311, "cacheReadInputTokens": 28857, "inputTokens": 4, "outputTokens": 621}, "status": "Waiting for auth",
+}, record)
 
 # Transcripts only ever grow, so a refresh reads what was appended since the
-# last one and takes the rest from the scan index.
-cat >>"$projects/session.jsonl" <<EOF
-{"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-4","message":{"id":"message-3","role":"assistant","model":"claude-test","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":200,"output_tokens":6}}}
-EOF
-
-result=$(HOME="$TEST_HOME" XDG_CACHE_HOME="$TEST_HOME/.cache" XDG_DATA_HOME="$TEST_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --cache-seconds 0)
-
-[[ $(jq -r '.todayTotalTokens' <<<"$result") == "59000" ]] ||
-  fail "Claude collector picks up lines appended since the last scan" "$result"
-pass "Claude collector picks up lines appended since the last scan"
-
-index=$(ls "$TEST_HOME"/.cache/omarchy/agent-usage/claude-index-*.json 2>/dev/null | head -1)
-[[ -n $index && $(jq -r '.files | to_entries[0].value.records | length' "$index") == "3" ]] ||
-  fail "Claude collector keeps one record per API message in the scan index" "$(cat "$index" 2>/dev/null)"
-pass "Claude collector keeps one record per API message in the scan index"
+# last one and takes the rest from the index.
+transcript(message("message-3", 1, 6, cache_read=200, event="event-4"), mode="a")
+record = rescan()
+expect("Claude picks up lines appended since the last scan", record["todayTotalTokens"], 59000, record)
+index = next(iter(cache_root().glob("claude-index-*.json")), None)
+check("Claude keeps one record per API message in the index",
+      index and len(next(iter(json.loads(index.read_text())["files"].values()))["records"]) == 3, index and index.read_text())
 
 # An unchanged file is not opened again: its records come from the index.
-chmod 000 "$projects/session.jsonl"
-result=$(HOME="$TEST_HOME" XDG_CACHE_HOME="$TEST_HOME/.cache" XDG_DATA_HOME="$TEST_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --cache-seconds 0 2>/dev/null)
-chmod 644 "$projects/session.jsonl"
-
-[[ $(jq -r '.todayTotalTokens' <<<"$result") == "59000" ]] ||
-  fail "Claude collector serves unchanged transcripts from the scan index" "$result"
-pass "Claude collector serves unchanged transcripts from the scan index"
+if os.geteuid() != 0:
+  session.chmod(0)
+  with contextlib.redirect_stderr(io.StringIO()):
+    record = rescan()
+  session.chmod(0o644)
+  expect("Claude serves an unchanged transcript from the index", record["todayTotalTokens"], 59000, record)
 
 # A file that shrank was rewritten, not appended to; it is read from the start.
-head -n 1 "$projects/session.jsonl" >"$projects/session.jsonl.new"
-mv "$projects/session.jsonl.new" "$projects/session.jsonl"
-result=$(HOME="$TEST_HOME" XDG_CACHE_HOME="$TEST_HOME/.cache" XDG_DATA_HOME="$TEST_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --cache-seconds 0)
+session.write_text(session.read_text().splitlines(keepends=True)[0])
+record = rescan()
+expect("Claude rereads a transcript that shrank", record["todayTotalTokens"], 29090, record)
 
-[[ $(jq -r '.todayTotalTokens' <<<"$result") == "29090" ]] ||
-  fail "Claude collector rescans a transcript that was rewritten" "$result"
-pass "Claude collector rescans a transcript that was rewritten"
+# A transcript replaced by a larger one, rewritten in place with more than it
+# had, or rewritten at its end or in its middle with both ends matching, is a
+# new file rather than an append, read from its start.
+sandbox()
 
-# A transcript replaced by a larger one, or rewritten in place with more than
-# it had, is a new file rather than an append: nothing of the old one stays,
-# and the new one is read from its start.
-INDEX_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
-index_projects="$INDEX_HOME/.claude/projects/example"
-mkdir -p "$index_projects"
-index_line() {
-  printf '{"timestamp":"%s","type":"assistant","sessionId":"s","message":{"id":"%s","role":"assistant","model":"claude-test","usage":{"input_tokens":%s,"output_tokens":0}}}\n' "$timestamp" "$1" "$2"
-}
-index_scan() {
-  HOME="$INDEX_HOME" XDG_CACHE_HOME="$INDEX_HOME/.cache" XDG_DATA_HOME="$INDEX_HOME/.local/share" \
-    "$ROOT/bin/omarchy-agent-usage-claude" --cache-seconds 0 "$@"
-}
 
-index_line old-1 1000 >"$index_projects/session.jsonl"
-index_scan >/dev/null
-{ index_line new-1 20; index_line new-2 30; } >"$index_projects/session.jsonl.new"
-mv "$index_projects/session.jsonl.new" "$index_projects/session.jsonl"
-[[ $(index_scan | jq -c '[.todayTotalTokens, .totalPrompts]') == '[50,2]' ]] ||
-  fail "Claude collector reads a transcript replaced by a larger one from its start" "$(index_scan)"
+def replaced(*lines):
+  transcript(*lines, name="session.jsonl.new")
+  (projects() / "session.jsonl.new").replace(projects() / "session.jsonl")
 
-{ index_line other-1 7; index_line other-2 8; index_line other-3 9; } >"$index_projects/session.jsonl"
-[[ $(index_scan | jq -c '[.todayTotalTokens, .totalPrompts]') == '[24,3]' ]] ||
-  fail "Claude collector reads a transcript rewritten in place from its start" "$(index_scan)"
-pass "Claude collector rereads a transcript that was replaced or rewritten"
 
-# A rewrite in place that grows the file and changes only its end keeps the
-# first kilobytes, so the end of what was read is checked too.
-for i in $(seq 1 60); do index_line "long-$i" 100; done >"$index_projects/session.jsonl"
-index_scan >/dev/null
-{ for i in $(seq 1 59); do index_line "long-$i" 100; done; index_line long-60 5000; index_line long-61 1; } >"$index_projects/session.jsonl"
-[[ $(index_scan | jq -r '.todayTotalTokens') == "10901" ]] ||
-  fail "Claude collector rereads a transcript whose end was rewritten in place" "$(index_scan)"
-pass "Claude collector rereads a transcript whose end was rewritten in place"
+transcript(message("old-1", 1000))
+rescan()
+replaced(message("new-1", 20), message("new-2", 30))
+record = rescan()
+expect("Claude reads a transcript replaced by a larger one from its start", [record["todayTotalTokens"], record["totalPrompts"]], [50, 2], record)
+transcript(message("other-1", 7), message("other-2", 8), message("other-3", 9))
+record = rescan()
+expect("Claude reads a transcript rewritten in place from its start", [record["todayTotalTokens"], record["totalPrompts"]], [24, 3], record)
 
-# A larger replacement that matches both ends of what was read but differs in
-# between is still a different file, so it is read from its start.
-for i in $(seq 1 200); do index_line "mid-$i" 100; done >"$index_projects/session.jsonl"
-index_scan >/dev/null
-{ for i in $(seq 1 200); do if (( i == 100 )); then index_line "mid-$i" 900; else index_line "mid-$i" 100; fi; done; index_line mid-201 1; } >"$index_projects/session.jsonl.new"
-mv "$index_projects/session.jsonl.new" "$index_projects/session.jsonl"
-[[ $(index_scan | jq -r '.todayTotalTokens') == "20801" ]] ||
-  fail "Claude collector rereads a replacement whose ends match" "$(index_scan)"
-pass "Claude collector rereads a replacement whose ends match"
+transcript(*(message(f"long-{i}", 100) for i in range(1, 61)))
+rescan()
+transcript(*(message(f"long-{i}", 100) for i in range(1, 60)), message("long-60", 5000), message("long-61", 1))
+record = rescan()
+expect("Claude rereads a transcript whose end was rewritten in place", record["todayTotalTokens"], 10901, record)
+
+transcript(*(message(f"mid-{i}", 100) for i in range(1, 201)))
+rescan()
+replaced(*(message(f"mid-{i}", 900 if i == 100 else 100) for i in range(1, 201)), message("mid-201", 1))
+record = rescan()
+expect("Claude rereads a larger replacement whose ends match", record["todayTotalTokens"], 20801, record)
 
 # The index holds local days, so a new timezone reads every transcript again
-# rather than keep the days another timezone gave them.
-zone_timestamp="$(date -u +%Y-%m-%d)T01:00:00Z"
-printf '{"timestamp":"%s","type":"assistant","sessionId":"s","message":{"id":"zone-1","role":"assistant","model":"claude-test","usage":{"input_tokens":5,"output_tokens":0}}}\n' "$zone_timestamp" >"$index_projects/session.jsonl"
-TZ=UTC index_scan >/dev/null
-zone_dates=$(TZ=America/Los_Angeles index_scan | jq -r '.activeDates | join(",")')
-[[ $zone_dates == "$(TZ=America/Los_Angeles date -d "$zone_timestamp" +%Y-%m-%d)" ]] ||
-  fail "Claude collector recomputes indexed days after a timezone change" "$zone_dates"
-pass "Claude collector recomputes indexed days after a timezone change"
+# rather than keep the days another one gave them.
+zone_stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT01:00:00Z")
+transcript(message("zone-1", 5, timestamp=zone_stamp))
+saved_tz = os.environ.get("TZ")
+try:
+  os.environ["TZ"] = "UTC"
+  time.tzset()
+  rescan()
+  os.environ["TZ"] = "America/Los_Angeles"
+  time.tzset()
+  record = rescan()
+  expected_day = datetime.fromisoformat(zone_stamp.replace("Z", "+00:00")).astimezone().date().isoformat()
+finally:
+  if saved_tz is None:
+    os.environ.pop("TZ", None)
+  else:
+    os.environ["TZ"] = saved_tz
+  time.tzset()
+expect("Claude recomputes indexed days after a timezone change", record["activeDates"], [expected_day], record)
 
-# A streamed response is several lines sharing one message id. The first
-# line's output_tokens is a placeholder and the last line has the real count,
-# so the message is counted from the line with the highest output.
-STREAM_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
-stream_projects="$STREAM_HOME/.claude/projects/example"
-mkdir -p "$stream_projects"
-cat >"$stream_projects/session.jsonl" <<EOF
-{"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-1","message":{"id":"message-1","role":"assistant","model":"claude-test","usage":{"input_tokens":8,"cache_creation_input_tokens":100,"cache_read_input_tokens":2000,"output_tokens":1}}}
-{"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-2","message":{"id":"message-1","role":"assistant","model":"claude-test","usage":{"input_tokens":8,"cache_creation_input_tokens":100,"cache_read_input_tokens":2000,"output_tokens":1}}}
-{"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-3","message":{"id":"message-1","role":"assistant","model":"claude-test","usage":{"input_tokens":8,"cache_creation_input_tokens":100,"cache_read_input_tokens":2000,"output_tokens":260}}}
-{"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-4","message":{"id":"message-2","role":"assistant","model":"claude-test","usage":{"input_tokens":10,"cache_creation_input_tokens":300,"cache_read_input_tokens":4000,"output_tokens":1}}}
-{"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-5","message":{"id":"message-2","role":"assistant","model":"claude-fallback","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":3500,"output_tokens":40}}}
-EOF
-
-result=$(HOME="$STREAM_HOME" XDG_CACHE_HOME="$STREAM_HOME/.cache" XDG_DATA_HOME="$STREAM_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --force)
-
-[[ $(jq -c '.modelUsage["claude-test"]' <<<"$result") == '{"cacheCreationInputTokens":100,"cacheReadInputTokens":2000,"inputTokens":8,"outputTokens":260}' ]] ||
-  fail "Claude collector counts a streamed message from its final usage line" "$result"
-pass "Claude collector counts a streamed message from its final usage line"
-
-# A response that fell back to another model mid-stream has lines that are
-# separate snapshots: the final line's model and cache figures are kept whole
-# rather than a maximum taken per field across both.
-[[ $(jq -c '.modelUsage["claude-fallback"]' <<<"$result") == '{"cacheCreationInputTokens":0,"cacheReadInputTokens":3500,"inputTokens":10,"outputTokens":40}' ]] ||
-  fail "Claude collector keeps the final line whole after a mid-stream fallback" "$result"
-[[ $(jq -r '.totalPrompts' <<<"$result") == "2" ]] ||
-  fail "Claude collector keeps the final line whole after a mid-stream fallback" "$result"
-pass "Claude collector keeps the final line whole after a mid-stream fallback"
+# A streamed response is several lines under one message id: the first line's
+# output is a placeholder, so a message counts from its highest output. One
+# that fell back to another model mid-stream keeps its final line whole rather
+# than a maximum per field.
+sandbox()
+transcript(
+  message("message-1", 8, 1, cache_write=100, cache_read=2000, event="event-1"),
+  message("message-1", 8, 1, cache_write=100, cache_read=2000, event="event-2"),
+  message("message-1", 8, 260, cache_write=100, cache_read=2000, event="event-3"),
+  message("message-2", 10, 1, cache_write=300, cache_read=4000, event="event-4"),
+  message("message-2", 10, 40, cache_read=3500, model="claude-fallback", event="event-5"),
+)
+record = claude()
+expect("Claude counts a streamed message from its final usage line, whole after a fallback", {
+  "test": record["modelUsage"]["claude-test"], "fallback": record["modelUsage"]["claude-fallback"], "prompts": record["totalPrompts"],
+}, {
+  "test": {"cacheCreationInputTokens": 100, "cacheReadInputTokens": 2000, "inputTokens": 8, "outputTokens": 260},
+  "fallback": {"cacheCreationInputTokens": 0, "cacheReadInputTokens": 3500, "inputTokens": 10, "outputTokens": 40},
+  "prompts": 2,
+}, record)
 
 # A stream still being written when the index was taken finishes in lines
-# appended later; the indexed message takes the higher count from them.
-result=$(HOME="$STREAM_HOME" XDG_CACHE_HOME="$STREAM_HOME/.cache" XDG_DATA_HOME="$STREAM_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --cache-seconds 0)
-cat >>"$stream_projects/session.jsonl" <<EOF
-{"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-6","message":{"id":"message-2","role":"assistant","model":"claude-fallback","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":3500,"output_tokens":90}}}
-EOF
-result=$(HOME="$STREAM_HOME" XDG_CACHE_HOME="$STREAM_HOME/.cache" XDG_DATA_HOME="$STREAM_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --cache-seconds 0)
-[[ $(jq -c '[.modelUsage["claude-fallback"].outputTokens, .totalPrompts]' <<<"$result") == '[90,2]' ]] ||
-  fail "Claude collector takes a streamed message's final count from appended lines" "$result"
-pass "Claude collector takes a streamed message's final count from appended lines"
+# appended later, and the indexed message takes the higher count from them.
+rescan()
+transcript(message("message-2", 10, 90, cache_read=3500, model="claude-fallback", event="event-6"), mode="a")
+record = rescan()
+expect("Claude takes a streamed message's final count from appended lines",
+       [record["modelUsage"]["claude-fallback"]["outputTokens"], record["totalPrompts"]], [90, 2], record)
 
-# A cache stamped in the future can happen when NTP moves the clock backwards
-# after an early boot scan. Its age is not trustworthy, so it must be a miss
-# rather than freezing the usage snapshot until wall time catches up.
-cat >>"$projects/session.jsonl" <<EOF
-{"timestamp":"$timestamp","type":"assistant","sessionId":"session-1","uuid":"event-4","message":{"id":"message-3","role":"assistant","model":"claude-test","usage":{"input_tokens":7,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3}}}
-EOF
-cache_file=$(find "$TEST_HOME/.cache/omarchy/agent-usage" -name 'claude-scan-*.json' -print -quit)
-jq -c --argjson at "$(( ($(date +%s) + 3600) * 1000 ))" '.scannedAtMs = $at' "$cache_file" >"$cache_file.tmp" && mv "$cache_file.tmp" "$cache_file"
+# Unreadable transcripts are expected when an agent ran as another user, so
+# they make one bounded warning rather than a line each.
+sandbox()
+for n in range(1, 6):
+  transcript(name=f"unreadable-{n}.jsonl")
+module = load_collector("claude")
+real_open = Path.open
 
-result=$(HOME="$TEST_HOME" XDG_CACHE_HOME="$TEST_HOME/.cache" XDG_DATA_HOME="$TEST_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude")
-
-[[ $(jq -r '.todayTotalTokens' <<<"$result") == "29100" ]] ||
-  fail "Claude collector treats a future-dated scan cache as a miss" "$result"
-pass "Claude collector treats a future-dated scan cache as a miss"
-
-# A machine with no transcripts and no stats-cache still gets today's counts
-# from history.jsonl alone.
-HISTORY_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
-mkdir -p "$HISTORY_HOME/.claude"
-
-now_ms=$(($(date +%s) * 1000))
-cat >"$HISTORY_HOME/.claude/history.jsonl" <<EOF
-{"timestamp":86400000,"sessionId":"old","display":"ancient"}
-{"timestamp":$now_ms,"sessionId":"s1","display":"one"}
-{"timestamp":$now_ms,"sessionId":"s2","display":"two"}
-EOF
-
-result=$(HOME="$HISTORY_HOME" XDG_CACHE_HOME="$HISTORY_HOME/.cache" XDG_DATA_HOME="$HISTORY_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --force)
-
-[[ $(jq -r '(.todayPrompts|tostring) + "/" + (.todaySessions|tostring)' <<<"$result") == "2/2" ]] ||
-  fail "Claude collector falls back to history.jsonl without a stats-cache" "$result"
-pass "Claude collector falls back to history.jsonl without a stats-cache"
-
-# A subscription burned entirely through opencode has no ~/.claude transcripts;
-# usage must come from opencode's message database, filtered to Anthropic.
-OPENCODE_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
-
-python3 - "$OPENCODE_HOME/.local/share/opencode/opencode.db" <<'PY'
-import json
-import sqlite3
-import sys
-import time
-from pathlib import Path
-
-db = Path(sys.argv[1])
-db.parent.mkdir(parents=True, exist_ok=True)
-conn = sqlite3.connect(db)
-conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
-now_ms = int(time.time() * 1000)
-
-def message(id, provider, model, role="assistant", input=0, output=0, reasoning=0, read=0, write=0):
-  return (id, "ses_1", now_ms, now_ms, json.dumps({
-    "role": role,
-    "providerID": provider,
-    "modelID": model,
-    "tokens": {"input": input, "output": output, "reasoning": reasoning, "cache": {"read": read, "write": write}},
-    "time": {"created": now_ms},
-  }))
-
-conn.executemany("INSERT INTO message VALUES (?, ?, ?, ?, ?)", [
-  message("msg_1", "anthropic", "claude-opus-5", input=100, output=50, reasoning=7, read=25, write=10),
-  message("msg_2", "fireworks-ai", "accounts/fireworks/models/kimi-k3", input=999, output=999),
-  message("msg_3", "openai", "gpt-5.2-codex", input=999, output=999),
-  message("msg_4", "anthropic", "claude-opus-5", role="user"),
-  message("msg_5", "anthropic-proxy", "claude-opus-5", input=999, output=999),
-])
-conn.execute("INSERT INTO message VALUES ('msg_6', 'ses_1', ?, ?, '[\"not\",\"an\",\"object\"]')", (now_ms, now_ms))
-conn.commit()
-conn.close()
-PY
-
-result=$(HOME="$OPENCODE_HOME" XDG_CACHE_HOME="$OPENCODE_HOME/.cache" XDG_DATA_HOME="$OPENCODE_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --force)
-
-[[ $(jq -r '(.ready|tostring) + "/" + (.todayTotalTokens|tostring)' <<<"$result") == "true/192" ]] ||
-  fail "Claude collector counts Anthropic usage, reasoning included, from opencode sessions" "$result"
-pass "Claude collector counts Anthropic usage, reasoning included, from opencode sessions"
-
-[[ $(jq -c '.modelUsage' <<<"$result") == '{"claude-opus-5":{"cacheCreationInputTokens":10,"cacheReadInputTokens":25,"inputTokens":100,"outputTokens":57}}' ]] ||
-  fail "Claude collector ignores prefix-colliding providers, user messages, and malformed rows" "$result"
-pass "Claude collector ignores prefix-colliding providers, user messages, and malformed rows"
-
-# opencode v2 writes session_message instead of message: the role is its own
-# column and the provider and model nest under data.model. An upgraded
-# database keeps its v1 rows, so both tables count.
-OPENCODE_V2_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
-
-python3 - "$OPENCODE_V2_HOME/.local/share/opencode/opencode.db" <<'PY'
-import json
-import sqlite3
-import sys
-import time
-from pathlib import Path
-
-db = Path(sys.argv[1])
-db.parent.mkdir(parents=True, exist_ok=True)
-conn = sqlite3.connect(db)
-now_ms = int(time.time() * 1000)
-conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
-conn.execute("INSERT INTO message VALUES ('msg_1', 'ses_1', ?, ?, ?)", (now_ms, now_ms, json.dumps({
-  "role": "assistant", "providerID": "anthropic", "modelID": "claude-opus-5",
-  "tokens": {"input": 1, "output": 1, "reasoning": 0, "cache": {"read": 0, "write": 0}},
-  "time": {"created": now_ms},
-})))
-conn.execute("""CREATE TABLE session_message (
-  id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL,
-  seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)""")
-
-def v2_message(id, provider, model, type="assistant", input=0, output=0, reasoning=0, read=0, write=0):
-  return (id, "ses_v2", type, 1, now_ms, now_ms, json.dumps({
-    "model": {"id": model, "providerID": provider, "variant": "xhigh"},
-    "tokens": {"input": input, "output": output, "reasoning": reasoning, "cache": {"read": read, "write": write}},
-    "time": {"created": now_ms, "completed": now_ms},
-  }))
-
-conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)", [
-  v2_message("v_1", "anthropic", "claude-opus-5-5", input=4, output=96, reasoning=775, write=50180),
-  v2_message("v_2", "anthropic", "claude-opus-5-5", type="user", input=999),
-  v2_message("v_3", "anthropic-proxy", "claude-opus-5-5", input=999),
-  v2_message("v_4", "openai", "gpt-5.6", input=999),
-])
-conn.execute("INSERT INTO session_message VALUES ('v_5', 'ses_v2', 'assistant', 1, ?, ?, 'not json')", (now_ms, now_ms))
-conn.commit()
-conn.close()
-PY
-
-result=$(HOME="$OPENCODE_V2_HOME" XDG_CACHE_HOME="$OPENCODE_V2_HOME/.cache" XDG_DATA_HOME="$OPENCODE_V2_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --force)
-
-[[ $(jq -r '(.todayTotalTokens|tostring) + "/" + (.todaySessions|tostring)' <<<"$result") == "51057/2" ]] ||
-  fail "Claude collector counts Anthropic usage from opencode v2 sessions" "$result"
-pass "Claude collector counts Anthropic usage from opencode v2 sessions"
-
-[[ $(jq -c '.modelUsage["claude-opus-5-5"]' <<<"$result") == '{"cacheCreationInputTokens":50180,"cacheReadInputTokens":0,"inputTokens":4,"outputTokens":871}' ]] ||
-  fail "Claude collector reads the model from opencode v2's nested model" "$result"
-pass "Claude collector reads the model from opencode v2's nested model"
-
-# A migrated message sits in both stores under the same id, and counts once.
-MIGRATED_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
-mkdir -p "$MIGRATED_HOME/.local/share/opencode"
-cp "$OPENCODE_V2_HOME/.local/share/opencode/opencode.db" "$MIGRATED_HOME/.local/share/opencode/opencode.db"
-python3 - "$MIGRATED_HOME/.local/share/opencode/opencode.db" <<'PY'
-import json, sqlite3, sys, time
-conn = sqlite3.connect(sys.argv[1])
-now_ms = int(time.time() * 1000)
-conn.execute("INSERT INTO session_message VALUES ('msg_1', 'ses_1', 'assistant', 1, ?, ?, ?)", (now_ms, now_ms, json.dumps({
-  "model": {"id": "claude-opus-5", "providerID": "anthropic"},
-  "tokens": {"input": 1, "output": 1, "reasoning": 0, "cache": {"read": 0, "write": 0}},
-  "time": {"created": now_ms},
-})))
-conn.commit()
-PY
-result=$(HOME="$MIGRATED_HOME" XDG_CACHE_HOME="$MIGRATED_HOME/.cache" XDG_DATA_HOME="$MIGRATED_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --force)
-[[ $(jq -r '(.todayTotalTokens|tostring) + "/" + (.todaySessions|tostring) + "/" + (.todayPrompts|tostring)' <<<"$result") == "51057/2/2" ]] ||
-  fail "Claude collector counts a message in both opencode stores once" "$result"
-pass "Claude collector counts a message in both opencode stores once"
-
-# Pi and omp can both spend a Claude subscription without writing native
-# Claude Code transcripts. Their compatible JSONL sessions must be included.
-PI_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
-mkdir -p "$PI_HOME/.pi/agent/sessions/project" "$PI_HOME/.omp/agent/sessions/project" \
-  "$PI_HOME/.omp/profiles/work/agent/sessions/project"
-
-cat >"$PI_HOME/.pi/agent/sessions/project/pi.jsonl" <<EOF
-{"type":"message","id":"pi-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","api":"anthropic-messages","model":"claude-pi","usage":{"input":10,"output":4,"cacheRead":3,"cacheWrite":2,"totalTokens":19}}}
-{"type":"message","id":"codex-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"openai-codex","model":"gpt-test","usage":{"input":999,"output":999}}}
-{"type":"message","id":"kimi-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"kimi-coding","api":"anthropic-messages","model":"k3","usage":{"input":999,"output":999}}}
-EOF
-cat >"$PI_HOME/.omp/agent/sessions/project/omp.jsonl" <<EOF
-{ "type": "message", "id": "omp-1", "timestamp": "$timestamp", "message": { "role": "assistant", "provider": "anthropic", "model": "claude-omp", "usage": { "input": 20, "output": 5, "cacheRead": 4, "cacheWrite": 1, "totalTokens": 30 } } }
-EOF
-# `omp --profile=<name>` moves the whole agent tree under profiles/<name>/, so a
-# subscription spent entirely through a profile leaves the default root empty.
-cat >"$PI_HOME/.omp/profiles/work/agent/sessions/project/omp-profile.jsonl" <<EOF
-{"type":"message","id":"omp-profile-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-omp-profile","usage":{"input":7,"output":3,"cacheRead":2,"cacheWrite":1,"totalTokens":13}}}
-EOF
-
-result=$(HOME="$PI_HOME" XDG_CACHE_HOME="$PI_HOME/.cache" XDG_DATA_HOME="$PI_HOME/.local/share" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --force)
-
-[[ $(jq -r '.todayTotalTokens' <<<"$result") == "62" ]] ||
-  fail "Claude collector counts usage from pi and omp sessions" "$result"
-[[ $(jq -c '.modelUsage' <<<"$result") == '{"claude-omp":{"cacheCreationInputTokens":1,"cacheReadInputTokens":4,"inputTokens":20,"outputTokens":5},"claude-omp-profile":{"cacheCreationInputTokens":1,"cacheReadInputTokens":2,"inputTokens":7,"outputTokens":3},"claude-pi":{"cacheCreationInputTokens":2,"cacheReadInputTokens":3,"inputTokens":10,"outputTokens":4}}' ]] ||
-  fail "Claude collector filters pi and omp sessions to Anthropic providers" "$result"
-pass "Claude collector counts pi and omp subscription usage, profiles included"
-
-# pi moves its agent tree with PI_CODING_AGENT_DIR and its sessions alone with
-# PI_CODING_AGENT_SESSION_DIR, so usage under either must be counted, and an
-# override reaching the default root through a symlink must count it once.
-CUSTOM_PI_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
-mkdir -p "$CUSTOM_PI_HOME/.config/pi/sessions/project" "$CUSTOM_PI_HOME/pi-sessions" "$CUSTOM_PI_HOME/.pi/agent/sessions/project"
-cat >"$CUSTOM_PI_HOME/.config/pi/sessions/project/agent-dir.jsonl" <<EOF
-{"type":"message","id":"agent-dir-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-agent-dir","usage":{"input":6,"output":2}}}
-EOF
-cat >"$CUSTOM_PI_HOME/pi-sessions/session-dir.jsonl" <<EOF
-{"type":"message","id":"session-dir-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-session-dir","usage":{"input":3,"output":1}}}
-EOF
-cat >"$CUSTOM_PI_HOME/.pi/agent/sessions/project/default.jsonl" <<EOF
-{"type":"message","id":"default-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-default","usage":{"input":5,"output":0}}}
-EOF
-ln -s "$CUSTOM_PI_HOME/.pi/agent" "$CUSTOM_PI_HOME/pi-alias"
-
-result=$(HOME="$CUSTOM_PI_HOME" CLAUDE_CONFIG_DIR="$CUSTOM_PI_HOME/.claude" XDG_CACHE_HOME="$CUSTOM_PI_HOME/.cache" \
-  XDG_DATA_HOME="$CUSTOM_PI_HOME/.local/share" XDG_STATE_HOME="$CUSTOM_PI_HOME/.local/state" \
-  PI_CODING_AGENT_DIR="~/.config/pi" PI_CODING_AGENT_SESSION_DIR="$CUSTOM_PI_HOME/pi-sessions" \
-  "$ROOT/bin/omarchy-agent-usage-claude" --force)
-
-[[ $(jq -c '[.todayTotalTokens,.totalSessions]' <<<"$result") == "[17,3]" ]] ||
-  fail "Claude collector counts pi sessions under PI_CODING_AGENT_DIR and PI_CODING_AGENT_SESSION_DIR" "$result"
-
-result=$(HOME="$CUSTOM_PI_HOME" CLAUDE_CONFIG_DIR="$CUSTOM_PI_HOME/.claude" XDG_CACHE_HOME="$CUSTOM_PI_HOME/.cache" \
-  XDG_DATA_HOME="$CUSTOM_PI_HOME/.local/share" XDG_STATE_HOME="$CUSTOM_PI_HOME/.local/state" \
-  PI_CODING_AGENT_SESSION_DIR="$CUSTOM_PI_HOME/pi-alias/sessions/project" "$ROOT/bin/omarchy-agent-usage-claude" --force)
-
-[[ $(jq -c '[.todayTotalTokens,.totalSessions]' <<<"$result") == "[5,1]" ]] ||
-  fail "Claude collector counts a default root reached through a symlinked override once" "$result"
-pass "Claude collector follows pi's agent and session directory overrides"
-
-# A fork repeats its parent's messages with their ids and timestamps, so they
-# count once; a line without an id always counts, even beside an identical one.
-FORK_PI_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
-mkdir -p "$FORK_PI_HOME/.pi/agent/sessions/project"
-cat >"$FORK_PI_HOME/.pi/agent/sessions/project/parent.jsonl" <<EOF
-{"type":"message","id":"shared-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-fork","usage":{"input":6,"output":2}}}
-EOF
-cat >"$FORK_PI_HOME/.pi/agent/sessions/project/fork.jsonl" <<EOF
-{"type":"session","id":"fork","parentSession":"$FORK_PI_HOME/.pi/agent/sessions/project/parent.jsonl"}
-{"type":"message","id":"shared-1","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-fork","usage":{"input":6,"output":2}}}
-{"type":"message","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-fork","usage":{"input":3,"output":0}}}
-{"type":"message","timestamp":"$timestamp","message":{"role":"assistant","provider":"anthropic","model":"claude-fork","usage":{"input":3,"output":0}}}
-EOF
-
-result=$(HOME="$FORK_PI_HOME" CLAUDE_CONFIG_DIR="$FORK_PI_HOME/.claude" XDG_CACHE_HOME="$FORK_PI_HOME/.cache" \
-  XDG_DATA_HOME="$FORK_PI_HOME/.local/share" XDG_STATE_HOME="$FORK_PI_HOME/.local/state" \
-  PI_CODING_AGENT_SESSION_DIR="$FORK_PI_HOME/.pi/agent/sessions/project" "$ROOT/bin/omarchy-agent-usage-claude" --force)
-
-[[ $(jq -c '[.todayTotalTokens,.todayPrompts]' <<<"$result") == "[14,3]" ]] ||
-  fail "Claude collector counts a forked pi message once and every line without an id" "$result"
-pass "Claude collector counts a forked pi message once and every line without an id"
-
-# Unreadable transcript files are expected when an agent has run as another
-# user, so report one bounded summary rather than one log line per file.
-UNREADABLE_DIR=$(mktemp -d "$SCRATCH/home.XXXXXX")
-mkdir -p "$UNREADABLE_DIR/project"
-touch "$UNREADABLE_DIR/project/unreadable-1.jsonl" \
-  "$UNREADABLE_DIR/project/unreadable-2.jsonl" \
-  "$UNREADABLE_DIR/project/unreadable-3.jsonl" \
-  "$UNREADABLE_DIR/project/unreadable-4.jsonl" \
-  "$UNREADABLE_DIR/project/unreadable-5.jsonl"
-
-warning=$(python3 - "$ROOT/bin/omarchy-agent-usage-claude" "$UNREADABLE_DIR" <<'PY'
-import contextlib
-import importlib.util
-import io
-import sys
-from importlib.machinery import SourceFileLoader
-from pathlib import Path
-
-spec = importlib.util.spec_from_loader("collector", SourceFileLoader("collector", sys.argv[1]))
-collector = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(collector)
-
-original_open = Path.open
 
 def deny_unreadable(path, *args, **kwargs):
   if path.name.startswith("unreadable-"):
     raise PermissionError("permission denied")
-  return original_open(path, *args, **kwargs)
+  return real_open(path, *args, **kwargs)
 
-collector.Path.open = deny_unreadable
-with contextlib.redirect_stderr(io.StringIO()) as stderr:
-  collector.scan_projects(Path(sys.argv[2]))
-print(stderr.getvalue(), end="")
-PY
-)
 
-[[ $(grep -c '^Ignoring ' <<<"$warning") == 1 ]] ||
-  fail "Claude collector emits one bounded warning for unreadable transcripts" "$warning"
-grep -q '^Ignoring 5 unreadable Claude project files' <<<"$warning" ||
-  fail "Claude collector reports the unreadable transcript count" "$warning"
-pass "Claude collector bounds unreadable transcript warnings"
+module.Path.open = deny_unreadable
+try:
+  with contextlib.redirect_stderr(io.StringIO()) as warnings:
+    module.scan_projects(projects().parent)
+finally:
+  module.Path.open = real_open
+lines = [line for line in warnings.getvalue().splitlines() if line.startswith("Ignoring ")]
+check("Claude bounds unreadable transcripts to one warning with their count",
+      len(lines) == 1 and lines[0].startswith("Ignoring 5 unreadable Claude project files"), warnings.getvalue())
 
-# A machine that never ran Claude Code prints the unused record: no status,
-# no sign-in to ask for.
-EMPTY_HOME=$(mktemp -d "$SCRATCH/home.XXXXXX")
-result=$(HOME="$EMPTY_HOME" XDG_CACHE_HOME="$EMPTY_HOME/.cache" XDG_DATA_HOME="$EMPTY_HOME/.local/share" CLAUDE_CONFIG_DIR= \
-  "$ROOT/bin/omarchy-agent-usage-claude" --force)
-[[ $(jq -c '{ready, limits, limitsStale, status: .usageStatusText, help: .authHelpText, totalPrompts, days: (.recentDays | length)}' <<<"$result") == '{"ready":false,"limits":[],"limitsStale":false,"status":"","help":"","totalPrompts":0,"days":7}' ]] ||
-  fail "Claude collector prints the unused record on a machine without Claude Code" "$result"
-pass "Claude collector prints the unused record on a machine without Claude Code"
+# ---------------------------------------------------------------- sources
+
+# A machine with no transcripts and no stats-cache still gets today's counts
+# from history.jsonl.
+sandbox()
+(home() / ".claude").mkdir()
+(home() / ".claude" / "history.jsonl").write_text("".join(json.dumps(line) + "\n" for line in (
+  {"timestamp": 86400000, "sessionId": "old", "display": "ancient"},
+  {"timestamp": ms_in(0), "sessionId": "s1", "display": "one"},
+  {"timestamp": ms_in(0), "sessionId": "s2", "display": "two"},
+)))
+record = claude()
+expect("Claude falls back on history.jsonl without a stats-cache", [record["todayPrompts"], record["todaySessions"]], [2, 2], record)
+
+# pi and opencode replies count on the anthropic provider alone: not another
+# provider driving Anthropic's API, and not a prompt.
+sandbox()
+write_pi_session(home() / ".pi" / "agent" / "sessions" / "project" / "pi.jsonl", [
+  pi_reply("anthropic", 10, id="pi-1", model="claude-pi", api="anthropic-messages"),
+  pi_reply("kimi-coding", 999, id="kimi-1", model="k3", api="anthropic-messages"),
+])
+opencode_db(message=[
+  ("msg_1", "ses_1", oc_v1("anthropic", 100, model="claude-opus-5")),
+  ("msg_2", "ses_1", oc_v1("anthropic", 999, model="claude-opus-5", role="user")),
+])
+record = claude()
+expect("Claude counts pi and opencode replies on the anthropic provider alone",
+       [record["todayTotalTokens"], sorted(record["modelUsage"])], [110, ["claude-opus-5", "claude-pi"]], record)
 
 # A Claude Code home without a sign-in is in use, and the sign-in is missing.
-mkdir -p "$EMPTY_HOME/.claude"
-result=$(HOME="$EMPTY_HOME" XDG_CACHE_HOME="$EMPTY_HOME/.cache" XDG_DATA_HOME="$EMPTY_HOME/.local/share" CLAUDE_CONFIG_DIR= \
-  "$ROOT/bin/omarchy-agent-usage-claude" --force)
-[[ $(jq -r '.usageStatusText' <<<"$result") == "Waiting for auth" ]] ||
-  fail "Claude collector asks a signed-out Claude Code home to sign in" "$result"
-pass "Claude collector asks a signed-out Claude Code home to sign in"
+sandbox()
+(home() / ".claude").mkdir()
+record = claude()
+expect("Claude asks a signed-out Claude Code home to sign in", [record["ready"], record["usageStatusText"]], [False, "Waiting for auth"], record)
+
+# ---------------------------------------------------------------- contract
+
+sandbox()
+
+
+def add_message():
+  add_message.count = getattr(add_message, "count", 0) + 1
+  transcript(message(f"grown-{add_message.count}", 10), mode="a")
+
+
+check_scan_cache(Adapter("claude", grow=add_message, pi_root=lambda: home() / ".pi" / "agent" / "sessions"))
+PY
