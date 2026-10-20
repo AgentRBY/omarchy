@@ -192,6 +192,24 @@ record = cursor()
 expect("a lapsed sign-in pauses the limits without asking",
        [record["usageStatusText"], record["limitsStale"], len(record["limits"]), cursor.requests], ["Limits paused", True, 4, []], record)
 
+# ------------------------------------------------------------ the endpoint
+
+# CURSOR_API_ENDPOINT moves the endpoint, but the sign-in only ever goes over
+# HTTPS, or plain HTTP to loopback.
+sandbox()
+cli_signed_in()
+for endpoint, sent in (("http://cursor.example.com", False), ("ftp://cursor.example.com", False), ("https://user:pw@cursor.example.com", False),
+                       ("https://cursor.example.com", True), ("http://127.0.0.1:9", True)):
+  with FakeHttp({"/aiserver.v1.DashboardService/": PERIOD}) as http:
+    os.environ["CURSOR_API_ENDPOINT"] = endpoint
+    try:
+      record = collect("cursor", "--force")
+    finally:
+      del os.environ["CURSOR_API_ENDPOINT"]
+  expect(f"the Cursor sign-in {'goes' if sent else 'never goes'} to {endpoint}", bool(http.requests), sent, record)
+  if not sent:
+    expect(f"{endpoint} reads as unavailable and says why", [record["usageStatusText"], "HTTPS" in record["authHelpText"]], ["Cursor limits unavailable", True], record)
+
 # ---------------------------------------------------------------- contract
 
 sandbox()

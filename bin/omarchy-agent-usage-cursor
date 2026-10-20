@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import sys
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta, timezone
@@ -337,6 +338,19 @@ def kept_limits(cache: LimitsCache) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------- assembly
 
 
+def trusted_endpoint(url: str) -> bool:
+  """Whether the sign-in may go to `url`: HTTPS, or plain HTTP to loopback
+  alone, and no credentials of its own in the URL."""
+  try:
+    parts = urllib.parse.urlsplit(url)
+  except ValueError:
+    return False
+  if parts.username is not None or parts.password is not None:
+    return False
+  loopback = (parts.hostname or "").lower() in ("localhost", "127.0.0.1", "::1")
+  return parts.scheme == "https" or (parts.scheme == "http" and loopback)
+
+
 def scan(api_base_url: str, auth_path: Path, limits_only: bool, state_db: Path | None = None, force: bool = False) -> dict[str, Any]:
   token = cursor_token(auth_path, state_db)
   if not token:
@@ -371,6 +385,11 @@ def scan(api_base_url: str, auth_path: Path, limits_only: bool, state_db: Path |
       record["retryAdvised"] = True
     record.update(carried_stats(key, today))
     return record
+
+  # CURSOR_API_ENDPOINT moves the endpoint, never the sign-in onto a
+  # connection anyone on the way can read.
+  if not trusted_endpoint(api_base_url):
+    return failed("" if kept else "Cursor limits unavailable", "CURSOR_API_ENDPOINT must use HTTPS (plain HTTP only for loopback).")
 
   if token_lapsed(token):
     return failed(
