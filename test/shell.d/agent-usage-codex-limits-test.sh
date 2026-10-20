@@ -126,6 +126,28 @@ check("multi-bucket limits retain earned reset credits", {
   "rateLimitsByLimitId": {"codex": legacy},
   "rateLimitResetCredits": {"credits": [{"status": "available", "expiresAt": 1900000000}]}
 }, [entry(12)], reset_credits={"available": 1, "nextExpiresAt": "2030-03-17T17:46:40+00:00"})
+
+spend = {"limit": "6000", "used": "1500", "remainingPercent": 75, "resetsAt": 1793491200}
+
+
+def spend_entry(share, resets_at="2026-11-01T00:00:00+00:00"):
+  return {"label": "Spend limit", "percent": share, "resetsAt": resets_at, "title": "Spend limit"}
+
+
+check("a spend cap follows the windows once, however many views carry it", {
+  "rateLimits": dict(legacy, individualLimit=spend),
+  "rateLimitsByLimitId": {"codex": dict(legacy, individualLimit=spend),
+                          "codex_spark": {"limitName": "Spark", "secondary": window(30, 10080), "individualLimit": spend}}
+}, [entry(12), entry(30, "Weekly (7-day)", "Spark Weekly"), spend_entry(0.25)])
+check("a spend cap only the backward-compatible view carries still counts", {
+  "rateLimits": dict(legacy, individualLimit=spend), "rateLimitsByLimitId": {"codex": legacy}
+}, [entry(12), spend_entry(0.25)])
+check("a spend cap without usable amounts reads its reported percentage", {
+  "rateLimits": dict(legacy, individualLimit={"limit": True, "used": "NaN", "remainingPercent": 75, "resetsAt": -5})
+}, [entry(12), spend_entry(0.25, "")])
+check("an untrusted spend cap costs only its own meter", {
+  "rateLimits": dict(legacy, individualLimit={"limit": "6000", "used": "lots", "remainingPercent": float("nan")})
+}, [entry(12)])
 PY
 
 require_command jq
@@ -211,6 +233,10 @@ for line in sys.stdin:
       continue
     if mode == "switch":
       os.system(os.environ["CODEX_LOGIN"] + " ws-three user-c")
+    if mode == "spend":
+      print(json.dumps({"id": message["id"], "result": {"rateLimits": {"planType": "business",
+        "individualLimit": {"limit": "6000", "used": "3000", "remainingPercent": 50, "resetsAt": now + 2}}}}), flush=True)
+      continue
     if mode == "auth":
       print(json.dumps({"id": message["id"], "error": {"code": -32603, "message": "not authenticated"}}), flush=True)
       continue
@@ -330,3 +356,16 @@ for auth in '{"tokens":["unexpected"]}' '{"tokens":{"account_id":"ws-one"}}' "$(
     fail "an auth.json of another shape still gives a record ($auth)" "$odd"
 done
 pass "an auth.json of another shape still gives a record"
+
+# A spend cap is kept like any window: stale past a failed check, and back at
+# zero once the reset it named has passed.
+login ws-four user-d
+spent=$(collect spend)
+[[ $(jq -c '{limitsStale, limits: [.limits[] | {title, used: (.percent * 100 | round), reset: (.resetsAt != "")}]}' <<<"$spent") == '{"limitsStale":false,"limits":[{"title":"Spend limit","used":50,"reset":true}]}' ]] ||
+  fail "a Codex spend cap reads as a titled meter with its reset time" "$spent"
+spent_at=$(jq '.limitsFetchedAt' <<<"$spent")
+sleep 3
+kept=$(collect backend)
+[[ $(jq -c --argjson at "$spent_at" '{limitsStale, at: (.limitsFetchedAt == $at), limits: [.limits[] | {title, used: (.percent * 100 | round), resetsAt}]}' <<<"$kept") == '{"limitsStale":true,"at":true,"limits":[{"title":"Spend limit","used":0,"resetsAt":""}]}' ]] ||
+  fail "a kept Codex spend cap whose reset passed comes back at zero" "$kept"
+pass "a kept Codex spend cap is stale after a failed check and zero once it resets"

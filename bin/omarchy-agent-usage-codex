@@ -542,6 +542,57 @@ def bucket_limits(buckets):
   return limits
 
 
+def finite_number(value):
+  # A boolean, NaN or infinity is no amount.
+  if isinstance(value, bool):
+    return None
+  try:
+    amount = float(value)
+  except (TypeError, ValueError):
+    return None
+  return amount if math.isfinite(amount) else None
+
+
+# A spend cap can be returned without any rate windows, as observed on a
+# Business seat. Its snapshot gives a reset time but no period, so no
+# frequency is inferred from the plan or date, and the meter is titled for
+# what it is. The amounts give the share; remainingPercent only has
+# whole-percent precision, so it stands in only for a cap of zero.
+def spend_limit(snapshot):
+  if not isinstance(snapshot, dict):
+    return None
+  cap = finite_number(snapshot.get("limit"))
+  used = finite_number(snapshot.get("used"))
+  if cap is not None and cap > 0 and used is not None:
+    share = used / cap
+  else:
+    remaining = finite_number(snapshot.get("remainingPercent"))
+    if remaining is None:
+      return None
+    share = 1 - remaining / 100
+  reset = number(snapshot.get("resetsAt"))
+  try:
+    resets_at = datetime.fromtimestamp(reset, timezone.utc).isoformat() if reset > 0 else ""
+  except (OverflowError, OSError, ValueError):
+    resets_at = ""
+  return {
+    "label": "Spend limit",
+    "percent": max(0.0, min(1.0, share)),
+    "resetsAt": resets_at,
+    "title": "Spend limit",
+  }
+
+
+# The cap is the account's, so it is read once: from the general bucket ahead
+# of a model's, and from the backward-compatible view when no bucket has it.
+def individual_spend_limit(buckets, rpc_result):
+  legacy = rpc_result.get("rateLimits")
+  for bucket in [bucket for _, bucket in buckets] + [legacy if isinstance(legacy, dict) else {}]:
+    if isinstance(bucket.get("individualLimit"), dict):
+      return spend_limit(bucket["individualLimit"])
+  return None
+
+
 def codex_rpc_help(proc, stderr_file, exc):
   """Explain an app-server RPC failure: a live server's stall, a dead one's own
   stderr, or the login hint when it died saying nothing."""
@@ -686,6 +737,9 @@ def fetch_codex_rpc(home=None):
     result["tierLabel"] = str(plan) if plan else ""
 
     result["limits"] = bucket_limits(buckets)
+    spend = individual_spend_limit(buckets, rpc_result)
+    if spend:
+      result["limits"].append(spend)
 
     # OpenAI hands out free "full reset" credits that wipe the rate limits on
     # demand and lapse after a month. Worth knowing about before a limit bites.
