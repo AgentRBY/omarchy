@@ -1,337 +1,209 @@
 #!/bin/bash
 
+# The Claude collector's limits: how it reads Anthropic's usage answer, what
+# the sign-in Claude Code keeps says before anything is asked, Anthropic's
+# rate limiting, and its adapter for the contract checks. The unused-machine
+# record is held centrally by the partition test, and the limits cache's
+# mechanics (file times, future stamps, elapsed windows) by the shared test.
+
 set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+source "$SHELL_TEST_DIR/agent-usage-helpers.sh"
 
-require_command jq
-require_command python3
+agent_sandbox
 
-# probe_limits reaches Anthropic, so the reader that interprets its answer is
-# exercised on its own: the collector loads as a module, and a recorded payload
-# stands in for the response.
-read_limits() {
-  COLLECTOR="$ROOT/bin/omarchy-agent-usage-claude" PAYLOAD="$1" python3 - <<'PY'
-import importlib.machinery, importlib.util, io, json, os
+python3 - <<'PY'
+from agent_usage_fixtures import *
 
-loader = importlib.machinery.SourceFileLoader("collector", os.environ["COLLECTOR"])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
+USAGE = "api.anthropic.com/api/oauth/usage"
+ROUTES = {USAGE: {"five_hour": {"utilization": 40.0, "resets_at": iso_in(3600)}, "seven_day": {"utilization": 10.0, "resets_at": iso_in(86400)}}}
 
-collector.urllib.request.urlopen = lambda request, timeout=None: io.BytesIO(os.environ["PAYLOAD"].encode())
 
-print(json.dumps(collector.probe_limits("token")))
-PY
-}
+# The sign-in the Claude Code CLI leaves: an access token living about eight
+# hours, and the refresh token behind it about thirty days.
+def signed_in(token="token", expires=None, refresh_expires=0):
+  write_json(home() / ".claude" / ".credentials.json", {"claudeAiOauth": {
+    "accessToken": token, "expiresAt": ms_in(3600) if expires is None else expires, "refreshTokenExpiresAt": refresh_expires,
+    "subscriptionType": "max", "rateLimitTier": "default_claude_max_5x",
+  }})
+
+
+def claude(*args, routes=ROUTES, mode="up"):
+  with FakeHttp(routes, mode=mode) as http:
+    record = collect("claude", *(args or ("--force",)))
+  return record, http
+
+
+def labels(record):
+  return [entry["label"] for entry in record["limits"]]
+
+
+# The single-account cache, planted as an earlier probe left it.
+def kept_limits(fetched_ago, limits):
+  write_json(cache_root() / "claude-limits.json", {"fetchedAtMs": ms_in(-fetched_ago), "limits": limits})
+
+
+# ------------------------------------------------------------ the answer
+
+sandbox()
+signed_in()
+
+
+def read_limits(payload, headers=None):
+  def answer(request):
+    return payload if headers is None else FakeHttp.refusal(request.full_url, 429, b"", headers)
+  with FakeHttp({USAGE: answer}):
+    return load_collector("claude").probe_limits("token")
+
 
 # The two flat buckets, then every scoped shape that matters: a model's weekly
 # window, a second window for that same model, a model that names only an id,
-# and — dropped — a repeat of a window already read, a blank name, and a
-# percent that will not parse.
-limits=$(read_limits '{
-  "five_hour": { "utilization": 78.0 },
-  "seven_day": { "utilization": 12.0 },
-  "seven_day_opus": null,
+# and, dropped, a repeat of a window already read, a blank name, and a percent
+# that will not parse.
+limits = read_limits({
+  "five_hour": {"utilization": 78.0},
+  "seven_day": {"utilization": 12.0},
+  "seven_day_opus": None,
   "limits": [
-    { "kind": "session", "percent": 78, "scope": null },
-    { "kind": "weekly_all", "percent": 12, "scope": null },
-    { "kind": "weekly_scoped", "percent": 17, "resets_at": "2026-08-15T03:00:00+00:00",
-      "scope": { "model": { "id": "claude-fable-5", "display_name": "Fable" }, "surface": null } },
-    { "kind": "weekly_scoped", "percent": 99, "scope": { "model": { "display_name": "Fable" } } },
-    { "kind": "five_hour_scoped", "percent": 95, "scope": { "model": { "display_name": "Fable" } } },
-    { "kind": "weekly_scoped", "percent": 42, "scope": { "model": { "id": "claude-opus-5", "display_name": null } } },
-    { "kind": "weekly_scoped", "percent": 5, "scope": { "model": { "display_name": "  " } } },
-    { "kind": "weekly_scoped", "percent": "unknown", "scope": { "model": { "display_name": "Opus" } } }
-  ]
-}')
-
-expected='[{"label":"Session (5-hour)","percent":0.78,"resetsAt":""},{"label":"Weekly (7-day)","percent":0.12,"resetsAt":""},{"label":"Fable Weekly","title":"Fable Weekly","percent":0.17,"resetsAt":"2026-08-15T03:00:00+00:00"},{"label":"Fable Session","title":"Fable Session","percent":0.95,"resetsAt":""},{"label":"claude-opus-5 Weekly","title":"claude-opus-5 Weekly","percent":0.42,"resetsAt":""}]'
-[[ $(jq -c '.limits' <<<"$limits") == "$expected" ]] ||
-  fail "Claude collector reads every model-scoped window once and drops unusable entries" "$limits"
-pass "Claude collector reads every model-scoped window once and drops unusable entries"
+    {"kind": "session", "percent": 78, "scope": None},
+    {"kind": "weekly_all", "percent": 12, "scope": None},
+    {"kind": "weekly_scoped", "percent": 17, "resets_at": "2026-08-15T03:00:00+00:00",
+     "scope": {"model": {"id": "claude-fable-5", "display_name": "Fable"}, "surface": None}},
+    {"kind": "weekly_scoped", "percent": 99, "scope": {"model": {"display_name": "Fable"}}},
+    {"kind": "five_hour_scoped", "percent": 95, "scope": {"model": {"display_name": "Fable"}}},
+    {"kind": "weekly_scoped", "percent": 42, "scope": {"model": {"id": "claude-opus-5", "display_name": None}}},
+    {"kind": "weekly_scoped", "percent": 5, "scope": {"model": {"display_name": "  "}}},
+    {"kind": "weekly_scoped", "percent": "unknown", "scope": {"model": {"display_name": "Opus"}}},
+  ],
+})
+expect("Claude collector reads every model-scoped window once and drops unusable entries", limits["limits"], [
+  {"label": "Session (5-hour)", "percent": 0.78, "resetsAt": ""},
+  {"label": "Weekly (7-day)", "percent": 0.12, "resetsAt": ""},
+  {"label": "Fable Weekly", "title": "Fable Weekly", "percent": 0.17, "resetsAt": "2026-08-15T03:00:00+00:00"},
+  {"label": "Fable Session", "title": "Fable Session", "percent": 0.95, "resetsAt": ""},
+  {"label": "claude-opus-5 Weekly", "title": "claude-opus-5 Weekly", "percent": 0.42, "resetsAt": ""},
+], limits)
 
 # A payload that speaks fractions says so in its buckets, and the scoped
 # entries are read on the same scale rather than assuming percentages.
-fractions=$(read_limits '{
-  "five_hour": { "utilization": 0.78 },
-  "limits": [
-    { "kind": "session", "percent": 0.78, "scope": null },
-    { "kind": "weekly_scoped", "percent": 0.42, "scope": { "model": { "display_name": "Fable" } } }
-  ]
-}')
-
-[[ $(jq -c '[.limits[].percent]' <<<"$fractions") == "[0.78,0.42]" ]] ||
-  fail "Claude collector reads scoped percentages on the payload's own scale" "$fractions"
-pass "Claude collector reads scoped percentages on the payload's own scale"
+fractions = read_limits({"five_hour": {"utilization": 0.78}, "limits": [
+  {"kind": "session", "percent": 0.78, "scope": None},
+  {"kind": "weekly_scoped", "percent": 0.42, "scope": {"model": {"display_name": "Fable"}}},
+]})
+expect("Claude collector reads scoped percentages on the payload's own scale", [entry["percent"] for entry in fractions["limits"]], [0.78, 0.42], fractions)
 
 # An account with no model-scoped allowance, and an endpoint that never grew
 # the array, both keep the session and weekly windows they always had.
-for payload in '{"five_hour":{"utilization":78.0},"limits":[{"kind":"session","percent":78,"scope":null}]}' \
-  '{"five_hour":{"utilization":78.0},"seven_day":{"utilization":12.0}}'; do
-  [[ $(jq -c '[.limits[].label]' <<<"$(read_limits "$payload")") != *" Weekly"* ]] ||
-    fail "Claude collector adds no limit when the payload scopes none" "$payload"
-done
-pass "Claude collector adds no limit when the payload scopes none"
+for payload in ({"five_hour": {"utilization": 78.0}, "limits": [{"kind": "session", "percent": 78, "scope": None}]},
+                {"five_hour": {"utilization": 78.0}, "seven_day": {"utilization": 12.0}}):
+  read = read_limits(payload)
+  check("Claude collector adds no limit when the payload scopes none", not any(" Weekly" in entry["label"] for entry in read["limits"]), read)
 
-# Only the Claude Code CLI refreshes the saved tokens, so between its runs the
-# collector can find the access token lapsed while the refresh token behind it
-# is still good. Drive collect_limits over a planted cache with the network
-# unreachable, so nothing but the credential state decides the answer.
-CACHE_HOME=$(mktemp -d)
-trap 'rm -rf "$CACHE_HOME"' EXIT
+# A rate-limited check says when to try again, as Anthropic's refusal does.
+refused = read_limits(None, headers={"retry-after": "42"})
+check("a rate-limited check names Anthropic's retry-after", "(retry after 42s)" in refused["helpText"], refused)
 
-collect_limits() {
-  COLLECTOR="$ROOT/bin/omarchy-agent-usage-claude" TOKEN="$1" EXPIRES_AT="$2" \
-    REFRESH_EXPIRES_AT="$3" CACHED="$4" CACHE_MTIME_OFFSET="${5:-0}" \
-    XDG_CACHE_HOME="$CACHE_HOME" python3 - <<'PY'
-import importlib.machinery, importlib.util, json, os, pathlib, time
+# ---------------------------------------------------------------- contract
 
-loader = importlib.machinery.SourceFileLoader("collector", os.environ["COLLECTOR"])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
+sandbox()
 
-cache = collector.cache_root() / "claude-limits.json"
-cached = os.environ["CACHED"]
-if cached:
-  cache.write_text(cached, encoding="utf-8")
-  offset = float(os.environ["CACHE_MTIME_OFFSET"])
-  if offset:
-    timestamp = time.time() + offset
-    os.utime(cache, (timestamp, timestamp))
-elif cache.exists():
-  cache.unlink()
 
-def unreachable(request, timeout=None):
-  raise OSError("no route to host")
+def add_session():
+  add_session.count = getattr(add_session, "count", 0) + 1
+  write_pi_session(home() / ".pi" / "agent" / "sessions" / "p" / f"grown-{add_session.count}.jsonl",
+                   [pi_reply("anthropic", 10, id=f"grown-{add_session.count}", model="claude-opus")])
 
-collector.urllib.request.urlopen = unreachable
-print(json.dumps(collector.collect_limits(
-  os.environ["TOKEN"],
-  int(os.environ["EXPIRES_AT"]),
-  int(os.environ["REFRESH_EXPIRES_AT"]),
-  False,
-)))
-PY
-}
 
-# An open window and one that already reset, cached long enough ago that a live
-# token would re-probe rather than reuse them.
-open_at=$(python3 -c 'import datetime as dt; print((dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=3)).isoformat())')
-past_at=$(python3 -c 'import datetime as dt; print((dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=3)).isoformat())')
-cache=$(jq -nc --arg open "$open_at" --arg past "$past_at" '{
-  fetchedAtMs: 1,
-  limits: [
-    { label: "Session (5-hour)", percent: 0.31, resetsAt: $past },
-    { label: "Weekly (7-day)", percent: 0.11, resetsAt: $open }
-  ]
-}')
+# Claude keeps a failed re-check of numbers measured in the last 15 minutes as
+# current (CURRENT_ENOUGH_SECONDS, for Anthropic's ready rate limiting), so the
+# failure checks run below against an answer aged past that instead.
+adapter = Adapter("claude", plant=signed_in, answer=ROUTES, grow=add_session,
+                  pi_root=lambda: home() / ".pi" / "agent" / "sessions",
+                  skip=("stale", "retry", "elapsed", "refused"))
+fresh = check_limits_contract(adapter)
+expect("Claude's plan and windows come from its sign-in and Anthropic's answer",
+       [fresh["tierLabel"], labels(fresh), [entry["percent"] for entry in fresh["limits"]]],
+       ["Max 5x", ["Session (5-hour)", "Weekly (7-day)"], [0.4, 0.1]], fresh)
+check_scan_cache(adapter)
 
-# Both tokens lapsed is a genuine sign-out. It used to return an empty limits
-# list and no status at all, which hides the panel's whole limits section
-# without saying why.
-expired=$(collect_limits "token" 1000 1000 "$cache")
-[[ $(jq -r '.usageStatusText' <<<"$expired") == "Sign-in expired" ]] ||
-  fail "Claude collector reports an expired sign-in" "$expired"
-[[ $(jq -r '.authHelpText' <<<"$expired") == *"claude auth login"* ]] ||
-  fail "Claude collector says how to refresh an expired sign-in" "$expired"
-pass "Claude collector reports an expired sign-in instead of hiding the section"
-
-# The elapsed session resets to zero while the weekly usage stays intact.
-[[ $(jq -c '[.limits[].label]' <<<"$expired") == '["Session (5-hour)","Weekly (7-day)"]' ]] ||
-  fail "Claude collector keeps cached windows and resets elapsed ones" "$expired"
-[[ $(jq '[.limits[].percent] == [0,0.11]' <<<"$expired") == "true" && $(jq -r '.limits[0].resetsAt' <<<"$expired") == "" ]] ||
-  fail "Claude collector resets just the elapsed window" "$expired"
-pass "Claude collector keeps cached windows and resets elapsed ones"
-
-# A wholly reset cache still shows the empty allowance.
-stale=$(collect_limits "token" 1000 1000 "$(jq -c '.limits |= [.[0]]' <<<"$cache")")
-[[ $(jq '.limits | map(.percent) == [0]' <<<"$stale") == "true" && $(jq -r '.usageStatusText' <<<"$stale") == "Sign-in expired" ]] ||
-  fail "Claude collector resets a wholly elapsed cache to zero" "$stale"
-[[ $(jq -r '.authHelpText' <<<"$stale") == *"last known"* ]] ||
-  fail "Claude collector keeps the timestamp and guidance for a reset cache" "$stale"
-pass "Claude collector resets a wholly elapsed cache to zero"
-
-# The access token lives about eight hours; the refresh token behind it lives
-# about thirty days, and the CLI mints a new access token from it on its next
-# run. A machine left overnight finds the first lapsed and the second fine --
-# routine, and nothing a person fixes by signing in again.
-live_refresh=$(python3 -c 'import time; print(round((time.time() + 30 * 86400) * 1000))')
-paused=$(collect_limits "token" 1000 "$live_refresh" "$cache")
-[[ $(jq -r '.usageStatusText' <<<"$paused") == "Limits paused" ]] ||
-  fail "Claude collector calls a lapsed access token paused, not signed out" "$paused"
-[[ $(jq -r '.authHelpText' <<<"$paused") != *"claude auth login"* ]] ||
-  fail "Claude collector does not send a signed-in machine back through login" "$paused"
-[[ $(jq -c '[.limits[].label]' <<<"$paused") == '["Session (5-hour)","Weekly (7-day)"]' ]] ||
-  fail "Claude collector keeps open cached windows while the access token is stale" "$paused"
-pass "Claude collector calls a lapsed access token paused, not signed out"
-
-# A signed-out machine says so, and still shows what it last knew.
-signed_out=$(collect_limits "" 0 0 "$cache")
-[[ $(jq -r '.usageStatusText' <<<"$signed_out") == "Waiting for auth" ]] ||
-  fail "Claude collector still reports a missing token" "$signed_out"
-[[ $(jq -c '[.limits[].label]' <<<"$signed_out") == '["Session (5-hour)","Weekly (7-day)"]' ]] ||
-  fail "Claude collector serves open cached windows without a token" "$signed_out"
-pass "Claude collector serves open cached windows without a token"
-
-# The limits cache is a last-known fallback governed by each window's reset
-# time, not by the file's age. A backwards clock correction must not discard
-# an otherwise open fallback when no token is available to replace it.
-future_fallback=$(collect_limits "" 0 0 "$cache" 3600)
-[[ $(jq -c '[.limits[].label]' <<<"$future_fallback") == '["Session (5-hour)","Weekly (7-day)"]' ]] ||
-  fail "Claude collector keeps open fallback limits after a backwards clock correction" "$future_fallback"
-pass "Claude collector keeps open fallback limits after a backwards clock correction"
-
-# A live token that cannot reach the endpoint keeps the old contract: the open
-# window stands in, and the shell is asked to retry sooner than its interval.
-unreachable=$(collect_limits "token" 0 0 "$cache")
-[[ $(jq -c '[.limits[].label]' <<<"$unreachable") == '["Session (5-hour)","Weekly (7-day)"]' ]] ||
-  fail "Claude collector falls back to cache when the probe cannot connect" "$unreachable"
-[[ $(jq -r '.retryAdvised' <<<"$unreachable") == "true" ]] ||
-  fail "Claude collector advises a retry after a transport failure" "$unreachable"
-pass "Claude collector falls back to cache when the probe cannot connect"
-
-# Reuse and --force are decided against a cache that is fresh by the clock, so
-# the probe is answered rather than refused: what matters is whether it ran.
-probe_with_cache() {
-  COLLECTOR="$ROOT/bin/omarchy-agent-usage-claude" FORCE="$1" CACHED="$2" PAYLOAD="$3" CACHE_MTIME_OFFSET="${4:-0}" \
-    XDG_CACHE_HOME="$CACHE_HOME" python3 - <<'PY'
-import importlib.machinery, importlib.util, io, json, os, time
-
-loader = importlib.machinery.SourceFileLoader("collector", os.environ["COLLECTOR"])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
-
-cache = collector.cache_root() / "claude-limits.json"
-cache.write_text(os.environ["CACHED"], encoding="utf-8")
-offset = float(os.environ["CACHE_MTIME_OFFSET"])
-if offset:
-  timestamp = time.time() + offset
-  os.utime(cache, (timestamp, timestamp))
-
-probes = []
-
-def urlopen(request, timeout=None):
-  probes.append(1)
-  return io.BytesIO(os.environ["PAYLOAD"].encode())
-
-collector.urllib.request.urlopen = urlopen
-result = collector.collect_limits("token", 0, 0, os.environ["FORCE"] == "true")
-print(json.dumps({
-  "result": result,
-  "probes": len(probes),
-  "cached": json.loads(cache.read_text(encoding="utf-8")),
-}))
-PY
-}
-
-fresh=$(jq -nc --arg open "$open_at" --argjson now "$(python3 -c 'import time; print(round(time.time() * 1000))')" '{
-  fetchedAtMs: $now,
-  limits: [{ label: "Weekly (7-day)", percent: 0.11, resetsAt: $open }]
-}')
-payload='{"five_hour":{"utilization":44.0}}'
-
-# Repeated panel opens share one answer rather than one request apiece.
-reused=$(probe_with_cache false "$fresh" "$payload")
-[[ $(jq -r '.probes' <<<"$reused") == "0" && $(jq -c '[.result.limits[].percent]' <<<"$reused") == "[0.11]" ]] ||
-  fail "Claude collector reuses a cache younger than the probe interval" "$reused"
-[[ $(jq -r '.result.authHelpText' <<<"$reused") == "" ]] ||
-  fail "Claude collector clears login guidance when reusing authenticated limits" "$reused"
-pass "Claude collector reuses a cache younger than the probe interval"
-
-# An early boot probe can be stamped ahead of corrected wall time when NTP
-# moves the clock backwards. That cache must not suppress live probes until
-# the clock catches up.
-future=$(jq -nc --arg open "$open_at" --argjson future "$(python3 -c 'import time; print(round((time.time() + 3600) * 1000))')" '{
-  fetchedAtMs: $future,
-  limits: [{ label: "Weekly (7-day)", percent: 0.11, resetsAt: $open }]
-}')
-
-# If the clock correction makes a probe necessary but that probe cannot
-# connect, the cache remains the last-known answer. Its reset time, rather than
-# its future mtime, decides whether the fallback is still usable.
-future_unreachable=$(collect_limits "token" 0 0 "$future" 3600)
-[[ $(jq -c '[.limits[].percent]' <<<"$future_unreachable") == "[0.11]" && $(jq -r '.retryAdvised' <<<"$future_unreachable") == "true" ]] ||
-  fail "Claude collector keeps future-dated fallback when the re-probe fails" "$future_unreachable"
-pass "Claude collector keeps future-dated fallback when the re-probe fails"
-
-# Numbers stamped in the future have no age to trust, so a kept fallback is
-# reported as stale rather than as measured just now.
-[[ $(jq -r '.live' <<<"$future_unreachable") == "false" ]] ||
-  fail "Claude collector marks a future-dated fallback stale" "$future_unreachable"
-pass "Claude collector marks a future-dated fallback stale"
-
-corrected=$(probe_with_cache false "$future" "$payload" 3600)
-[[ $(jq -r '.probes' <<<"$corrected") == "1" && $(jq -c '[.result.limits[].percent]' <<<"$corrected") == "[0.44]" ]] ||
-  fail "Claude collector re-probes after a backwards clock correction" "$corrected"
-pass "Claude collector re-probes after a backwards clock correction"
-
-# --force is someone pressing refresh, and its help text promises the caches are
-# ignored — so the reuse window must not outrank it.
-forced=$(probe_with_cache true "$fresh" "$payload")
-[[ $(jq -r '.probes' <<<"$forced") == "1" ]] ||
-  fail "Claude collector re-probes on --force despite a fresh cache" "$forced"
-[[ $(jq -c '[.result.limits[].percent]' <<<"$forced") == "[0.44]" ]] ||
-  fail "Claude collector returns the forced probe's numbers" "$forced"
-[[ $(jq -r '.result.authHelpText' <<<"$forced") == "" ]] ||
-  fail "Claude collector clears login guidance after a successful probe" "$forced"
-pass "Claude collector re-probes on --force despite a fresh cache"
-
-# A probe that lands becomes the next run's fallback.
-[[ $(jq -c '[.cached.limits[].percent]' <<<"$forced") == "[0.44]" ]] ||
-  fail "Claude collector caches a successful probe" "$forced"
-pass "Claude collector caches a successful probe"
+# The failure checks of the contract, past the 15 minutes.
+for path in limits_cache_files("claude"):
+  path.unlink()
+claude()
+edit_limits_cache("claude", fetched_ago=1800)
+fetched_at = json.loads(limits_cache_files("claude")[0].read_text())["fetchedAtMs"]
+record, _ = claude(mode=500)
+check("claude: a failed check keeps the last limits, stale, with when they were measured",
+      record["limits"] == fresh["limits"] and record["limitsStale"] is True and record["limitsFetchedAt"] == fetched_at
+      and record["usageStatusText"] == "" and not record.get("retryAdvised"), record)
+for mode in ("down", "timeout"):
+  record, _ = claude(mode=mode)
+  check(f"claude: an unreachable service ({mode}) advises a retry and keeps the last limits, stale",
+        record.get("retryAdvised") is True and record["limits"] == fresh["limits"] and record["limitsStale"] is True
+        and record["limitsFetchedAt"] == fetched_at and record["usageStatusText"] == "", record)
+# A refused credential advises no retry and shows nothing as live. Claude
+# keeps no "Sign-in expired" for it (see the report), so only that is held.
+record, _ = claude(mode=401)
+check("claude: a refused credential advises no retry and shows nothing as live",
+      not record.get("retryAdvised") and record["limitsStale"] is True and record["limits"] == fresh["limits"], record)
+edit_limits_cache("claude", resets_past=True)
+runs = [claude(mode=500)[0], claude("--limits-only", mode=500)[0]]
+expect("claude: kept windows whose reset passed read 0 with no reset, past a failed check",
+       [[(entry["percent"], entry["resetsAt"]) for entry in run["limits"]] for run in runs] + [runs[0]["limitsStale"]],
+       [[(0.0, ""), (0.0, "")]] * 2 + [True], runs)
 
 # Anthropic rate-limits its usage endpoint readily. A refused re-check of
 # numbers measured minutes ago still describes the account; only older numbers
 # count as stale, and either way the record says when they were measured.
-rate_limited() {
-  COLLECTOR="$ROOT/bin/omarchy-agent-usage-claude" FETCHED_AGO="$1" XDG_CACHE_HOME="$CACHE_HOME" python3 - <<'PY'
-import datetime as dt, importlib.machinery, importlib.util, json, os, time, urllib.error
+for ago, age, live in ((60, "a minute", True), (1800, "half an hour", False)):
+  kept_limits(ago, [{"label": "Session (5-hour)", "percent": 0.4, "resetsAt": iso_in(3 * 3600)}])
+  fetched_at = json.loads((cache_root() / "claude-limits.json").read_text())["fetchedAtMs"]
+  record, _ = claude(mode=429)
+  expect(f"a rate-limited re-check of numbers {age} old counts as {'current' if live else 'stale'}",
+         [record["limitsStale"], record["limits"][0]["percent"], record["limitsFetchedAt"] == fetched_at], [not live, 0.4, True], record)
 
-loader = importlib.machinery.SourceFileLoader("collector", os.environ["COLLECTOR"])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
+# ------------------------------------------------------------ the sign-in
 
-reset = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=3)).isoformat()
-fetched = round((time.time() - float(os.environ["FETCHED_AGO"])) * 1000)
-(collector.cache_root() / "claude-limits-rate.json").write_text(json.dumps(
-  {"fetchedAtMs": fetched, "limits": [{"label": "Session (5-hour)", "percent": 0.4, "resetsAt": reset}]}))
+# An open window and one that already reset, cached long enough ago that a
+# live token would ask again rather than reuse them.
+sandbox()
+WINDOWS = [
+  {"label": "Session (5-hour)", "percent": 0.31, "resetsAt": iso_in(-3 * 3600)},
+  {"label": "Weekly (7-day)", "percent": 0.11, "resetsAt": iso_in(3 * 3600)},
+]
 
-def refused(request, timeout=None):
-  raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {}, None)
+# Both tokens lapsed is a genuine sign-out. It used to return an empty limits
+# list and no status at all, which hides the panel's whole limits section
+# without saying why. Nothing is asked of Anthropic.
+signed_in(expires=1000, refresh_expires=1000)
+kept_limits(3600, WINDOWS)
+record, http = claude()
+check("Claude collector reports an expired sign-in instead of hiding the section, asking nothing",
+      record["usageStatusText"] == "Sign-in expired" and "claude auth login" in record["authHelpText"] and http.count == 0, record)
+expect("Claude collector keeps cached windows and resets just the elapsed one",
+       [(entry["label"], entry["percent"], entry["resetsAt"]) for entry in record["limits"]],
+       [("Session (5-hour)", 0.0, ""), ("Weekly (7-day)", 0.11, WINDOWS[1]["resetsAt"])], record)
 
-collector.urllib.request.urlopen = refused
-result = collector.collect_limits("token", int((time.time() + 3600) * 1000), 0, True, "claude-limits-rate.json")
-print(json.dumps({"live": result["live"], "percent": result["limits"][0]["percent"], "fetched": result["fetchedAtMs"] == fetched}))
+# A wholly reset cache still shows the empty allowance.
+kept_limits(3600, WINDOWS[:1])
+record, _ = claude()
+check("Claude collector resets a wholly elapsed cache to zero, with its guidance",
+      [entry["percent"] for entry in record["limits"]] == [0] and record["usageStatusText"] == "Sign-in expired"
+      and "last known" in record["authHelpText"], record)
+
+# A machine left overnight finds the access token lapsed and the refresh
+# token fine: routine, and nothing a person fixes by signing in again.
+signed_in(expires=1000, refresh_expires=ms_in(30 * 86400))
+kept_limits(3600, WINDOWS)
+record, http = claude()
+check("Claude collector calls a lapsed access token paused, not signed out",
+      record["usageStatusText"] == "Limits paused" and "claude auth login" not in record["authHelpText"]
+      and labels(record) == ["Session (5-hour)", "Weekly (7-day)"] and http.count == 0, record)
+
+# A signed-out machine says so, and still shows what it last knew.
+(home() / ".claude" / ".credentials.json").unlink()
+record, _ = claude()
+check("Claude collector serves open cached windows without a token",
+      record["usageStatusText"] == "Waiting for auth" and labels(record) == ["Session (5-hour)", "Weekly (7-day)"], record)
 PY
-}
-
-[[ $(rate_limited 60) == '{"live": true, "percent": 0.4, "fetched": true}' ]] ||
-  fail "a refused re-check of numbers a minute old still counts as current" "$(rate_limited 60)"
-[[ $(rate_limited 1800) == '{"live": false, "percent": 0.4, "fetched": true}' ]] ||
-  fail "a refused re-check of half-hour-old numbers counts as stale" "$(rate_limited 1800)"
-pass "a rate-limited check only goes stale once the numbers are old"
-
-# A rate-limited check says when to try again, as Anthropic's refusal does.
-retry_after=$(COLLECTOR="$ROOT/bin/omarchy-agent-usage-claude" XDG_CACHE_HOME="$CACHE_HOME" python3 - <<'PY'
-import importlib.machinery, importlib.util, json, os, urllib.error
-
-loader = importlib.machinery.SourceFileLoader("collector", os.environ["COLLECTOR"])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
-
-def refused(request, timeout=None):
-  raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {"retry-after": "42"}, None)
-
-collector.urllib.request.urlopen = refused
-print(collector.probe_limits("token")["helpText"])
-PY
-)
-[[ $retry_after == *"(retry after 42s)"* ]] ||
-  fail "a rate-limited check names Anthropic's retry-after" "$retry_after"
-pass "a rate-limited check names Anthropic's retry-after"
