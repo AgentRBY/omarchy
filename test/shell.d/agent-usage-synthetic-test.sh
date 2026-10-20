@@ -47,7 +47,7 @@ BASE_URL, reqs = stub_server(quotas)
 @contextlib.contextmanager
 def serve(mode):
   os.environ["SYNTHETIC_API_BASE_URL"] = BASE_URL
-  if mode in ("down", "timeout"):
+  if mode in ("down", "timeout", "cut", "garbage"):
     with FakeHttp(mode=mode):
       yield
     return

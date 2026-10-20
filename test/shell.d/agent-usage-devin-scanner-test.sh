@@ -197,11 +197,11 @@ def add_reply():
 
 
 # Devin's quota is the CLI's own cache, read on every run: there is no
-# request to count, retry or refuse, no check of its own to fail stale, and
-# no limits cache of the collector's to elapse (its own elapsed-window case is
-# below).
+# request to count, retry or refuse, no check of its own to fail stale or cut
+# short, and no limits cache of the collector's to elapse (its own
+# elapsed-window case is below).
 adapter = Adapter("devin", plant=plant_status, grow=add_reply, requests_per_probe=0, retry_modes=(), refused_status=None,
-                  skip=("stale", "elapsed"), pi_root=lambda: home() / ".pi" / "agent" / "sessions")
+                  skip=("stale", "cut", "elapsed"), pi_root=lambda: home() / ".pi" / "agent" / "sessions")
 fresh = check_limits_contract(adapter)
 expect("Devin's plan and quota come from the CLI's user-status cache, with the service's own reset times", {
   "tierLabel": fresh["tierLabel"], "windows": windows(fresh), "fetchedAt": fresh["limitsFetchedAt"] // 1000 >= now,

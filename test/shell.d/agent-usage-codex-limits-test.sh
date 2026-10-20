@@ -60,7 +60,10 @@ def login(workspace, user):
 # ---------------------------------------------------------------- contract
 
 login("ws-one", "user-a")
-fresh = check_limits_contract(Adapter("codex", serve=serve, count=starts, refused_status="Waiting for auth", retry_modes=("down",)))
+# "cut": the app-server talks JSON-RPC over a pipe, not HTTP, so there is no
+# reply to cut short; its own failures are covered below.
+fresh = check_limits_contract(Adapter("codex", serve=serve, count=starts, refused_status="Waiting for auth", retry_modes=("down",),
+                                      skip=("cut",)))
 expect("fresh Codex limits read both windows and the plan",
        [[entry["percent"] for entry in fresh["limits"]], fresh["tierLabel"]], [[0.4, 0.7], "pro"], fresh)
 

@@ -39,7 +39,7 @@ ENDPOINT += "/key"
 @contextlib.contextmanager
 def serve(mode):
   os.environ["MUSE_KEY_ENDPOINT"] = ENDPOINT
-  if mode in ("down", "timeout"):
+  if mode in ("down", "timeout", "cut", "garbage"):
     with FakeHttp(mode=mode):
       yield
     return

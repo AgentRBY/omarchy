@@ -629,13 +629,14 @@ class Adapter:
     when the collector has no such answer.
   - `serve(mode)`: instead of FakeHttp, a context manager making the service
     behave as `mode` for the runs inside it: "up", 500 (a failed check),
-    "down" and "timeout" (unreachable), 401 (refused). Pair it with
+    "cut" and "garbage" (an answer cut short, or not JSON), "down" and
+    "timeout" (unreachable), 401 (refused). Pair it with
     `count()`, the requests (or CLI starts) made so far, or None when there
     is nothing to count.
   - `retry_modes`: the unreachable modes the service can take; () when it has
     no network at all.
   - `skip`: contract checks that can't apply, each with its reason beside the
-    adapter: "reuse", "force", "stale", "retry", "elapsed", "refused".
+    adapter: "reuse", "force", "stale", "cut", "retry", "elapsed", "refused".
   - `grow()`: one more unit of local usage on disk, for check_scan_cache;
     `measure(record)` what it changes (prompts, sessions, today's tokens).
   - `pi_root()`: for a collector reading pi-format sessions, the root it
@@ -703,6 +704,8 @@ def check_limits_contract(adapter: Adapter) -> dict:
   - --force asks again.
   - stale: a failed check (500) keeps the last limits, stale, with their
     limitsFetchedAt, no status, and no retryAdvised.
+  - cut: a reply cut short and a body that isn't JSON are answers, not
+    transport: they keep the last limits, stale, and advise no retry.
   - retry: an unreachable service (down, timeout) keeps them too, and sets
     retryAdvised.
   - elapsed: kept windows whose reset passed (a cache rewrite, no sleeping)
@@ -754,6 +757,17 @@ def check_limits_contract(adapter: Adapter) -> dict:
       and kept.get("usageStatusText") == "" and not kept.get("retryAdvised"),
       f"fresh: {json.dumps(fresh)}\nkept:  {json.dumps(kept)}",
     )
+
+  if "cut" not in skip:
+    for mode in ("cut", "garbage"):
+      answered, _ = service.run(mode, "--force")
+      check(
+        f"{name}: an answer {'cut short' if mode == 'cut' else 'that is not JSON'} keeps the last limits, stale, and advises no retry",
+        not answered.get("retryAdvised") and answered.get("limits") == fresh["limits"]
+        and answered.get("limitsStale") is True and answered.get("limitsFetchedAt") == fetched_at
+        and answered.get("usageStatusText") == "",
+        f"fresh:    {json.dumps(fresh)}\nanswered: {json.dumps(answered)}",
+      )
 
   if "retry" not in skip:
     for mode in adapter.retry_modes:
