@@ -102,6 +102,22 @@ login("ws-one", "user-a")
 token = codex("backend", CODEX_ACCESS_TOKEN="another")
 expect("an access token in the environment never shows auth.json's account's limits", token["limits"], [], token)
 
+# The token signs in the primary home alone: a registered home without a login
+# of its own waits for one rather than answering for the token's account.
+side = state_home() / "omarchy" / "agents" / "accounts" / "codex" / "side"
+side.mkdir(parents=True)
+registry("codex", [
+  {"id": "main", "label": "Main", "home": "", "primary": True},
+  {"id": "side", "label": "Side", "home": str(side), "primary": False},
+], active="main")
+before_starts = starts()
+tokened = codex("ok", CODEX_ACCESS_TOKEN="another")
+expect("CODEX_ACCESS_TOKEN signs in only the primary of several Codex homes",
+       [[(account["id"], account["usageStatusText"], bool(account["limits"])) for account in tokened["accounts"]], starts() - before_starts],
+       [[("main", "", True), ("side", "Waiting for auth", False)], 1], tokened)
+for path in (state_home() / "omarchy" / "agents" / "accounts").glob("codex.json"):
+  path.unlink()
+
 (home() / ".codex" / "config.toml").write_text('cli_auth_credentials_store = "keyring"\n')
 keyring = codex("backend")
 (home() / ".codex" / "config.toml").unlink()
@@ -117,8 +133,8 @@ with serve("up"):
   collector = load_collector("codex")
   fetch = collector.fetch_codex_rpc
 
-  def fetch_across_login_change(home_dir=None):
-    answer = fetch(home_dir)
+  def fetch_across_login_change(home_dir=None, primary=True):
+    answer = fetch(home_dir, primary)
     login("ws-three", "user-c")
     return answer
 

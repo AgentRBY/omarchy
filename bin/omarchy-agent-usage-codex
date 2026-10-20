@@ -650,9 +650,19 @@ def has_codex_credentials(codex_home, env):
   return (codex_home / "auth.json").is_file()
 
 
-def fetch_codex_rpc(home=None):
+# The environment a home's app-server runs in. CODEX_ACCESS_TOKEN signs in
+# the primary home alone: handed to every registered home, it would make each
+# of them answer for the same account.
+def home_env(home=None, primary=True):
+  env = dict(ENV, CODEX_HOME=str(home)) if home else dict(ENV)
+  if not primary:
+    env.pop("CODEX_ACCESS_TOKEN", None)
+  return env
+
+
+def fetch_codex_rpc(home=None, primary=True):
   result = {"limits": [], "tierLabel": "", "usageStatusText": "", "authHelpText": AUTH_HELP}
-  env = dict(ENV, CODEX_HOME=str(home)) if home else ENV
+  env = home_env(home, primary)
   codex = find_codex_binary()
   if not codex:
     result["usageStatusText"] = "Codex limits unavailable"
@@ -775,8 +785,8 @@ def fetch_codex_rpc(home=None):
 
 # Who a home's probe answers for, or "" when only Codex could say: keyring and
 # auto stores keep the login out of auth.json.
-def signed_in_identity(codex_home):
-  token = ENV.get("CODEX_ACCESS_TOKEN")
+def signed_in_identity(codex_home, primary=True):
+  token = ENV.get("CODEX_ACCESS_TOKEN") if primary else ""
   if token:
     return "token:" + hashlib.sha1(token.encode("utf-8", "surrogatepass")).hexdigest()
   try:
@@ -803,9 +813,9 @@ def signed_in_identity(codex_home):
 # Keyed by the home and the account it is signed in to, so a home signed in to
 # someone else never falls back on the last one's numbers. None when the
 # account can't be told, since then no numbers can be vouched for.
-def limits_cache(home):
+def limits_cache(home, primary=True):
   home = Path(home or codex_home())
-  identity = signed_in_identity(home)
+  identity = signed_in_identity(home, primary)
   if not identity:
     return None
   try:
@@ -820,8 +830,8 @@ def limits_cache(home):
 # blank limits that were right a refresh ago. `live` says the limits came from
 # this probe, or one recent enough to stand in for it. Elapsed windows come
 # back at zero.
-def collect_limits(home=None, force=False):
-  cache = limits_cache(home)
+def collect_limits(home=None, force=False, primary=True):
+  cache = limits_cache(home, primary)
   fallback, fetched_at_ms = cache.kept() if cache else ([], 0)
 
   # Each probe starts an app-server, which syncs the plugin list on the way
@@ -841,11 +851,11 @@ def collect_limits(home=None, force=False):
       result["resetCredits"] = cache.data["resetCredits"]
     return result
 
-  rpc = fetch_codex_rpc(home)
+  rpc = fetch_codex_rpc(home, primary)
   ok = rpc.pop("ok", False)
   transport = rpc.pop("transport", False)
   # A login that changed while the probe ran leaves no telling whose these are.
-  after = limits_cache(home) if cache else None
+  after = limits_cache(home, primary) if cache else None
   same_login = cache is not None and after is not None and after.path == cache.path
 
   if ok:
@@ -875,7 +885,7 @@ def collect_limits(home=None, force=False):
 def account_limits(account, force):
   # The primary is ~/.codex by definition, not whatever CODEX_HOME this run
   # happened to inherit — that would report another account's limits as Main's.
-  rpc = collect_limits(account.get("home") or (Path.home() / ".codex"), force)
+  rpc = collect_limits(account.get("home") or (Path.home() / ".codex"), force, primary=bool(account.get("primary")))
   return account_entry(account, rpc, rpc["tierLabel"], resetCredits=rpc.get("resetCredits"))
 
 
