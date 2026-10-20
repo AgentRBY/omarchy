@@ -294,7 +294,9 @@ def read_codex_rollout(path, stat_result):
           continue
         try:
           entry = json.loads(raw)
-        except ValueError:
+        except Exception:
+          # A line nested too deep to parse is a RecursionError, not a
+          # ValueError; either way only that line is lost.
           continue
         if not isinstance(entry, dict):
           continue

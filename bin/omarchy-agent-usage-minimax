@@ -382,7 +382,9 @@ def scan_mcode(stats: Stats) -> bool:
         for raw in handle:
           try:
             entry = json.loads(raw)
-          except ValueError:
+          except Exception:
+            # A line nested too deep to parse is a RecursionError, not a
+            # ValueError; either way only that line is lost.
             continue
           message = entry.get("message") if isinstance(entry, dict) else None
           if not isinstance(message, dict):

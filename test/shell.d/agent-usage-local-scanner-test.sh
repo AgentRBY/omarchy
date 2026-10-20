@@ -83,6 +83,9 @@ turn("cloud", "ollama", "gpt-oss:120b-cloud")                # Ollama Cloud, thr
 # total; a real second turn moves it.
 with ollama.open("a") as handle:
   handle.write(json.dumps(token_count(1000)) + "\n" + json.dumps(token_count(2000)) + "\n")
+  # A line nested too deep to parse (a RecursionError, not a ValueError)
+  # costs only itself.
+  handle.write('{"type": "token_count", "info": ' + "[" * 100000 + "\n")
 # A fork copies its parent's session_meta after its own; the first decides.
 rollout("fork", meta("openai"), meta("ollama"), {"timestamp": STAMP, "type": "turn_context", "payload": {"model": "qwen-forked"}}, token_count(1000))
 

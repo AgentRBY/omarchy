@@ -16,6 +16,8 @@ source "$SHELL_TEST_DIR/agent-usage-helpers.sh"
 agent_sandbox
 
 python3 - <<'PY'
+import shutil
+
 from agent_usage_fixtures import *
 
 
@@ -152,6 +154,21 @@ expect("DeepSeek counts DeepSeek Harness sessions on its DeepSeek routes",
     "deepseek-chat": {"inputTokens": 30000, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
   },
 }, record)
+
+# A line nested too deep to parse costs only that line (or, as the header,
+# that log), never the rest of the scan.
+DEEP = b'{"type":"assistant/message","data":' + b"[" * 100000 + b"]" * 100000 + b"}\n"
+deep = project / "s5" / "session.v4.jsonl"
+write_log(deep, [header("s5"), route("deepseek-official", "deepseek-deep")], False)
+with deep.open("ab") as handle:
+  handle.write(DEEP + (json.dumps(message(1, 1, usage(50))) + "\n").encode())
+(project / "s6").mkdir()
+(project / "s6" / "session.v4.jsonl").write_bytes(DEEP + (json.dumps(message(1, 1, usage(70))) + "\n").encode())
+record = deepseek()
+expect("DeepSeek skips a dsh line nested too deep to parse, keeping the rest of the scan",
+       [record["todayTotalTokens"], record["modelUsage"].get("deepseek-deep", {}).get("inputTokens")], [34203, 50], record)
+shutil.rmtree(project / "s5")
+shutil.rmtree(project / "s6")
 
 # dsh keeps its key in its managed .credentials.yaml, or a .env beside it.
 (home() / "dsh" / ".credentials.yaml").write_text("""# managed by dsh

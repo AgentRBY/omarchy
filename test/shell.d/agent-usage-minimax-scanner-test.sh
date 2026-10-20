@@ -43,8 +43,8 @@ def sessions():
 # ---------------------------------------------------------- every source
 
 # MiniMax Code's own sessions: user messages are prompts, assistant usage is
-# tokens, and a row with a garbage timestamp or token count drops on its own.
-# Beside them, pi and omp sessions and opencode rows on any MiniMax provider
+# tokens, and a row with a garbage timestamp, token count or line drops on
+# its own. Beside them, pi and omp sessions and opencode rows on any MiniMax provider
 # id; other providers, and a gateway named like one, drop.
 sandbox()
 mcode_session(home() / ".minimax", "s1", [
@@ -53,6 +53,7 @@ mcode_session(home() / ".minimax", "s1", [
   mcode_reply({"input": 9999}, timestamp=True),
   mcode_reply({"input": -4, "output": 1e300}),
   "not json",
+  "[" * 100000,  # nested too deep to parse: a RecursionError, not a ValueError
 ])
 mcode_session(home() / ".minimax", "s2", [
   {"message": {"role": "user", "timestamp": "2020-01-01T00:00:00Z"}},
