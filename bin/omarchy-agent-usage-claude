@@ -43,6 +43,7 @@ from collectors import (  # noqa: E402
   empty_bucket,
   local_day,
   number,
+  obj,
   open_json,
   opencode_db,
   pi_session_roots,
@@ -303,26 +304,32 @@ def stats_cache_fallback(claude_dir: Path) -> dict[str, Any] | None:
     data = json.loads((claude_dir / "stats-cache.json").read_text(encoding="utf-8"))
   except Exception:
     return None
+  # A file or a field of the wrong shape reads as nothing, never a crash.
+  if not isinstance(data, dict):
+    return None
+
+  def entries(key: str) -> list[dict[str, Any]]:
+    value = data.get(key)
+    return [entry for entry in value if isinstance(entry, dict)] if isinstance(value, list) else []
 
   today = today_string()
-  daily_model_tokens = data.get("dailyModelTokens") or []
-  today_tokens = {}
-  for entry in daily_model_tokens:
-    if isinstance(entry, dict) and entry.get("date") == today:
-      today_tokens = entry.get("tokensByModel") or {}
+  today_tokens: dict[str, int] = {}
+  for entry in entries("dailyModelTokens"):
+    if entry.get("date") == today:
+      today_tokens = {str(model): number(tokens) for model, tokens in obj(entry.get("tokensByModel")).items() if number(tokens) > 0}
       break
 
-  daily_activity = [day for day in (data.get("dailyActivity") or []) if isinstance(day, dict)]
+  daily_activity = entries("dailyActivity")
   active_dates = sorted({str(day.get("date")) for day in daily_activity if number(day.get("messageCount")) > 0 and day.get("date")})
   today_prompts, today_sessions = today_prompts_from_history(claude_dir)
 
   return {
     "todayPrompts": today_prompts,
     "todaySessions": today_sessions,
-    "todayTotalTokens": sum(number(v) for v in today_tokens.values()),
+    "todayTotalTokens": sum(today_tokens.values()),
     "todayTokensByModel": today_tokens,
     "recentDays": daily_activity[-7:],
-    "modelUsage": data.get("modelUsage") or {},
+    "modelUsage": obj(data.get("modelUsage")),
     "totalPrompts": number(data.get("totalMessages")),
     "totalSessions": number(data.get("totalSessions")),
     "activeDays": len(active_dates),
@@ -347,6 +354,8 @@ def today_prompts_from_history(claude_dir: Path) -> tuple[int, int]:
     try:
       entry = json.loads(line)
     except Exception:
+      continue
+    if not isinstance(entry, dict):
       continue
     if number(entry.get("timestamp")) < start_of_day:
       break

@@ -212,6 +212,18 @@ sandbox()
 record = claude()
 expect("Claude falls back on history.jsonl without a stats-cache", [record["todayPrompts"], record["todaySessions"]], [2, 2], record)
 
+# A stats-cache or history line of the wrong shape costs that field or line,
+# never the record.
+sandbox()
+(home() / ".claude").mkdir()
+for cache in ([1, 2], {"dailyModelTokens": 5, "dailyActivity": 7, "modelUsage": [1]},
+              {"dailyModelTokens": [{"date": datetime.now().date().isoformat(), "tokensByModel": ["x"]}]}):
+  write_json(home() / ".claude" / "stats-cache.json", cache)
+  (home() / ".claude" / "history.jsonl").write_text(json.dumps([1]) + "\n" + json.dumps({"timestamp": ms_in(0), "sessionId": "s1"}) + "\n")
+  record = claude()
+  expect(f"a stats-cache shaped {json.dumps(cache)[:40]} and a list history line read as nothing",
+         [record["todayPrompts"], record["todayTokensByModel"], record["modelUsage"]], [1, {}, {}], record)
+
 # pi and opencode replies count on the anthropic provider alone: not another
 # provider driving Anthropic's API, and not a prompt.
 sandbox()
