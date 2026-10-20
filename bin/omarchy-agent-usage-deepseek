@@ -405,8 +405,18 @@ def fetch_balance(api_base_url: str, key: str) -> dict[str, Any]:
     raise DeepSeekError("DeepSeek's balance response carried no balance_infos.")
   first = infos[0]
 
+  # An answer without a readable total says nothing about the balance, so it
+  # is a failed check that keeps the last good one, never a balance of zero.
+  total = first.get("total_balance")
+  try:
+    remaining = None if isinstance(total, bool) or total is None else Decimal(str(total).strip())
+  except InvalidOperation:
+    remaining = None
+  if remaining is None or not remaining.is_finite():
+    raise DeepSeekError("DeepSeek's balance response carried no total_balance.")
+
   return {
-    "remaining": money(first.get("total_balance")),
+    "remaining": remaining,
     "granted": money(first.get("granted_balance")),
     "toppedUp": money(first.get("topped_up_balance")),
     "currency": str(first.get("currency") or "CNY"),

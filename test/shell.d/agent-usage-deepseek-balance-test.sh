@@ -102,6 +102,18 @@ record, _ = deepseek("down")
 check("DeepSeek collector keeps a balance per key",
       "balance" not in record and record["usageStatusText"] == "Balance unavailable" and record.get("retryAdvised") is True, record)
 
+# An answer without a readable total_balance is a failed check, not a balance
+# of zero: it keeps the last balance, stale, and never replaces it.
+deepseek()
+for incomplete in ([{}], [{"currency": "USD", "total_balance": None}], [{"total_balance": "NaN"}], [{"total_balance": True}]):
+  with FakeHttp({BALANCE: {"is_available": True, "balance_infos": incomplete}}):
+    record = collect("deepseek", "--force")
+  check(f"DeepSeek collector keeps the last balance, stale, when DeepSeek answers {incomplete}",
+        record["balance"]["remaining"] == 8.15 and record["limitsStale"] is True and record["usageStatusText"] == ""
+        and "total_balance" in record["authHelpText"], record)
+  record, _ = deepseek(500)
+  expect(f"DeepSeek collector never caches {incomplete} over the last balance", [record["balance"]["remaining"], record["limitsStale"]], [8.15, True], record)
+
 # Untrusted amounts read as nothing rather than as a number.
 expect("DeepSeek collector reads untrusted amounts as zero",
        [float(load_collector("deepseek").money(value)) for value in ("NaN", "Infinity", True, "abc", None, "3.5")], [0.0, 0.0, 0.0, 0.0, 0.0, 3.5])
