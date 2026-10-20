@@ -81,10 +81,12 @@ check("Claude keeps one record per API message in the index",
 # An unchanged file is not opened again: its records come from the index.
 if os.geteuid() != 0:
   session.chmod(0)
-  with contextlib.redirect_stderr(io.StringIO()):
+  with contextlib.redirect_stderr(io.StringIO()) as err:
     record = rescan()
   session.chmod(0o644)
-  expect("Claude serves an unchanged transcript from the index", record["todayTotalTokens"], 59000, record)
+  # Opening the file would fail and be reported; the index answers first.
+  expect("Claude serves an unchanged transcript from the index, never opening it",
+         [record["todayTotalTokens"], "unreadable" in err.getvalue()], [59000, False], record)
 
 # A file that shrank was rewritten, not appended to; it is read from the start.
 session.write_text(session.read_text().splitlines(keepends=True)[0])
