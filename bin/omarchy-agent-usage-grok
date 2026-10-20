@@ -203,15 +203,16 @@ def collect_limits(home, key, force):
     result["limits"] = fallback
     # The access token lives six hours and Grok mints a new one from its
     # refresh token whenever it starts, so a lapsed one is routine, not a
-    # sign-out. And while Grok hasn't run, nothing here has spent its
-    # allowance, so the last numbers still stand, an elapsed window at zero.
+    # sign-out: the limits are paused, the last numbers kept as stale, until
+    # Grok runs again. Only a refresh token past its 30 days is a sign-in to
+    # redo.
     if entry.get("refresh_token") and time.time() - expires.timestamp() < REFRESH_LIFETIME_SECONDS:
-      result["live"] = True
-      if result["limits"]:
-        result["authHelpText"] = ""
-      else:
-        result["usageStatusText"] = "Limits paused"
-        result["authHelpText"] = "Start Grok to see its limits; signing in again is not needed."
+      result["usageStatusText"] = "Limits paused"
+      result["authHelpText"] = (
+        "Grok's access token has lapsed"
+        + (" — showing the last known limits." if fallback else ".")
+        + " Start Grok to refresh it; signing in again is not needed."
+      )
     else:
       result["usageStatusText"] = "Sign-in expired"
       result["authHelpText"] = "Grok's saved sign-in expired. Start Grok to refresh it."

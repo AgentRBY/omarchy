@@ -114,19 +114,20 @@ expect("a lapsed sign-in keeps the last credits and says so",
        [record["usageStatusText"], record["limits"][0]["percent"], record["limitsStale"]], ["Sign-in expired", 0.42, True], record)
 
 # A lapsed access token with a refresh token is routine: Grok renews it when it
-# starts, and while it hasn't run nothing here has spent its allowance, so the
-# last numbers stand as current, with no sign-in asked for.
+# starts, so the limits are paused, the last numbers kept as stale, with no
+# sign-in asked for.
 signed_in(grok_home(), expires=iso_in(-3600), refresh_token="r")
 record = grok()
-expect("a lapsed access token with a refresh token keeps showing the last numbers",
-       [record["usageStatusText"], record["authHelpText"], record["limits"][0]["percent"], record["limitsStale"]], ["", "", 0.42, False], record)
+expect("a lapsed access token with a refresh token pauses the limits, keeping the last numbers stale",
+       [record["usageStatusText"], record["limits"][0]["percent"], record["limitsStale"], "Start Grok" in record["authHelpText"]],
+       ["Limits paused", 0.42, True, True], record)
 
 # A week that reset while Grok sat idle starts over at 0%, its next reset
 # unknown until xAI says.
 edit_limits_cache("grok", resets_past=True)
 record = grok()
 expect("a week that reset while Grok was idle starts over at zero",
-       [record["limits"][0]["percent"], record["limits"][0]["resetsAt"], record["limitsStale"]], [0.0, "", False], record)
+       [record["limits"][0]["percent"], record["limits"][0]["resetsAt"], record["limitsStale"]], [0.0, "", True], record)
 
 # Without cached numbers there's nothing to show, so it says how to get them.
 for path in limits_cache_files("grok"):
