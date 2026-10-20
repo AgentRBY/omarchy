@@ -74,6 +74,7 @@ The panel acts on a small vocabulary in `usageStatusText`, so the same situation
 | `"<Name> limits unavailable"` | A check failed with nothing kept to show |
 | `"<Name> unavailable"` | The agent's stats source failed (an unreadable database, a billing API that answered nothing) with nothing kept to show |
 | `"Balance unavailable"` | A prepaid balance couldn't be read and none was kept |
+| `"Out of credits"` | A prepaid account has no credit left, or its gateway rate limits it for that reason; urgent, since a balance with no funded figure raises no low-balance alarm of its own |
 
 The detail goes in `authHelpText`: what failed and the one thing to do about it. It is `""` when healthy. A plan the service doesn't offer limits for (pay-as-you-go, no Go plan, a free tier) isn't trouble: the status stays `""` and local stats show alone. Any other status shows under the name in the urgent color, so collectors don't invent new ones.
 
