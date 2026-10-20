@@ -251,9 +251,11 @@ def parse_file(path, entry):
       if row is not None:
         # A record with no time is dated once, by when the file was last
         # written as it is read: the index keeps it past today, and it must
-        # not count as today's on every day after.
+        # not count as today's on every day after. In whole milliseconds,
+        # floored: local_day rounds a float of seconds, which dates a write
+        # in the last half second of a day as the next.
         if row[2] is None:
-          row[2] = stat.st_mtime
+          row[2] = stat.st_mtime_ns // 1_000_000
         rows.append(row)
   return {
     "size": stat.st_size,
