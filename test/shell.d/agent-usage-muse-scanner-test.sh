@@ -1,491 +1,310 @@
 #!/bin/bash
 
+# The Muse collector's local metering: native `muse` CLI sessions and the
+# CLI's session index, plus its own filter over opencode and pi sessions (the
+# meta provider, never Muse Spark through OpenCode Zen). How the shared pi and
+# opencode readers work, and the unused-machine record, are held centrally by
+# the shared and partition tests, and the scan cache by the contract check.
+# Muse's limits have a test of their own.
+
 set -euo pipefail
 
-source "$(dirname "$0")/base-test.sh"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+source "$SHELL_TEST_DIR/agent-usage-helpers.sh"
 
-require_command jq
-require_command python3
-require_command sqlite3
-PYTHON=$(command -p -v python3)
+agent_sandbox
+require_command rg
 
-TEST_HOME=$(mktemp -d)
-trap 'rm -rf "$TEST_HOME"' EXIT
+python3 - <<'PY'
+import sqlite3
+from datetime import date, timedelta
 
-export HOME="$TEST_HOME"
-export XDG_CACHE_HOME="$TEST_HOME/.cache"
-export XDG_CONFIG_HOME="$TEST_HOME/.config"
-export XDG_DATA_HOME="$TEST_HOME/.local/share"
-export MUSE_DATA_DIR="$TEST_HOME/muse-data"
-unset META_API_KEY META_API_BASE_URL MUSE_AUTH_PATH PI_CODING_AGENT_DIR OPENCODE_DB
+from agent_usage_fixtures import *
 
-now_s=$(date +%s)
-now_us=$((now_s * 1000000))
-now_ms=$((now_s * 1000))
-old_s=$((now_s - 8 * 86400))
-old_us=$((old_s * 1000000))
-old_ms=$((old_s * 1000))
-old_date=$(date -d "@$old_s" +%F)
+NOW_US = int(time.time()) * 1_000_000
+NOW_MS = NOW_US // 1000
+OLD_US = NOW_US - 8 * 86400 * 1_000_000
+OLD_DATE = datetime.fromtimestamp(OLD_US / 1_000_000).astimezone().date().isoformat()
 
-# Native muse sessions: one main session with a model_completed event, one
-# subagent event under the same session, and one session from 8 days ago.
-mkdir -p "$MUSE_DATA_DIR/sessions/sess-A/subagent/sub-1" "$MUSE_DATA_DIR/sessions/sess-B"
-cat >"$MUSE_DATA_DIR/sessions/sess-A/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "metadata", "record": {"model_id": "muse-spark-1.3-contributor", "provider_id": "meta"}}}
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "muse-spark-1.3-contributor", "usage": {"input_tokens": 1000, "output_tokens": 100, "reasoning_tokens": 20, "cache_read_tokens": 600, "cache_write_tokens": 0}}}}
-EOF
-cat >"$MUSE_DATA_DIR/sessions/sess-A/subagent/sub-1/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "muse-spark-1.3-contributor", "usage": {"input_tokens": 500, "output_tokens": 50, "reasoning_tokens": 0, "cache_read_tokens": 100, "cache_write_tokens": 0}}}}
-EOF
-cat >"$MUSE_DATA_DIR/sessions/sess-B/session.jsonl" <<EOF
-{"recorded_at": $old_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "muse-spark-1.2-contributor", "usage": {"input_tokens": 2000, "output_tokens": 200, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-EOF
 
-# opencode database: one meta row, and rows that must be ignored: Muse Spark
-# through the Zen gateway (the opencode record counts it) and an unrelated
-# provider.
-mkdir -p "$XDG_DATA_HOME/opencode"
-db_path="$XDG_DATA_HOME/opencode/opencode.db"
-sqlite3 "$db_path" <<EOF
-CREATE TABLE message (session_id TEXT, data TEXT);
-INSERT INTO message VALUES ('op-1', '{"role":"assistant","providerID":"meta","modelID":"muse-spark-1.2-contributor","tokens":{"input":300,"output":60,"reasoning":10,"cache":{"read":90,"write":7}},"time":{"created":$now_ms}}');
-INSERT INTO message VALUES ('op-2', '{"role":"assistant","providerID":"opencode","modelID":"muse-spark-1.3-contributor-free","tokens":{"input":100,"output":20,"reasoning":0,"cache":{"read":30,"write":0}},"time":{"created":$now_ms}}');
-INSERT INTO message VALUES ('op-3', '{"role":"assistant","providerID":"openai","modelID":"gpt-5.4","tokens":{"input":999,"output":999,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":$now_ms}}');
-INSERT INTO message VALUES ('op-4', '{"role":"user","model":{"providerID":"opencode","modelID":"muse-spark-1.3-contributor-free"},"time":{"created":$now_ms}}');
-EOF
+def muse_dir():
+  return Path(os.environ["MUSE_DATA_DIR"])
 
-result=$("$ROOT/bin/omarchy-agent-usage-muse" --force)
 
-# Test 1: Collector identifies itself with prompt stats and no limits
-[[ $(jq -r '.id' <<<"$result") == "muse" ]] ||
-  fail "Muse collector identifies as 'muse'" "$result"
-[[ $(jq -r '.ready' <<<"$result") == "true" ]] ||
-  fail "Muse collector reports ready with recorded usage" "$result"
-[[ $(jq -r '.hasPromptStats' <<<"$result") == "true" ]] ||
-  fail "Muse collector reports prompt stats" "$result"
-[[ $(jq -r '.limits | length' <<<"$result") == "0" ]] ||
-  fail "Muse collector reports no limits without an API key" "$result"
-[[ $(jq 'has("balance")' <<<"$result") == "false" ]] ||
-  fail "Muse collector reports metering only, no balance" "$result"
-pass "Muse collector identifies as 'muse' with metering-only record"
+def new_muse_home():
+  sandbox()
+  os.environ["MUSE_DATA_DIR"] = str(home() / "muse-data")
 
-# Test 2: Token totals sum native sessions and opencode rows
-# Native input_tokens include cached tokens, so uncached input is split out:
-# sess-A main (1000-600) + 100 out + 600 cached = 1100; subagent
-# (500-100) + 50 + 100 = 550. opencode input is already cache-exclusive:
-# meta 300 + 70 + 90 + 7 = 467. The Zen-proxied row stays out.
-# Today: 1100 + 550 + 467 = 2117.
-[[ $(jq -r '.todayTotalTokens' <<<"$result") == "2117" ]] ||
-  fail "Muse collector sums today's tokens across sources" "$result"
-[[ $(jq -r '.todayPrompts' <<<"$result") == "3" ]] ||
-  fail "Muse collector counts today's prompts" "$result"
-pass "Muse collector sums today's tokens across sources"
 
-# Test 3: Subagent sessions roll up into the parent session
-# sess-A main + subagent = 1 session; plus 1 opencode session = 2 today,
-# 3 all-time with sess-B.
-[[ $(jq -r '.todaySessions' <<<"$result") == "2" ]] ||
-  fail "Muse collector rolls subagents into the parent session" "$result"
-[[ $(jq -r '.totalSessions' <<<"$result") == "3" ]] ||
-  fail "Muse collector counts all-time sessions" "$result"
-[[ $(jq -r '.totalPrompts' <<<"$result") == "4" ]] ||
-  fail "Muse collector counts all-time prompts" "$result"
-pass "Muse collector rolls subagents into the parent session"
+def completion(model=None, recorded_at=NOW_US, input=0, output=0, reasoning=0, cache_read=0, cache_write=0, **usage):
+  event = {"kind": "model_completed", "usage": {"input_tokens": input, "output_tokens": output, "reasoning_tokens": reasoning,
+                                                 "cache_read_tokens": cache_read, "cache_write_tokens": cache_write, **usage}}
+  if model is not None:
+    event["model"] = model
+  line = {"payload": {"kind": "run", "event": event}}
+  if recorded_at is not None:
+    line["recorded_at"] = recorded_at
+  return line
 
-# Test 4: Per-model breakdowns use flat numeric totals and split buckets
-[[ $(jq -r '.todayTokensByModel.["muse-spark-1.3-contributor"]' <<<"$result") == "1650" ]] ||
-  fail "Muse collector tracks todayTokensByModel as flat numeric totals" "$result"
-usage_13=$(jq '.modelUsage.["muse-spark-1.3-contributor"]' <<<"$result")
-[[ $(jq -r '.inputTokens' <<<"$usage_13") == "800" ]] ||
-  fail "Muse collector splits cached tokens out of native input" "$result"
-[[ $(jq -r '.outputTokens' <<<"$usage_13") == "150" ]] ||
-  fail "Muse collector does not double-count native reasoning tokens" "$result"
-[[ $(jq -r '.cacheReadInputTokens' <<<"$usage_13") == "700" ]] ||
-  fail "Muse collector tracks native cache reads" "$result"
-usage_meta=$(jq '.modelUsage.["muse-spark-1.2-contributor"]' <<<"$result")
-[[ $(jq -r '.inputTokens' <<<"$usage_meta") == "2300" ]] ||
-  fail "Muse collector keeps opencode input cache-exclusive" "$result"
-pass "Muse collector tracks per-model breakdowns"
 
-# Test 5: Active dates include history outside the 7-day window
-[[ $(jq -r --arg d "$old_date" '.activeDates | index($d) != null' <<<"$result") == "true" ]] ||
-  fail "Muse collector unions active dates beyond recent days" "$result"
-[[ $(jq -r '.recentDays | length' <<<"$result") == "7" ]] ||
-  fail "Muse collector reports a 7-day window" "$result"
-pass "Muse collector unions active dates beyond recent days"
+def model_record(kind, model):
+  return {"recorded_at": NOW_US, "payload": {"kind": kind, "record": {"model_id": model}}}
 
-# Test 6: Without sources, returns an empty unreadied record
-mkdir -p "$TEST_HOME/empty-home"
-result_empty=$(HOME="$TEST_HOME/empty-home" MUSE_DATA_DIR="$TEST_HOME/empty-muse" XDG_DATA_HOME="$TEST_HOME/empty-share" XDG_CACHE_HOME="$TEST_HOME/empty-cache" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_empty") == "0" ]] ||
-  fail "Muse collector returns empty stats without sources" "$result_empty"
-[[ $(jq -r '.ready' <<<"$result_empty") == "false" ]] ||
-  fail "Muse collector reports not ready without sources" "$result_empty"
-# Nobody signed in to Muse: no plan either, so the panel skips the record.
-[[ $(jq -c '[.tierLabel, .limits, .limitsStale]' <<<"$result_empty") == '["",[],false]' ]] ||
-  fail "Muse collector names no plan without a sign-in" "$result_empty"
-# Local metering needs no credentials, so there is never an auth state to
-# report — even on a machine with no usage at all.
-[[ $(jq -r '.usageStatusText' <<<"$result_empty") == "" ]] ||
-  fail "Muse collector reports no status without sources" "$result_empty"
-[[ $(jq -r '.authHelpText' <<<"$result_empty") == "" ]] ||
-  fail "Muse collector reports no auth help without sources" "$result_empty"
-pass "Muse collector returns empty stats without sources"
 
-# Test 7: Schema matches panel expectations
-[[ $(jq 'has("schemaVersion") and has("ready") and has("limits") and has("recentDays") and has("modelUsage") and has("activeDates")' <<<"$result") == "true" ]] ||
-  fail "Muse collector emits correct schema" "$result"
-pass "Muse collector emits correct schema"
+def session(relative, *lines, root=None):
+  path = (root or muse_dir() / "sessions") / relative / "session.jsonl"
+  path.parent.mkdir(parents=True, exist_ok=True)
+  path.write_text("".join((line if isinstance(line, str) else json.dumps(line)) + "\n" for line in lines))
+  return path
 
-# Test 8: Symlinked session files are skipped, never followed
-# A symlink to a real session would double-count it if followed; a dangling
-# one must not error the scan; and a session reached via a symlinked
-# directory must not escape the tree. Totals stay at the Test 2 baseline.
-mkdir -p "$MUSE_DATA_DIR/sessions/sess-link" "$MUSE_DATA_DIR/sessions/sess-dangling" "$TEST_HOME/outside/evil"
-cat >"$TEST_HOME/outside/evil/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "evil-model", "usage": {"input_tokens": 100, "output_tokens": 10, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-EOF
-ln -s "$MUSE_DATA_DIR/sessions/sess-A/session.jsonl" "$MUSE_DATA_DIR/sessions/sess-link/session.jsonl"
-ln -s "$MUSE_DATA_DIR/sessions/nope/session.jsonl" "$MUSE_DATA_DIR/sessions/sess-dangling/session.jsonl"
-ln -s "$TEST_HOME/outside/evil" "$MUSE_DATA_DIR/sessions/sess-evildir"
-result_link=$("$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_link") == "2117" ]] ||
-  fail "Muse collector skips symlinked session files" "$result_link"
-[[ $(jq -r '.modelUsage | has("evil-model")' <<<"$result_link") == "false" ]] ||
-  fail "Muse collector rejects sessions outside the tree" "$result_link"
-pass "Muse collector skips symlinked session files"
 
-# Test 9: Oversized model names fail the row closed
-# A 500-character model id with real tokens must not bloat the record:
-# totals stay put and the model never appears.
-mkdir -p "$MUSE_DATA_DIR/sessions/sess-huge" "$MUSE_DATA_DIR/sessions/sess-huge-metadata"
-big_model=$(printf 'x%.0s' {1..500})
-cat >"$MUSE_DATA_DIR/sessions/sess-huge/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "$big_model", "usage": {"input_tokens": 100, "output_tokens": 10, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-EOF
-cat >"$MUSE_DATA_DIR/sessions/sess-huge-metadata/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "metadata", "record": {"model_id": "$big_model"}}}
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "usage": {"input_tokens": 100, "output_tokens": 10, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-EOF
-result_huge=$("$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_huge") == "2117" ]] ||
-  fail "Muse collector skips oversized model names" "$result_huge"
-[[ $(jq -r '.modelUsage | length' <<<"$result_huge") == "2" ]] ||
-  fail "Muse collector keeps oversized models out of the breakdown" "$result_huge"
-pass "Muse collector skips oversized model names"
+def oc_tokens(input, output=0, reasoning=0, read=0, write=0):
+  return {"input": input, "output": output, "reasoning": reasoning, "cache": {"read": read, "write": write}}
 
-# Test 10: Many distinct models stay exact in totals
-# 70 distinct models plus the 2 baseline ones: every bucket is kept and the
-# totals reconcile exactly.
-NOW_US="$now_us" "$PYTHON" - <<'PY'
-import json
-import os
-from pathlib import Path
-root = Path(os.environ["MUSE_DATA_DIR"]) / "sessions" / "sess-many"
-root.mkdir(parents=True, exist_ok=True)
-now_us = int(os.environ["NOW_US"])
-with (root / "session.jsonl").open("w", encoding="utf-8") as handle:
-    for i in range(70):
-        handle.write(json.dumps({
-            "recorded_at": now_us,
-            "payload": {"kind": "run", "event": {
-                "kind": "model_completed",
-                "model": "cap-model-%02d" % i,
-                "usage": {"input_tokens": 10, "output_tokens": 0,
-                          "reasoning_tokens": 0, "cache_read_tokens": 0,
-                          "cache_write_tokens": 0},
-            }},
-        }) + "\n")
-PY
-result_cap=$("$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_cap") == "2817" ]] ||
-  fail "Muse collector keeps exact totals with many models" "$result_cap"
-[[ $(jq -r '.modelUsage | length' <<<"$result_cap") == "72" ]] ||
-  fail "Muse collector keeps every model in the breakdown" "$result_cap"
-# Scan order varies, so reconcile instead of naming names: every bucket must
-# sum to the all-time total (today 2817 + sess-B 2200).
-[[ $(jq -r '[.modelUsage[] | .inputTokens + .outputTokens + .cacheReadInputTokens + .cacheCreationInputTokens] | add' <<<"$result_cap") == "5017" ]] ||
-  fail "Muse collector accounts every token with many models" "$result_cap"
-pass "Muse collector keeps exact totals with many models"
 
-# Test 11: Negative token fields cannot reduce recorded usage
-mkdir -p "$MUSE_DATA_DIR/sessions/sess-negative"
-cat >"$MUSE_DATA_DIR/sessions/sess-negative/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "negative-model", "usage": {"input_tokens": -100, "output_tokens": 10, "reasoning_tokens": -5, "cache_read_tokens": -20, "cache_write_tokens": -30}}}}
-EOF
-result_negative=$("$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.modelUsage.["negative-model"] | [.inputTokens, .outputTokens, .cacheReadInputTokens, .cacheCreationInputTokens] == [0, 10, 0, 0]' <<<"$result_negative") == "true" ]] ||
-  fail "Muse collector clamps negative token fields" "$result_negative"
-pass "Muse collector clamps negative token fields"
+def muse(*args):
+  return collect("muse", *(args or ("--force",)))
 
-# Test 12: Normal runs reuse the short local scan cache; --force bypasses it
-negative_total=$(jq -r '.todayTotalTokens' <<<"$result_negative")
-cat >>"$MUSE_DATA_DIR/sessions/sess-negative/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "negative-model", "usage": {"input_tokens": 5, "output_tokens": 0, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-EOF
-result_scan_cached=$("$ROOT/bin/omarchy-agent-usage-muse")
-result_scan_forced=$("$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_scan_cached") == "$negative_total" ]] ||
-  fail "Muse collector reuses a fresh local scan" "$result_scan_cached"
-[[ $(jq -r '.todayTotalTokens' <<<"$result_scan_forced") == "$((negative_total + 5))" ]] ||
-  fail "Muse collector force-refreshes local stats" "$result_scan_forced"
-pass "Muse collector caches local scans and honors --force"
 
-# Test 13: The default native data path follows XDG_DATA_HOME
-xdg_home="$TEST_HOME/xdg"
-mkdir -p "$xdg_home/data/muse/sessions/xdg-session"
-cat >"$xdg_home/data/muse/sessions/xdg-session/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "muse-spark-1.3", "usage": {"input_tokens": 10, "output_tokens": 2, "reasoning_tokens": 1, "cache_read_tokens": 4, "cache_write_tokens": 0}}}}
-EOF
-result_xdg=$(HOME="$xdg_home" XDG_DATA_HOME="$xdg_home/data" XDG_CONFIG_HOME="$xdg_home/config" XDG_CACHE_HOME="$xdg_home/cache" MUSE_DATA_DIR="" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_xdg") == "12" ]] ||
-  fail "Muse collector follows XDG_DATA_HOME" "$result_xdg"
-pass "Muse collector follows XDG_DATA_HOME"
+def pick(record, *keys):
+  return {key: record[key] for key in keys}
 
-# Test 14: run_model tracking, retained_frame children, and timestamp fallbacks
-# A completion without an explicit model inherits the run_model id; a
-# retained_frame wrapper's record_json child parses like a plain event; ISO
-# timestamps land on today; and a missing recorded_at falls back to the file
-# mtime (today for a new file). 110 + 55 + 22 + 7 = 194 in one session.
-ev_home="$TEST_HOME/events"
-mkdir -p "$ev_home/muse-data/sessions/sess-events"
-now_iso=$(date +%FT%T%:z)
-cat >"$ev_home/muse-data/sessions/sess-events/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "run_model", "record": {"model_id": "model-via-run-model"}}}
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "usage": {"input_tokens": 100, "output_tokens": 10, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-{"recorded_at": "$now_iso", "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "model-explicit", "usage": {"input_tokens": 50, "output_tokens": 5, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-{"children": [{"record_json": "{\"recorded_at\": $now_us, \"payload\": {\"kind\": \"run\", \"event\": {\"kind\": \"model_completed\", \"model\": \"model-via-child\", \"usage\": {\"input_tokens\": 20, \"output_tokens\": 2, \"reasoning_tokens\": 0, \"cache_read_tokens\": 0, \"cache_write_tokens\": 0}}}}"}]}
-{"payload": {"kind": "run", "event": {"kind": "model_completed", "model": "model-via-mtime", "usage": {"input_tokens": 7, "output_tokens": 0, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-EOF
-result_ev=$(HOME="$ev_home" XDG_DATA_HOME="$ev_home/data" XDG_CACHE_HOME="$ev_home/cache" MUSE_DATA_DIR="$ev_home/muse-data" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_ev") == "194" ]] ||
-  fail "Muse collector counts every event shape" "$result_ev"
-[[ $(jq -r '.todayPrompts' <<<"$result_ev") == "4" ]] ||
-  fail "Muse collector counts prompts across event shapes" "$result_ev"
-[[ $(jq -r '.todaySessions' <<<"$result_ev") == "1" ]] ||
-  fail "Muse collector keeps one session's events together" "$result_ev"
-[[ $(jq -r '.modelUsage.["model-via-run-model"] | [.inputTokens, .outputTokens] == [100, 10]' <<<"$result_ev") == "true" ]] ||
-  fail "Muse collector tracks the run_model id" "$result_ev"
-[[ $(jq -r '.modelUsage.["model-via-child"] | [.inputTokens, .outputTokens] == [20, 2]' <<<"$result_ev") == "true" ]] ||
-  fail "Muse collector parses retained_frame children" "$result_ev"
-[[ $(jq -r '.todayTokensByModel | keys | sort == ["model-explicit", "model-via-child", "model-via-mtime", "model-via-run-model"]' <<<"$result_ev") == "true" ]] ||
-  fail "Muse collector files ISO and mtime events under today" "$result_ev"
-pass "Muse collector handles run_model, children, and timestamp fallbacks"
 
-# Test 15: A corrupt opencode database cannot break the native scan
-# The native sessions still report, and the incomplete scan is served but
-# never cached.
-corrupt_home="$TEST_HOME/corrupt"
-mkdir -p "$corrupt_home/muse-data/sessions/sess-native" "$corrupt_home/data/opencode"
-cat >"$corrupt_home/muse-data/sessions/sess-native/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "native-model", "usage": {"input_tokens": 30, "output_tokens": 3, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-EOF
-printf 'not a database' >"$corrupt_home/data/opencode/opencode.db"
-corrupt_env=(env HOME="$corrupt_home" XDG_DATA_HOME="$corrupt_home/data" XDG_CACHE_HOME="$corrupt_home/cache" MUSE_DATA_DIR="$corrupt_home/muse-data")
-result_corrupt=$("${corrupt_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_corrupt") == "33" ]] ||
-  fail "Muse collector serves native stats past a corrupt database" "$result_corrupt"
-[[ $(jq -r '.ready' <<<"$result_corrupt") == "true" ]] ||
-  fail "Muse collector reports ready past a corrupt database" "$result_corrupt"
-shopt -s nullglob
-corrupt_cached=("$corrupt_home"/cache/omarchy/agent-usage/muse-scan-*.json)
-shopt -u nullglob
-(( ${#corrupt_cached[@]} == 0 )) ||
-  fail "Muse collector refuses to cache an incomplete scan" "$result_corrupt"
-result_corrupt_again=$("${corrupt_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse")
-[[ $(jq -r '.todayTotalTokens' <<<"$result_corrupt_again") == "33" ]] ||
-  fail "Muse collector repeats the scan past a corrupt database" "$result_corrupt_again"
-pass "Muse collector survives a corrupt opencode database"
+# ---------------------------------------------------------- native and opencode
 
-# Test 16: --limits-only reuses a scan for far longer than a normal run
-lo_home="$TEST_HOME/limits-only"
-mkdir -p "$lo_home/muse-data/sessions/sess-lo"
-cat >"$lo_home/muse-data/sessions/sess-lo/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "lo-model", "usage": {"input_tokens": 40, "output_tokens": 0, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-EOF
-lo_env=(env HOME="$lo_home" XDG_DATA_HOME="$lo_home/data" XDG_CACHE_HOME="$lo_home/cache" MUSE_DATA_DIR="$lo_home/muse-data")
-result_lo_base=$("${lo_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_lo_base") == "40" ]] ||
-  fail "Muse collector scans the limits-only fixture" "$result_lo_base"
-cat >>"$lo_home/muse-data/sessions/sess-lo/session.jsonl" <<EOF
-{"recorded_at": $now_us, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "lo-model", "usage": {"input_tokens": 8, "output_tokens": 0, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-EOF
-result_lo_cached=$("${lo_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --limits-only)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_lo_cached") == "40" ]] ||
-  fail "Muse collector reuses a scan for --limits-only" "$result_lo_cached"
-result_lo_forced=$("${lo_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_lo_forced") == "48" ]] ||
-  fail "Muse collector force-refreshes past --limits-only" "$result_lo_forced"
-pass "Muse collector honors --limits-only cache reuse"
+# One main session with a completion and a subagent under it, one session from
+# 8 days ago, and opencode rows: Meta's own (counted), Muse Spark through Zen
+# (the opencode record's), another provider, and a prompt.
+new_muse_home()
+session("sess-A",
+        {"recorded_at": NOW_US, "payload": {"kind": "metadata", "record": {"model_id": "muse-spark-1.3-contributor", "provider_id": "meta"}}},
+        completion("muse-spark-1.3-contributor", input=1000, output=100, reasoning=20, cache_read=600))
+session("sess-A/subagent/sub-1", completion("muse-spark-1.3-contributor", input=500, output=50, cache_read=100))
+session("sess-B", completion("muse-spark-1.2-contributor", OLD_US, input=2000, output=200))
+opencode_db(message=[
+  ("op-1", "op-1", oc_v1("meta", oc_tokens(300, 60, 10, 90, 7), model="muse-spark-1.2-contributor", created=NOW_MS)),
+  ("op-2", "op-2", oc_v1("opencode", oc_tokens(100, 20, read=30), model="muse-spark-1.3-contributor-free", created=NOW_MS)),
+  ("op-3", "op-3", oc_v1("openai", oc_tokens(999, 999), model="gpt-5.4", created=NOW_MS)),
+  ("op-4", "op-4", oc_v1("opencode", oc_tokens(0), model="muse-spark-1.3-contributor-free", created=NOW_MS, role="user")),
+])
+record = muse()
+# Native input includes cached tokens, so uncached input is split out: sess-A
+# (1000-600) + 100 out + 600 cached = 1100; the subagent (500-100) + 50 + 100
+# = 550. opencode input is already cache-exclusive: 300 + 70 + 90 + 7 = 467.
+expect("Muse sums native sessions and Meta's opencode rows, with metering only", pick(record, "ready", "hasPromptStats", "limits", "todayTotalTokens", "todayPrompts") | {"balance": "balance" in record},
+       {"ready": True, "hasPromptStats": True, "limits": [], "todayTotalTokens": 2117, "todayPrompts": 3, "balance": False}, record)
+expect("Muse rolls subagents into their parent session",
+       pick(record, "todaySessions", "totalSessions", "totalPrompts"), {"todaySessions": 2, "totalSessions": 3, "totalPrompts": 4}, record)
+expect("Muse splits cached tokens out of native input without counting reasoning twice, and keeps opencode input as it is", {
+  "today13": record["todayTokensByModel"]["muse-spark-1.3-contributor"],
+  "m13": record["modelUsage"]["muse-spark-1.3-contributor"],
+  "m12input": record["modelUsage"]["muse-spark-1.2-contributor"]["inputTokens"],
+}, {
+  "today13": 1650,
+  "m13": {"cacheCreationInputTokens": 0, "cacheReadInputTokens": 700, "inputTokens": 800, "outputTokens": 150},
+  "m12input": 2300,
+}, record)
+check("Muse keeps active dates from before the recent week", OLD_DATE in record["activeDates"], record["activeDates"])
 
-# Test 17: Odd timestamp and token shapes cannot misfile or drop usage
-# A microsecond epoch emitted as a string still lands on its real day (8 days
-# ago, outside the 7-day window); a boolean timestamp falls back to the
-# file's own time (today) instead of 1970; a non-dict opencode time object
-# reads as no time at all, so the row is today's, as every collector reading
-# opencode files it; a non-dict tokens object skips just that row; and a
-# non-dict cache object keeps the row's input. Today: 5 + 44 + 11 = 60.
-odd_home="$TEST_HOME/odd-shapes"
-mkdir -p "$odd_home/muse-data/sessions/sess-odd" "$odd_home/data/opencode"
-cat >"$odd_home/muse-data/sessions/sess-odd/session.jsonl" <<EOF
-{"recorded_at": "$old_us", "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "string-ts-model", "usage": {"input_tokens": 60, "output_tokens": 6, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-{"recorded_at": true, "payload": {"kind": "run", "event": {"kind": "model_completed", "model": "bool-ts-model", "usage": {"input_tokens": 5, "output_tokens": 0, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-EOF
-sqlite3 "$odd_home/data/opencode/opencode.db" <<EOF
-CREATE TABLE message (session_id TEXT, data TEXT);
-INSERT INTO message VALUES ('odd-1', '{"role":"assistant","providerID":"meta","modelID":"odd-time-model","tokens":{"input":40,"output":4,"reasoning":0,"cache":{"read":0,"write":0}},"time":12345}');
-INSERT INTO message VALUES ('odd-2', '{"role":"assistant","providerID":"meta","modelID":"odd-tokens-model","tokens":[1,2],"time":{"created":$now_ms}}');
-INSERT INTO message VALUES ('odd-3', '{"role":"assistant","providerID":"meta","modelID":"odd-cache-model","tokens":{"input":11,"output":0,"reasoning":0,"cache":"nope"},"time":{"created":$now_ms}}');
-EOF
-result_odd=$(HOME="$odd_home" XDG_DATA_HOME="$odd_home/data" XDG_CACHE_HOME="$odd_home/cache" MUSE_DATA_DIR="$odd_home/muse-data" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -r '.todayTotalTokens' <<<"$result_odd") == "60" ]] ||
-  fail "Muse collector totals odd shapes without misfiling" "$result_odd"
-[[ $(jq -r '.totalPrompts' <<<"$result_odd") == "4" ]] ||
-  fail "Muse collector counts prompts across odd shapes" "$result_odd"
-[[ $(jq -r --arg d "$old_date" '.activeDates | index($d) != null' <<<"$result_odd") == "true" ]] ||
-  fail "Muse collector files string epochs on their real day" "$result_odd"
-[[ $(jq -r '.activeDates | index("1969-12-31") != null or index("1970-01-01") != null' <<<"$result_odd") == "false" ]] ||
-  fail "Muse collector keeps booleans out of 1970" "$result_odd"
-[[ $(jq -r '.modelUsage.["odd-time-model"] | [.inputTokens, .outputTokens] == [40, 4]' <<<"$result_odd") == "true" ]] ||
-  fail "Muse collector keeps tokens past a malformed time object" "$result_odd"
-[[ $(jq -r '.modelUsage | has("odd-tokens-model")' <<<"$result_odd") == "false" ]] ||
-  fail "Muse collector skips only the malformed tokens row" "$result_odd"
-[[ $(jq -r '.modelUsage.["odd-cache-model"] | [.inputTokens, .outputTokens] == [11, 0]' <<<"$result_odd") == "true" ]] ||
-  fail "Muse collector keeps input past a malformed cache object" "$result_odd"
-pass "Muse collector survives odd timestamp and token shapes"
+# A symlink to a real session would count it twice if followed, a dangling one
+# must not break the scan, and a session reached through a symlinked directory
+# must not escape the tree.
+outside = session("evil", completion("evil-model", input=100, output=10), root=home() / "outside")
+(muse_dir() / "sessions" / "sess-link").mkdir()
+(muse_dir() / "sessions" / "sess-link" / "session.jsonl").symlink_to(muse_dir() / "sessions" / "sess-A" / "session.jsonl")
+(muse_dir() / "sessions" / "sess-dangling").mkdir()
+(muse_dir() / "sessions" / "sess-dangling" / "session.jsonl").symlink_to(muse_dir() / "sessions" / "nope" / "session.jsonl")
+(muse_dir() / "sessions" / "sess-evildir").symlink_to(outside.parent)
+record = muse()
+expect("Muse skips symlinked session files and sessions outside the tree",
+       [record["todayTotalTokens"], "evil-model" in record["modelUsage"]], [2117, False], record)
 
-# OpenCode V2 nests the provider under `model` in session_message. A message
-# migrated into both stores counts once, and Zen's Muse Spark stays out.
-v2_home="$TEST_HOME/v2"
-mkdir -p "$v2_home/data/opencode"
-sqlite3 "$v2_home/data/opencode/opencode.db" <<EOF
-CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);
-CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, time_created INTEGER, data TEXT);
-INSERT INTO session_message VALUES ('m1', 'v2-a', 'assistant', $now_ms, '{"model":{"providerID":"meta","id":"muse-spark-1.3"},"tokens":{"input":100,"output":10,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":$now_ms}}');
-INSERT INTO session_message VALUES ('m2', 'v2-a', 'compaction', $now_ms, '{"model":{"providerID":"meta","id":"muse-spark-1.3"},"tokens":{"input":5,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":$now_ms}}');
-INSERT INTO session_message VALUES ('m3', 'v2-a', 'assistant', $now_ms, '{"model":{"providerID":"opencode","id":"muse-spark-1.3-free"},"tokens":{"input":999,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":$now_ms}}');
-INSERT INTO message VALUES ('m1', 'v2-a', '{"role":"assistant","providerID":"meta","modelID":"muse-spark-1.3","tokens":{"input":100,"output":10,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":$now_ms}}');
-EOF
-result_v2=$(HOME="$v2_home" XDG_DATA_HOME="$v2_home/data" XDG_CACHE_HOME="$v2_home/cache" MUSE_DATA_DIR="$v2_home/muse-data" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -c '{todayTotalTokens, totalPrompts, totalSessions}' <<<"$result_v2") == '{"todayTotalTokens":115,"totalPrompts":2,"totalSessions":1}' ]] ||
-  fail "Muse collector reads OpenCode V2 records once each" "$result_v2"
-pass "Muse collector reads OpenCode V2 records once each"
+# A model id too long for the record fails its row closed, named on the
+# completion or on the metadata before it.
+big_model = "x" * 500
+session("sess-huge", completion(big_model, input=100, output=10))
+session("sess-huge-metadata", model_record("metadata", big_model), completion(input=100, output=10))
+record = muse()
+expect("Muse skips completions under an oversized model name", [record["todayTotalTokens"], len(record["modelUsage"])], [2117, 2], record)
 
-# Current Muse logs carry a completion as record_type "event" with no payload
-# kind, and report cached tokens inside input_tokens; a cache figure larger
+# Many distinct models stay exact: every bucket is kept and the totals
+# reconcile with the all-time total (today's 2817 and sess-B's 2200).
+session("sess-many", *(completion("cap-model-%02d" % i, input=10) for i in range(70)))
+record = muse()
+expect("Muse keeps exact totals and every bucket with many models",
+       [record["todayTotalTokens"], len(record["modelUsage"]), sum(sum(bucket.values()) for bucket in record["modelUsage"].values())],
+       [2817, 72, 5017], record)
+
+# Negative counts can't take usage away.
+session("sess-negative", completion("negative-model", input=-100, output=10, reasoning=-5, cache_read=-20, cache_write=-30))
+record = muse()
+expect("Muse clamps negative token fields", record["modelUsage"]["negative-model"],
+       {"cacheCreationInputTokens": 0, "cacheReadInputTokens": 0, "inputTokens": 0, "outputTokens": 10}, record)
+
+# ---------------------------------------------------------------- sources
+
+# Without MUSE_DATA_DIR the native sessions are under XDG_DATA_HOME.
+sandbox()
+session("xdg-session", completion("muse-spark-1.3", input=10, output=2, reasoning=1, cache_read=4), root=data_home() / "muse" / "sessions")
+record = muse()
+expect("Muse follows XDG_DATA_HOME", record["todayTotalTokens"], 12, record)
+
+# A completion without a model takes the run_model's, a retained frame's
+# record_json child reads like a plain event, an ISO stamp lands on today, and
+# a missing recorded_at falls back on the file's time.
+new_muse_home()
+child = completion("model-via-child", input=20, output=2)
+session("sess-events",
+        model_record("run_model", "model-via-run-model"),
+        completion(input=100, output=10),
+        completion("model-explicit", datetime.now().astimezone().isoformat(timespec="seconds"), input=50, output=5),
+        {"children": [{"record_json": json.dumps(child)}]},
+        completion("model-via-mtime", None, input=7))
+record = muse()
+expect("Muse counts every event shape in one session", pick(record, "todayTotalTokens", "todayPrompts", "todaySessions") | {
+  "runModel": record["modelUsage"]["model-via-run-model"]["inputTokens"] + record["modelUsage"]["model-via-run-model"]["outputTokens"],
+  "child": record["modelUsage"]["model-via-child"]["inputTokens"] + record["modelUsage"]["model-via-child"]["outputTokens"],
+  "today": sorted(record["todayTokensByModel"]),
+}, {
+  "todayTotalTokens": 194, "todayPrompts": 4, "todaySessions": 1, "runModel": 110, "child": 22,
+  "today": ["model-explicit", "model-via-child", "model-via-mtime", "model-via-run-model"],
+}, record)
+
+# Current logs carry a completion as record_type "event" with no payload
+# kind, and count cached tokens inside input_tokens; a cache figure larger
 # than its input never claims more than the input.
-index_home="$TEST_HOME/index"
-mkdir -p "$index_home/muse-data/sessions/2026/10/12/demo"
-cat >"$index_home/muse-data/sessions/2026/10/12/demo/session.jsonl" <<EOF
-{"schema_version": 1, "recorded_at": $now_us, "record_type": "event", "payload_type": "runtime.session", "payload": {"event": {"kind": "model_completed", "model": "muse-wonder-1.0", "usage": {"input_tokens": 38219, "output_tokens": 290, "cache_read_tokens": 0, "cache_write_tokens": 0}}}}
-{"schema_version": 1, "recorded_at": $((now_us + 1000)), "record_type": "event", "payload_type": "runtime.session", "payload": {"event": {"kind": "model_completed", "model": "muse-wonder-1.0", "usage": {"input_tokens": 42901, "output_tokens": 357, "cache_read_tokens": 38132, "cache_write_tokens": 0}}}}
-{"schema_version": 1, "recorded_at": $((now_us + 2000)), "record_type": "event", "payload_type": "runtime.session", "payload": {"event": {"kind": "model_completed", "model": "muse-wonder-1.0", "usage": {"input_tokens": 10, "output_tokens": 1, "cache_read_tokens": 50, "cache_write_tokens": 7}}}}
-{"payload": {"event": {"kind": "model_completed", "model": "muse", "usage": {"estimated_tokens": 5}}}}
-{"payload": {"event": {"kind": "tool_completed", "usage": {"input_tokens": 999}}}}
-EOF
-index_env=(env HOME="$index_home" XDG_DATA_HOME="$index_home/data" XDG_CACHE_HOME="$index_home/cache" MUSE_DATA_DIR="$index_home/muse-data")
-result_noindex=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -c '{totalPrompts, totalSessions, todayPrompts, todayTotalTokens, m: .modelUsage["muse-wonder-1.0"]}' <<<"$result_noindex") == '{"totalPrompts":3,"totalSessions":1,"todayPrompts":3,"todayTotalTokens":81778,"m":{"cacheCreationInputTokens":0,"cacheReadInputTokens":38142,"inputTokens":42988,"outputTokens":648}}' ]] ||
-  fail "Muse collector reads current event logs and clamps cache tokens to input" "$result_noindex"
-pass "Muse collector reads current event logs and clamps cache tokens to input"
+new_muse_home()
+
+
+def current(input, output, cache_read=None, cache_write=None, offset=0):
+  usage = {"input_tokens": input, "output_tokens": output}
+  if cache_read is not None:
+    usage.update(cache_read_tokens=cache_read, cache_write_tokens=cache_write)
+  return {"schema_version": 1, "recorded_at": NOW_US + offset, "record_type": "event", "payload_type": "runtime.session",
+          "payload": {"event": {"kind": "model_completed", "model": "muse-wonder-1.0", "usage": usage}}}
+
+
+session("2026/10/12/demo",
+        current(38219, 290, 0, 0),
+        current(42901, 357, 38132, 0, 1000),
+        current(10, 1, 50, 7, 2000),
+        {"payload": {"event": {"kind": "model_completed", "model": "muse", "usage": {"estimated_tokens": 5}}}},
+        {"payload": {"event": {"kind": "tool_completed", "usage": {"input_tokens": 999}}}})
+record = muse()
+expect("Muse reads current event logs and clamps cache tokens to the input", pick(record, "totalPrompts", "totalSessions", "todayPrompts", "todayTotalTokens") | {"m": record["modelUsage"]["muse-wonder-1.0"]},
+       {"totalPrompts": 3, "totalSessions": 1, "todayPrompts": 3, "todayTotalTokens": 81778,
+        "m": {"cacheCreationInputTokens": 0, "cacheReadInputTokens": 38142, "inputTokens": 42988, "outputTokens": 648}}, record)
 
 # The CLI's session index holds the real prompt and session counts: a session
-# nobody prompted isn't one, and an undated row counts on no day. Without the
-# index (above) completions stand in for prompts.
-sqlite3 "$index_home/muse-data/session-index.db" <<EOF
-CREATE TABLE sessions (session_id TEXT PRIMARY KEY, prompt_count INTEGER NOT NULL DEFAULT 0, created_at_us INTEGER);
-INSERT INTO sessions VALUES ('demo', 2, $now_us);
-INSERT INTO sessions VALUES ('earlier', 5, $old_us);
-INSERT INTO sessions VALUES ('opened', 0, $now_us);
-INSERT INTO sessions VALUES ('undated', 1, 'soon');
-EOF
-result_index=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -c --arg old "$old_date" '{totalPrompts, totalSessions, todayPrompts, todaySessions, todayTotalTokens, old: (.activeDates | index($old) != null)}' <<<"$result_index") == '{"totalPrompts":8,"totalSessions":3,"todayPrompts":2,"todaySessions":1,"todayTotalTokens":81778,"old":true}' ]] ||
-  fail "Muse collector takes prompt and session counts from the session index" "$result_index"
-pass "Muse collector takes prompt and session counts from the session index"
+# nobody prompted isn't one, and an undated row counts on no day.
+index = sqlite3.connect(muse_dir() / "session-index.db")
+index.execute("CREATE TABLE sessions (session_id TEXT PRIMARY KEY, prompt_count INTEGER NOT NULL DEFAULT 0, created_at_us INTEGER)")
+index.executemany("INSERT INTO sessions VALUES (?, ?, ?)", [("demo", 2, NOW_US), ("earlier", 5, OLD_US), ("opened", 0, NOW_US), ("undated", 1, "soon")])
+index.commit()
+index.close()
+record = muse()
+expect("Muse takes prompt and session counts from the session index",
+       pick(record, "totalPrompts", "totalSessions", "todayPrompts", "todaySessions", "todayTotalTokens") | {"old": OLD_DATE in record["activeDates"]},
+       {"totalPrompts": 8, "totalSessions": 3, "todayPrompts": 2, "todaySessions": 1, "todayTotalTokens": 81778, "old": True}, record)
 
 # A native session the index has no row for yet counts its completions as
 # prompts, as it would with no index.
-mkdir -p "$index_home/muse-data/sessions/2026/10/12/fresh"
-cat >"$index_home/muse-data/sessions/2026/10/12/fresh/session.jsonl" <<EOF
-{"schema_version": 1, "recorded_at": $now_us, "record_type": "event", "payload_type": "runtime.session", "payload": {"event": {"kind": "model_completed", "model": "muse-wonder-1.0", "usage": {"input_tokens": 10, "output_tokens": 1}}}}
-EOF
-result_unindexed=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-rm -rf "$index_home/muse-data/sessions/2026/10/12/fresh"
-[[ $(jq -c '{totalPrompts, totalSessions, todayPrompts, todaySessions, todayTotalTokens}' <<<"$result_unindexed") == '{"totalPrompts":9,"totalSessions":4,"todayPrompts":3,"todaySessions":2,"todayTotalTokens":81789}' ]] ||
-  fail "Muse collector counts a native session the index hasn't seen yet" "$result_unindexed"
-pass "Muse collector counts a native session the index hasn't seen yet"
+fresh = session("2026/10/12/fresh", current(10, 1))
+record = muse()
+fresh.unlink()
+expect("Muse counts a native session the index hasn't seen yet",
+       pick(record, "totalPrompts", "totalSessions", "todayPrompts", "todaySessions", "todayTotalTokens"),
+       {"totalPrompts": 9, "totalSessions": 4, "todayPrompts": 3, "todaySessions": 2, "todayTotalTokens": 81789}, record)
 
 # A session carried on from an earlier day counts today what its prompt count
-# grew by since the last scan before today, not its whole count on the day
-# it began.
-prompts_file=$(compgen -G "$index_home/cache/omarchy/agent-usage/muse-prompts-*.json")
-[[ -n $prompts_file ]] || fail "Muse collector keeps the session prompt counts it saw" "$(ls "$index_home/cache/omarchy/agent-usage")"
-jq --arg day "$(date -d yesterday +%F)" '.day = $day | .last = {"earlier": 3}' "$prompts_file" >"$prompts_file.new"
-mv "$prompts_file.new" "$prompts_file"
-result_carried=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -c '{totalPrompts, todayPrompts, todaySessions}' <<<"$result_carried") == '{"totalPrompts":8,"todayPrompts":4,"todaySessions":2}' ]] ||
-  fail "Muse collector counts today the prompts a session from an earlier day grew by" "$result_carried"
-sqlite3 "$index_home/muse-data/session-index.db" "UPDATE sessions SET prompt_count = 7 WHERE session_id = 'earlier'"
-result_carried=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -c '{totalPrompts, todayPrompts, todaySessions}' <<<"$result_carried") == '{"totalPrompts":10,"todayPrompts":6,"todaySessions":2}' ]] ||
-  fail "Muse collector keeps counting today from the count before today" "$result_carried"
-pass "Muse collector counts today the prompts a session from an earlier day grew by"
+# grew by since the last scan before today, not its whole count.
+prompts_files = list(cache_root().glob("muse-prompts-*.json"))
+check("Muse keeps the session prompt counts it saw", prompts_files, sorted(path.name for path in cache_root().iterdir()))
+kept = json.loads(prompts_files[0].read_text())
+kept.update(day=(date.today() - timedelta(days=1)).isoformat(), last={"earlier": 3})
+prompts_files[0].write_text(json.dumps(kept))
+record = muse()
+expect("Muse counts today the prompts a session from an earlier day grew by",
+       pick(record, "totalPrompts", "todayPrompts", "todaySessions"), {"totalPrompts": 8, "todayPrompts": 4, "todaySessions": 2}, record)
+index = sqlite3.connect(muse_dir() / "session-index.db")
+index.execute("UPDATE sessions SET prompt_count = 7 WHERE session_id = 'earlier'")
+index.commit()
+index.close()
+record = muse()
+expect("Muse keeps counting today from the count before today",
+       pick(record, "totalPrompts", "todayPrompts", "todaySessions"), {"totalPrompts": 10, "todayPrompts": 6, "todaySessions": 2}, record)
 
 # An index that's there but unreadable falls back on completions, and that
 # scan isn't cached.
-printf 'not a database' >"$index_home/muse-data/session-index.db"
-rm -rf "$index_home/cache"
-result_badindex=$("${index_env[@]}" "$ROOT/bin/omarchy-agent-usage-muse")
-[[ $(jq -c '{totalPrompts, totalSessions}' <<<"$result_badindex") == '{"totalPrompts":3,"totalSessions":1}' ]] ||
-  fail "Muse collector counts completions past an unreadable session index" "$result_badindex"
-! compgen -G "$index_home/cache/omarchy/agent-usage/muse-scan-*.json" >/dev/null ||
-  fail "Muse collector doesn't cache a scan past an unreadable session index" "$(ls "$index_home/cache/omarchy/agent-usage")"
-pass "Muse collector falls back on completions past an unreadable session index"
+(muse_dir() / "session-index.db").write_text("not a database")
+for path in scan_cache_files("muse"):
+  path.unlink()
+record = collect("muse")
+expect("Muse counts completions past an unreadable session index", pick(record, "totalPrompts", "totalSessions"), {"totalPrompts": 3, "totalSessions": 1}, record)
+check("Muse doesn't cache a scan past an unreadable session index", not scan_cache_files("muse"), scan_cache_files("muse"))
 
-# pi and omp sessions on the meta provider, in every root: pi's and omp's
-# defaults, a profile under each, and a pi agent dir moved by
-# PI_CODING_AGENT_DIR, all under a $HOME that is a git checkout ignoring
-# everything. A forked session repeats its parent's message (same id and
-# timestamp) and counts once; lines without an id always count; Muse Spark
-# through the Zen gateway is opencode's; a user turn and rows whose timestamp
-# or tokens are garbage drop without taking the rest.
-pi_home="$TEST_HOME/pi-home"
-mkdir -p "$pi_home/.git" "$pi_home/.pi/agent/sessions/p" "$pi_home/.omp/agent/sessions/p" \
-  "$pi_home/.pi/profiles/home/agent/sessions/p" "$pi_home/.omp/profiles/work/agent/sessions/p" "$pi_home/moved/sessions/p"
-printf '*\n' >"$pi_home/.gitignore"
-pi_stamp=$(date -u -d "@$now_s" +%Y-%m-%dT%H:%M:%S.000Z)
-pi_line() {
-  printf '{"type":"message",%s"timestamp":%s,"message":{"role":"%s","provider":"%s","model":"muse-spark","usage":{"input":%s,"output":%s,"reasoning":%s}}}\n' "$1" "$2" "${5:-assistant}" "${6:-meta}" "$3" "$4" "${7:-0}"
-}
-pi_line '"id":"pi-default",' "\"$pi_stamp\"" 1 2 assistant meta 3 >"$pi_home/.pi/agent/sessions/p/a.jsonl"
-pi_line '"id":"omp-default",' "\"$pi_stamp\"" 10 0 >"$pi_home/.omp/agent/sessions/p/a.jsonl"
-{
-  pi_line '"id":"parent",' "\"$pi_stamp\"" 100 0
-  pi_line '' "\"$pi_stamp\"" 1000 0
-} >"$pi_home/.omp/profiles/work/agent/sessions/p/a.jsonl"
-{
-  pi_line '"id":"parent",' "\"$pi_stamp\"" 100 0
-  pi_line '"id":"zen",' "\"$pi_stamp\"" 5000 0 assistant opencode
-  pi_line '"id":"user",' "\"$pi_stamp\"" 5000 0 user
-  pi_line '"id":"bad-ts",' 0 5000 0
-  pi_line '"id":"bad-tokens",' "\"$pi_stamp\"" true 0
-} >"$pi_home/.pi/profiles/home/agent/sessions/p/fork.jsonl"
-pi_line '"id":"moved",' "\"$pi_stamp\"" 10000 0 >"$pi_home/moved/sessions/p/m.jsonl"
-result_pi=$(HOME="$pi_home" PI_CODING_AGENT_DIR="$pi_home/moved" XDG_DATA_HOME="$pi_home/data" XDG_CACHE_HOME="$pi_home/cache" \
-  XDG_CONFIG_HOME="$pi_home/config" MUSE_DATA_DIR="$pi_home/muse-data" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -c '[.todayTotalTokens, .totalPrompts, .modelUsage["muse-spark"].outputTokens, .ready]' <<<"$result_pi") == '[11116,5,5,true]' ]] ||
-  fail "Muse collector scans every pi/omp root past ignore rules, dedups forks, keeps Zen usage out, skips garbage rows" "$result_pi"
-pass "Muse collector counts meta pi/omp sessions in every root, once each"
+# A corrupt opencode database can't take the native sessions with it, and
+# that incomplete scan is served but never cached.
+new_muse_home()
+session("sess-native", completion("native-model", input=30, output=3))
+(data_home() / "opencode").mkdir(parents=True)
+(data_home() / "opencode" / "opencode.db").write_text("not a database")
+record = muse()
+again = collect("muse")
+expect("Muse serves native stats past a corrupt opencode database, uncached",
+       [record["todayTotalTokens"], record["ready"], again["todayTotalTokens"], scan_cache_files("muse")], [33, True, 33, []], record)
 
-# PI_CODING_AGENT_DIR spelling pi's default tree another way, through a
-# symlink, is the same root: a line without an id in it counts once.
-alias_home="$TEST_HOME/alias-home"
-mkdir -p "$alias_home/.pi/agent/sessions/p"
-ln -s "$alias_home/.pi/agent" "$alias_home/linked"
-pi_line '' "\"$pi_stamp\"" 7 0 >"$alias_home/.pi/agent/sessions/p/a.jsonl"
-result_alias=$(HOME="$alias_home" PI_CODING_AGENT_DIR="$alias_home/linked" XDG_DATA_HOME="$alias_home/data" XDG_CACHE_HOME="$alias_home/cache" \
-  XDG_CONFIG_HOME="$alias_home/config" MUSE_DATA_DIR="$alias_home/muse-data" "$ROOT/bin/omarchy-agent-usage-muse" --force)
-[[ $(jq -c '[.totalPrompts, .todayTotalTokens]' <<<"$result_alias") == '[1,7]' ]] ||
-  fail "Muse collector reads a PI_CODING_AGENT_DIR that aliases the default tree once" "$result_alias"
-pass "Muse collector reads a PI_CODING_AGENT_DIR that aliases the default tree once"
+# A microsecond epoch written as a string lands on its real day; a boolean
+# stamp falls back on the file's time rather than 1970; an opencode time that
+# isn't an object reads as no time (today), tokens that aren't an object skip
+# the row, and a cache that isn't one keeps the row's input. Today: 5 + 44 + 11.
+# The database has the bare shape of older opencode builds, with no id column.
+new_muse_home()
+session("sess-odd", completion("string-ts-model", str(OLD_US), input=60, output=6), completion("bool-ts-model", True, input=5))
+(data_home() / "opencode").mkdir(parents=True)
+bare = sqlite3.connect(data_home() / "opencode" / "opencode.db")
+bare.execute("CREATE TABLE message (session_id TEXT, data TEXT)")
+bare.executemany("INSERT INTO message VALUES (?, ?)", [
+  ("odd-1", json.dumps({"role": "assistant", "providerID": "meta", "modelID": "odd-time-model", "tokens": oc_tokens(40, 4), "time": 12345})),
+  ("odd-2", json.dumps({"role": "assistant", "providerID": "meta", "modelID": "odd-tokens-model", "tokens": [1, 2], "time": {"created": NOW_MS}})),
+  ("odd-3", json.dumps({"role": "assistant", "providerID": "meta", "modelID": "odd-cache-model", "tokens": {"input": 11, "output": 0, "reasoning": 0, "cache": "nope"}, "time": {"created": NOW_MS}})),
+])
+bare.commit()
+bare.close()
+record = muse()
+usage = record["modelUsage"]
+expect("Muse survives odd timestamp and token shapes without misfiling them", {
+  "today": record["todayTotalTokens"],
+  "prompts": record["totalPrompts"],
+  "stringEpoch": OLD_DATE in record["activeDates"],
+  "epoch": bool({"1969-12-31", "1970-01-01"} & set(record["activeDates"])),
+  "oddTime": [usage["odd-time-model"]["inputTokens"], usage["odd-time-model"]["outputTokens"]],
+  "oddTokens": "odd-tokens-model" in usage,
+  "oddCache": [usage["odd-cache-model"]["inputTokens"], usage["odd-cache-model"]["outputTokens"]],
+}, {"today": 60, "prompts": 4, "stringEpoch": True, "epoch": False, "oddTime": [40, 4], "oddTokens": False, "oddCache": [11, 0]}, record)
+
+# pi sessions count on Meta's own provider: not Muse Spark through Zen, and
+# not a prompt.
+new_muse_home()
+prompt = pi_reply("meta", 5000, id="user", model="muse-spark")
+prompt["message"]["role"] = "user"
+write_pi_session(home() / ".pi" / "agent" / "sessions" / "p" / "a.jsonl", [
+  pi_reply("meta", 10, id="meta", model="muse-spark"),
+  pi_reply("opencode", 5000, id="zen", model="muse-spark"),
+  prompt,
+])
+record = muse()
+expect("Muse counts Meta's pi replies alone", [record["todayTotalTokens"], record["totalPrompts"]], [10, 1], record)
+
+# ---------------------------------------------------------------- contract
+
+new_muse_home()
+
+
+def add_session():
+  add_session.count = getattr(add_session, "count", 0) + 1
+  session(f"grown-{add_session.count}", completion("muse-spark", input=10))
+
+
+check_scan_cache(Adapter("muse", grow=add_session, pi_root=lambda: home() / ".pi" / "agent" / "sessions"))
+PY
