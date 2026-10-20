@@ -158,4 +158,24 @@ expect("Ollama advises no retry for a server's error status", [record["usageStat
 record = ollama(routes={USAGE: {"limits": {"session": {"usage": "unknown"}, "weekly": None}}, ME: {"Plan": "pro"}})
 expect("Ollama reports an answer without usable limits", [record["limits"], record["usageStatusText"], "no limits" in record["authHelpText"]],
        [[], "Ollama limits unavailable", True], record)
+
+# A window used past its allowance reads as full, never above it.
+record = ollama(routes={USAGE: {"limits": {"session": {"usage": 1.7}, "weekly": {"usage": 0.2}}}, ME: {"Plan": "pro"}})
+expect("Ollama caps a window used past its allowance at full", [entry["percent"] for entry in record["limits"]], [1.0, 0.2], record)
+
+# Without OLLAMA_API_KEY, the key pi or omp signed in with stands in, pi's
+# first, and goes out as a Bearer token on both requests. A pi `$VAR` or
+# `!command` entry is pi's to resolve, never a key to send.
+sandbox()
+pi_auth(home() / ".omp" / "agent", "ollama-cloud", "omp-key")
+pi_auth(None, "ollama-cloud", "pi-key")
+with FakeHttp(ROUTES) as http:
+  record = collect("ollama", "--force")
+expect("Ollama asks with pi's saved key before omp's, as a Bearer token",
+       [sorted({request["headers"].get("authorization") for request in http.requests}), len(http.requests), len(record["limits"])],
+       [["Bearer pi-key"], 2, 2], record)
+pi_auth(None, "ollama-cloud", "$OLLAMA_KEY")
+expect("Ollama passes over pi's $VAR entry to omp's key", load_collector("ollama").api_key(), "omp-key")
+pi_auth(home() / ".omp" / "agent", "ollama-cloud", "!pass show ollama")
+expect("Ollama never sends a pi $VAR or !command entry as a key", load_collector("ollama").api_key(), "")
 PY
