@@ -38,6 +38,8 @@ agent_sandbox() {
 
   require_command python3
   SANDBOX=$(mktemp -d)
+  # Exported so the Python fixtures' sandbox() makes its homes in here too.
+  export SANDBOX
   trap agent_sandbox_cleanup EXIT
 
   export HOME="$SANDBOX/home"
