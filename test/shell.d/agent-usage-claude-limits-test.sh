@@ -130,8 +130,9 @@ for ago, age, live in ((60, "a minute", True), (1800, "half an hour", False)):
   kept_limits(ago, [{"label": "Session (5-hour)", "percent": 0.4, "resetsAt": iso_in(3 * 3600)}])
   fetched_at = json.loads((cache_root() / "claude-limits.json").read_text())["fetchedAtMs"]
   record, _ = claude(mode=429)
-  expect(f"a rate-limited re-check of numbers {age} old counts as {'current' if live else 'stale'}",
-         [record["limitsStale"], record["limits"][0]["percent"], record["limitsFetchedAt"] == fetched_at], [not live, 0.4, True], record)
+  expect(f"a rate-limited re-check of numbers {age} old counts as {'current' if live else 'stale'}, with no sooner retry",
+         [record["limitsStale"], record["limits"][0]["percent"], record["limitsFetchedAt"] == fetched_at, record.get("retryAdvised", False)],
+         [not live, 0.4, True, False], record)
 
 # ------------------------------------------------------------ the sign-in
 
