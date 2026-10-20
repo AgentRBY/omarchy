@@ -57,7 +57,7 @@ expect("MiniMax's Token Plan and windows come from its quota answer",
 # limits stand.
 record, _ = minimax(KeyError("surprise"))
 check("MiniMax collector keeps the last limits past an unexpected answer",
-      record["usageStatusText"] == "" and record["limitsStale"] is True and len(record["limits"]) == 2
+      record["usageStatusText"] == "" and record["limitsStale"] is True and record["limits"] == fresh["limits"]
       and "KeyError" in record["authHelpText"], record)
 
 # A bad key MiniMax names in base_resp rather than with a status code.
@@ -75,6 +75,18 @@ expect("MiniMax collector keys its limits cache by credential and reports a fail
 record, _ = minimax(mode="down")
 expect("MiniMax collector advises a retry only when the API can't be reached",
        [record["usageStatusText"], record.get("retryAdvised")], ["MiniMax limits unavailable", True], record)
+
+# The same key in the other region is another account: its cache is kept per
+# host, so the China host never shows the global allowance.
+keyed()
+os.environ["MINIMAX_REGION"] = "cn"
+record, http = minimax(mode="down")
+del os.environ["MINIMAX_REGION"]
+expect("MiniMax collector keeps one key's limits per region",
+       [http.requests[0]["url"].startswith("https://api.minimaxi.com/"), record["limits"], record["usageStatusText"]],
+       [True, [], "MiniMax limits unavailable"], record)
+record, _ = minimax(mode="down")
+expect("MiniMax collector still keeps the global host's limits for that key", [record["limits"], record["limitsStale"]], [fresh["limits"], True], record)
 
 # ------------------------------------------------------------- the answer
 
