@@ -50,6 +50,7 @@ run_collector() {
     HOME="$home" \
     PATH="$WORK/bin" \
     LANG=C.UTF-8 \
+    ${TZ+TZ="$TZ"} \
     OMARCHY_PATH="$ROOT" \
     OMARCHY_LANGUAGE_FILE="$OMARCHY_LANGUAGE_FILE" \
     XDG_CONFIG_HOME="$home/.config" \
@@ -277,7 +278,17 @@ PY
 EMPTY_HOME="$WORK/empty"
 mkdir -p "$EMPTY_HOME"
 
-run_all "$EMPTY_HOME" "$WORK/empty-results"
+# The empty home runs in a zone whose day differs from the system zone's, so
+# a collector dating its record by /etc/localtime rather than the caller's TZ
+# shows. +14 and -12 hours are never both on the system's day; the days on
+# either side of the run cover one that straddles that zone's midnight.
+EMPTY_TZ=Pacific/Kiritimati
+if [[ $(TZ=$EMPTY_TZ date +%F) == "$(env -u TZ date +%F)" ]]; then
+  EMPTY_TZ=Etc/GMT+12
+fi
+TZ=$EMPTY_TZ date +%F >"$WORK/empty-days"
+TZ=$EMPTY_TZ run_all "$EMPTY_HOME" "$WORK/empty-results"
+TZ=$EMPTY_TZ date +%F >>"$WORK/empty-days"
 run_all "$FIXTURE_HOME" "$WORK/results" PI_CODING_AGENT_DIR="$FIXTURE_HOME/pi-moved"
 
 # The same machine with opencode's database moved by OPENCODE_DB. A relative
@@ -330,6 +341,7 @@ from pathlib import Path
 work = Path(sys.argv[1])
 collectors = sys.argv[2:]
 cells = {cell["tag"]: cell for cell in json.load(open(work / "cells.json"))}
+empty_days = set((work / "empty-days").read_text().split())
 
 STATS = ["todayPrompts", "todaySessions", "todayTotalTokens", "todayTokensByModel", "recentDays",
          "totalPrompts", "totalSessions", "activeDays", "activeDates", "modelUsage"]
@@ -416,6 +428,9 @@ for cid in collectors:
     problems.append("stats not empty")
   if record.get("retryAdvised"):
     problems.append("retryAdvised with nothing to retry")
+  days = record.get("recentDays") or [{}]
+  if days[-1].get("date") not in empty_days:
+    problems.append(f"recentDays ends {days[-1].get('date')!r}, not the caller's TZ day ({', '.join(sorted(empty_days))})")
   report("empty-home", not problems, f"{cid}: {'; '.join(problems)}" if problems else cid)
 
 
@@ -536,7 +551,7 @@ PY
 # ------------------------------------------------------------------ verdict
 
 declare -A DESCRIPTIONS=(
-  [empty-home]="every collector prints the unused-machine record in an empty home: ready false, no plan, status or help, no limits, no balance, empty stats, the full field set"
+  [empty-home]="every collector prints the unused-machine record in an empty home: ready false, no plan, status or help, no limits, no balance, empty stats, the full field set, dated by the caller's TZ"
   [fixture-run]="every collector prints a record against the fixture home, offline and in time"
   [fixture-shape]="every collector's fixture record has the contract's full field set"
   [attribution]="every token a collector counts comes from a fixture row"

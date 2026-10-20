@@ -20,7 +20,7 @@ fi
 # Variables a developer's own shell may carry that point a collector at a
 # real credential or store, matched by prefix, plus any *_API_KEY. Kept in
 # step with DEVELOPER_PREFIXES in agent_usage_fixtures.py.
-AGENT_DEVELOPER_PREFIXES='^(AGY_|ANTHROPIC_|CLAUDE_|CLOUD_CODE_|CODEX_|COPILOT_|CURSOR_|DEEPSEEK_|DEVIN_|DSH_|FIREWORKS_|GH_|GITHUB_|GROK_|HERMES_|KIMCHI_|KIMI_|MAVIS_|MINIMAX_|MMX_|MUSE_|OLLAMA_|OPENAI_|OPENCLAW_|OPENCODE_|OPENROUTER_|PI_CODING_AGENT_|QWEN_|SYNTHETIC_|VIBE_|ZAI_|ZHIPU)'
+AGENT_DEVELOPER_PREFIXES='^(AGY_|ANTHROPIC_|CLAUDE_|CLOUD_CODE_|CODEX_|COPILOT_|CURSOR_|DEEPSEEK_|DEVIN_|DSH_|FIREWORKS_|GH_|GITHUB_|GROK_|HERMES_|KIMCHI_|KIMI_|MAVIS_|MINIMAX_|MISE_|MMX_|MUSE_|OLLAMA_|OPENAI_|OPENCLAW_|OPENCODE_|OPENROUTER_|PI_CODING_AGENT_|QWEN_|SYNTHETIC_|VIBE_|ZAI_|ZHIPU)'
 AGENT_DEAD_PROXY=http://127.0.0.1:9
 
 agent_sandbox_pids=()
@@ -108,8 +108,8 @@ new_home() {
 # run_collector <home> <id> [VAR=value ...] [-- args...]
 #
 # Runs bin/omarchy-agent-usage-<id> as a process, in an environment holding
-# nothing but <home> and its XDG directories, OMARCHY_PATH, the dead proxy,
-# and the VAR=value pairs given (a later PATH= replaces the default). PATH is
+# nothing but <home> and its XDG directories, OMARCHY_PATH, the caller's TZ,
+# the dead proxy, and the VAR=value pairs given (a later PATH= replaces the default). PATH is
 # <home>/bin, then python3, rg, jq and sqlite3. Runs with --force unless args
 # follow `--` (then exactly those, none included). Prints the record; stderr
 # lands in <home>/.run/<id>.err and is shown when the collector fails, whose
@@ -133,6 +133,7 @@ run_collector() {
     HOME="$home" \
     PATH="$home/bin:$SANDBOX/tools" \
     LANG=C.UTF-8 \
+    ${TZ+TZ="$TZ"} \
     OMARCHY_PATH="$ROOT" \
     OMARCHY_LANGUAGE_FILE="$OMARCHY_LANGUAGE_FILE" \
     XDG_CONFIG_HOME="$home/.config" \

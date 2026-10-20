@@ -160,3 +160,38 @@ rm "$accounts/codex/side/auth.json"
 record=$(run_collector "$home" codex)
 expect_jq "a signed-out Codex home waits for auth on its own" '[.accounts[] | {id, used: .limits[0].percent, status: .usageStatusText}]' \
   '[{"id":"main","used":0.4,"status":""},{"id":"side","used":null,"status":"Waiting for auth"}]' "$record"
+
+# ------------------------------------------------------------------ harness
+
+# run_collector carries the caller's TZ into its bare environment. In a zone
+# whose day differs from the system zone's (+14 and -12 hours are never both
+# on it), a collector run that way dates its record by that zone; the days
+# either side of the run cover one straddling that zone's midnight.
+zone=Pacific/Kiritimati
+if [[ $(TZ=$zone date +%F) == "$(env -u TZ date +%F)" ]]; then
+  zone=Etc/GMT+12
+fi
+before=$(TZ=$zone date +%F)
+record=$(TZ=$zone run_collector "$(new_home)" codex)
+after=$(TZ=$zone date +%F)
+day=$(jq -r '.recentDays[-1].date' <<<"$record")
+if [[ $day == "$before" || $day == "$after" ]]; then
+  pass "run_collector hands the collector the caller's TZ"
+else
+  fail "run_collector hands the collector the caller's TZ" "TZ=$zone day $before, record ends $day"
+fi
+
+# Both sandboxes drop the same developer variables, MISE_DATA_DIR (where
+# Codex looks for mise's shims) among them.
+if python3 -c '
+import os, sys
+os.environ["MISE_DATA_DIR"] = "/developer/mise"
+import agent_usage_fixtures as f
+shell = sys.argv[1].removeprefix("^(").removesuffix(")").split("|")
+f.sandbox()
+sys.exit(sorted(shell) != sorted(f.DEVELOPER_PREFIXES) or "MISE_DATA_DIR" in os.environ)
+' "$AGENT_DEVELOPER_PREFIXES" && [[ MISE_DATA_DIR =~ $AGENT_DEVELOPER_PREFIXES ]]; then
+  pass "both sandboxes drop the same developer variables, mise's included"
+else
+  fail "both sandboxes drop the same developer variables, mise's included"
+fi

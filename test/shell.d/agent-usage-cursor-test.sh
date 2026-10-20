@@ -164,12 +164,18 @@ expect("an older cached scan moves onto today's week too",
        [overnight["todayTotalTokens"], [day["messageCount"] for day in overnight["recentDays"]]], [0, [6, 5, 4, 3, 2, 1, 0]], overnight)
 
 # Days that spring forward or fall back are 23 or 25 hours long.
+saved_tz = os.environ.get("TZ")
 os.environ["TZ"] = "America/New_York"
 time.tzset()
-spring = module.day_windows(date(2026, 3, 9), 2)
-fall = module.day_windows(date(2026, 11, 1), 1)
-os.environ["TZ"] = "UTC"
-time.tzset()
+try:
+  spring = module.day_windows(date(2026, 3, 9), 2)
+  fall = module.day_windows(date(2026, 11, 1), 1)
+finally:
+  if saved_tz is None:
+    os.environ.pop("TZ", None)
+  else:
+    os.environ["TZ"] = saved_tz
+  time.tzset()
 expect("daily windows are sized across DST",
        [[(end - start) // 3_600_000 for _, start, end in spring + fall], spring[0][2] == spring[1][1]], [[23, 24, 25], True])
 

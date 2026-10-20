@@ -219,12 +219,18 @@ expect("a reply of the wrong shape fails, and a missing usage list reads as idle
 # East of Greenwich, a local-midnight bucket starts on the previous UTC date;
 # the row still lands on the local day it names, and the query window asks
 # for local midnights expressed in UTC.
+saved_tz = os.environ.get("TZ")
 os.environ["TZ"] = "Etc/GMT-2"
 time.tzset()
-expect("buckets are dated by local day, and windows open at local midnight in UTC",
-       [module.row_date({"startTime": "2026-07-30T22:00:00Z"}), module.local_midnight_utc(date(2026, 7, 31))], ["2026-07-31", "2026-07-30T22:00:00Z"])
-os.environ["TZ"] = "UTC"
-time.tzset()
+try:
+  east = [module.row_date({"startTime": "2026-07-30T22:00:00Z"}), module.local_midnight_utc(date(2026, 7, 31))]
+finally:
+  if saved_tz is None:
+    os.environ.pop("TZ", None)
+  else:
+    os.environ["TZ"] = saved_tz
+  time.tzset()
+expect("buckets are dated by local day, and windows open at local midnight in UTC", east, ["2026-07-31", "2026-07-30T22:00:00Z"])
 
 # ---------------------------------------------------------- the credentials
 
