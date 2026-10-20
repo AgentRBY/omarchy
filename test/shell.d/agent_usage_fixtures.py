@@ -761,7 +761,8 @@ def check_limits_contract(adapter: Adapter) -> dict:
       check(
         f"{name}: an unreachable service ({mode}) advises a retry and keeps the last limits, stale",
         unreachable.get("retryAdvised") is True and unreachable.get("limits") == fresh["limits"]
-        and unreachable.get("limitsStale") is True and unreachable.get("limitsFetchedAt") == fetched_at,
+        and unreachable.get("limitsStale") is True and unreachable.get("limitsFetchedAt") == fetched_at
+        and unreachable.get("usageStatusText") == "",
         json.dumps(unreachable),
       )
 
