@@ -26,9 +26,7 @@ hey-cli = { version = "latest", lazy = true, minimum_release_age = "0s" }
 hunk = { version = "latest", lazy = true, minimum_release_age = "0s" }
 muse = { version = "latest", lazy = true, auto_update = "4h", minimum_release_age = "0s" }
 node = { version = "latest", lazy = true, minimum_release_age = "0s" }
-# Every DSH release so far is a prerelease, which mise's npm backend skips, so it stays pinned without
-# auto_update. Drop the pin once a stable release exists upstream.
-"npm:@deepseek-ai/dsh" = { version = "0.2.0-rc.2", lazy = true, lazy_bins = ["dsh"], minimum_release_age = "0s" }
+"npm:@deepseek-ai/dsh" = { version = "latest", lazy = true, auto_update = "4h", lazy_bins = ["dsh"], minimum_release_age = "0s" }
 "npm:@kilocode/cli" = { version = "latest", lazy = true, auto_update = "4h", lazy_bins = ["kilo"], minimum_release_age = "0s" }
 "npm:@minimax-ai/code" = { version = "latest", lazy = true, auto_update = "4h", lazy_bins = ["mcode"], minimum_release_age = "0s", allow_builds = "better-sqlite3" }
 "npm:@moonshot-ai/kimi-code" = { version = "latest", lazy = true, auto_update = "4h", lazy_bins = ["kimi"], minimum_release_age = "0s" }

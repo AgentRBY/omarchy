@@ -71,6 +71,9 @@ cat >"$mock_bin/mise" <<'SH'
 #!/bin/bash
 printf '%s\0' "$@" >"$OMARCHY_TEST_MISE_LOG"
 printf '%s\n' "$*" >>"$OMARCHY_TEST_MISE_HISTORY"
+if [[ -n ${MISE_PRERELEASES:-} ]]; then
+  printf 'prereleases=%s %s\n' "$MISE_PRERELEASES" "$*" >>"$OMARCHY_TEST_MISE_HISTORY"
+fi
 
 if [[ $1 == "where" ]]; then
   [[ ${OMARCHY_TEST_AGENT_INSTALLED:-false} == "true" ]]
@@ -148,8 +151,7 @@ ori_package="ori"
 legacy_ori_package="github:OpenRouterLabs/ori-releases"
 kimi_package="npm:@moonshot-ai/kimi-code"
 qwen_package="qwen"
-dsh_tool="npm:@deepseek-ai/dsh"
-dsh_package="$dsh_tool@0.2.0-rc.2"
+dsh_package="npm:@deepseek-ai/dsh"
 # Omarchy declares a tool with backend options under its bare name; the
 # bracketed package is what a user without the declarations gets.
 mcode_tool="npm:@minimax-ai/code"
@@ -210,6 +212,7 @@ grep -Eq "^$qwen_package = \\{ version = \"latest\", lazy = true, auto_update = 
 # A tool without registry bin metadata names the commands mise shims for it.
 declare -A declared_bins=(
   [$amp_package]='"amp"'
+  ["\"$dsh_package\""]='"dsh"'
   ["\"$freebuff_package\""]='"freebuff"'
   ["\"$kilo_package\""]='"kilo"'
   ["\"$commandcode_package\""]='"commandcode"'
@@ -238,10 +241,7 @@ for agent in "${!declared_option_bins[@]}"; do
       fail "user setup declares ${!tool_var} with ${option%%=*} inside its table"
   done
 done
-# Every DSH release is a prerelease, so it stays pinned and doesn't update itself.
-grep -Fx "\"$dsh_tool\" = { version = \"${dsh_package##*@}\", lazy = true, lazy_bins = [\"dsh\"], minimum_release_age = \"0s\" }" "$lazy_config" >/dev/null ||
-  fail "user setup declares the pinned DeepSeek Harness prerelease as a native lazy tool"
-[[ $(grep -c 'auto_update = "4h"' "$lazy_config") == 20 ]] || fail "only the agent CLIs update themselves"
+[[ $(grep -c 'auto_update = "4h"' "$lazy_config") == 21 ]] || fail "only the agent CLIs update themselves"
 for tool in node uv; do
   grep -Eq "^$tool = \\{ version = \"latest\", lazy = true, minimum_release_age = \"0s\" \\}$" "$lazy_config" ||
     fail "user setup declares $tool as a native lazy tool"
@@ -824,6 +824,14 @@ printf 'ignored_config_paths = ["%s"]\n' "$OMARCHY_MISE_CONFIG_PATH" >"$test_hom
 omarchy-default-agent --install muse >/dev/null
 grep -Fx "use -g $muse_package" "$mise_history" >/dev/null ||
   fail "Muse selection adds Muse to the user config after Remove Preinstalls"
+# Every DSH release is a prerelease, which `mise use` skips unless told otherwise.
+: >"$mise_history"
+omarchy-default-agent --install dsh >/dev/null
+grep -Fx "prereleases=true use -g $dsh_package" "$mise_history" >/dev/null ||
+  fail "DSH selection lets mise pick a prerelease after Remove Preinstalls"
+: >"$mise_history"
+omarchy-default-agent --install kilo >/dev/null
+grep -q '^prereleases=' "$mise_history" && fail "other agents install only stable releases after Remove Preinstalls"
 rm -f "$agent_file" "$test_home/.config/mise/miserc.toml"
 
 # With Omarchy's system config, installing is enough; the user config stays alone.

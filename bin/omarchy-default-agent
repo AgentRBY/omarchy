@@ -41,12 +41,11 @@ cursor | cursor-agent) agent="cursor-agent"; name="Cursor CLI" ;;
 kimi | kimi-code) agent="kimi"; name="Kimi"; agent_package="npm:@moonshot-ai/kimi-code" ;;
 qwen | qwen-code) agent="qwen"; name="Qwen Code" ;;
 dsh | deepseek | deepseek-harness)
-  agent="dsh"; name="DeepSeek Harness"
-  # Every DSH release so far is a prerelease, and mise's npm backend lists only
-  # stable versions, so a bare package name resolves to nothing. Install the
-  # version Omarchy's declaration pins, and drop both pins once a stable
-  # release exists upstream.
-  agent_tool="npm:@deepseek-ai/dsh"; agent_package="$agent_tool@0.2.0-rc.2"
+  agent="dsh"; name="DeepSeek Harness"; agent_package="npm:@deepseek-ai/dsh"
+  # Every DSH release so far is a prerelease. A declared "latest" follows the
+  # npm latest tag, but `mise use` lists only stable versions unless told to
+  # include prereleases.
+  agent_prereleases=true
   ;;
 mcode | minimax-code | minimax) agent="mcode"; name="MiniMax Code"; agent_tool="npm:@minimax-ai/code"; agent_package="$agent_tool[allow_builds=better-sqlite3]" ;;
 kiro-cli | kiro)
@@ -105,6 +104,8 @@ else
     user_install && return
     if omarchy-mise-default-tools declares "$agent_tool"; then
       mise install "$agent_tool"
+    elif [[ ${agent_prereleases:-} == "true" ]]; then
+      MISE_PRERELEASES=true mise use -g "$agent_package"
     else
       mise use -g "$agent_package"
     fi
