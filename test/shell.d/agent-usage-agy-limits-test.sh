@@ -1,344 +1,177 @@
 #!/bin/bash
 
-source "$(dirname "$0")/base-test.sh"
+# The Antigravity collector's limits with agy's own sign-in: how it reads
+# Google's plan and quota answers, a lapsed or replaced sign-in, where the
+# bearer may go, and its adapter for the contract checks. Sign-ins kept by
+# other harnesses are in agy-harness; local stats in agy-scanner. The
+# unused-machine record is held centrally by the partition test, and the
+# limits cache's mechanics by the shared test.
 
-require_command jq
-require_command python3
+set -euo pipefail
 
-COLLECTOR="$ROOT/bin/omarchy-agent-usage-agy"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+source "$SHELL_TEST_DIR/agent-usage-helpers.sh"
 
-# probe_antigravity reaches Google's Cloud Code endpoints, so the readers that
-# interpret the answers are exercised with recorded payloads standing in.
+agent_sandbox
 
-test_tier() {
-  COLLECTOR="$COLLECTOR" PAYLOAD="$1" python3 - <<'PY'
-import importlib.machinery, importlib.util, json, os
+python3 - <<'PY'
+from agent_usage_fixtures import *
 
-loader = importlib.machinery.SourceFileLoader("collector", os.environ["COLLECTOR"])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
+import re
 
-payload = json.loads(os.environ["PAYLOAD"])
-print(collector.extract_tier(payload))
-PY
+TIER = "v1internal:loadCodeAssist"
+QUOTA = "v1internal:retrieveUserQuotaSummary"
+ANSWER = {
+  TIER: {"paidTier": {"id": "g1-pro-tier", "name": "Google AI Pro"}},
+  QUOTA: {"groups": [{"displayName": "Gemini Models", "buckets": [{"window": "5h", "remainingFraction": 0.75, "resetTime": iso_in(3 * 3600)}]}]},
 }
+ME = jwt({"email": "me@example.com"})
+OTHER = jwt({"email": "other@example.com"})
+REAL_PATH = os.environ["PATH"]
 
-ultra_tier=$(test_tier '{
-  "currentTier": { "id": "free-tier", "name": "Antigravity" },
-  "paidTier": { "id": "g1-ultra-tier", "name": "Google AI Ultra" }
-}')
-[[ $ultra_tier == "Ultra" ]] ||
-  fail "Antigravity collector extracts Ultra tier from paidTier" "$ultra_tier"
-pass "Antigravity collector extracts Ultra tier from paidTier"
 
-pro_tier=$(test_tier '{
-  "currentTier": { "id": "free-tier", "name": "Antigravity" },
-  "paidTier": { "id": "g1-pro-tier", "name": "Google AI Pro" }
-}')
-[[ $pro_tier == "Pro" ]] ||
-  fail "Antigravity collector extracts Pro tier from paidTier" "$pro_tier"
-pass "Antigravity collector extracts Pro tier from paidTier"
+# A machine where agy keeps its sign-in in the keyring: secret-tool answers
+# with keyring.json, which sign_in() writes.
+def machine():
+  sandbox()
+  stub = home() / "bin" / "secret-tool"
+  stub.parent.mkdir(parents=True, exist_ok=True)
+  stub.write_text('#!/bin/bash\ncat "$HOME/keyring.json" 2>/dev/null\n')
+  stub.chmod(0o755)
+  os.environ["PATH"] = f"{stub.parent}:{REAL_PATH}"
+  os.environ["AGY_DIR"] = str(home() / "agy")
 
-free_tier=$(test_tier '{
-  "currentTier": { "id": "free-tier", "name": "Antigravity" }
-}')
-[[ $free_tier == "Free" ]] ||
-  fail "Antigravity collector extracts Free tier when no paidTier" "$free_tier"
-pass "Antigravity collector extracts Free tier when no paidTier"
 
-# Test quota extraction
-test_limits() {
-  COLLECTOR="$COLLECTOR" PAYLOAD="$1" python3 - <<'PY'
-import importlib.machinery, importlib.util, json, os
+def sign_in(token="token-main", expiry=None, id_token=ME, refresh="refresh-main"):
+  write_json(home() / "keyring.json", {"auth_method": "consumer", "id_token": id_token,
+                                       "token": {"access_token": token, "refresh_token": refresh, "expiry": expiry or iso_in(3600)}})
 
-loader = importlib.machinery.SourceFileLoader("collector", os.environ["COLLECTOR"])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
 
-payload = json.loads(os.environ["PAYLOAD"])
-print(json.dumps(collector.extract_limits(payload)))
-PY
-}
+def agy(mode="up", routes=ANSWER, args=("--force",)):
+  with FakeHttp(routes, mode=mode) as http:
+    record = collect("agy", *args)
+  return record, http
 
-quota_payload='{
-  "groups": [
-    {
-      "displayName": "Gemini Models",
-      "buckets": [
-        {
-          "bucketId": "gemini-weekly",
-          "displayName": "Weekly Limit Remaining",
-          "window": "weekly",
-          "resetTime": "2026-09-17T18:19:42Z",
-          "remainingFraction": 0.95
-        },
-        {
-          "bucketId": "gemini-5h",
-          "displayName": "Five Hour Limit Remaining",
-          "window": "5h",
-          "resetTime": "2026-09-15T19:31:46Z",
-          "remainingFraction": 0.90
-        }
-      ]
-    },
-    {
-      "displayName": "Claude and GPT models",
-      "buckets": [
-        {
-          "bucketId": "3p-weekly",
-          "displayName": "Weekly Limit Remaining",
-          "window": "weekly",
-          "resetTime": "2026-09-18T12:56:14Z",
-          "remainingFraction": 0.98
-        },
-        {
-          "bucketId": "3p-5h",
-          "displayName": "Five Hour Limit Remaining",
-          "window": "5h",
-          "resetTime": "2026-09-15T22:16:22Z",
-          "remainingFraction": 1.0
-        }
-      ]
-    }
-  ]
-}'
 
-limits=$(test_limits "$quota_payload")
+def tier(payload):
+  return load_collector("agy").extract_tier(payload)
 
-[[ $(jq -r '.[0].label' <<<"$limits") == "Session (5-hour)" ]] ||
-  fail "Antigravity collector places Session window first" "$limits"
-pass "Antigravity collector places Session window first"
 
-[[ $(jq -r '.[0].percent' <<<"$limits") == "0.1" ]] ||
-  fail "Antigravity collector calculates used percentage from remainingFraction" "$limits"
-pass "Antigravity collector calculates used percentage from remainingFraction"
+def limits(payload):
+  return load_collector("agy").extract_limits(payload)
 
-[[ $(jq -r '.[1].label' <<<"$limits") == "Weekly (7-day)" ]] ||
-  fail "Antigravity collector places Weekly window second" "$limits"
-pass "Antigravity collector places Weekly window second"
 
-[[ $(jq -r '.[1].percent' <<<"$limits") == "0.05" ]] ||
-  fail "Antigravity collector calculates weekly used percentage" "$limits"
-pass "Antigravity collector calculates weekly used percentage"
+# ------------------------------------------------------------- the answer
 
-[[ $(jq -r '.[2].title' <<<"$limits") == "Claude/GPT Weekly" ]] ||
-  fail "Antigravity collector includes used scoped 3P limits" "$limits"
-pass "Antigravity collector includes used scoped 3P limits"
+sandbox()
+expect("Antigravity collector extracts the plan from paidTier, else currentTier", [
+  tier({"currentTier": {"id": "free-tier", "name": "Antigravity"}, "paidTier": {"id": "g1-ultra-tier", "name": "Google AI Ultra"}}),
+  tier({"currentTier": {"id": "free-tier", "name": "Antigravity"}, "paidTier": {"id": "g1-pro-tier", "name": "Google AI Pro"}}),
+  tier({"currentTier": {"id": "free-tier", "name": "Antigravity"}}),
+], ["Ultra", "Pro", "Free"])
 
-[[ $(jq -r '.[2].percent' <<<"$limits") == "0.02" ]] ||
-  fail "Antigravity collector calculates 3P used percentage" "$limits"
-pass "Antigravity collector calculates 3P used percentage"
+# Gemini's windows first, the session before the week, then the Claude and
+# GPT allowance only where some of it is used.
+read = limits({"groups": [
+  {"displayName": "Gemini Models", "buckets": [
+    {"bucketId": "gemini-weekly", "displayName": "Weekly Limit Remaining", "window": "weekly", "resetTime": "2026-09-17T18:19:42Z", "remainingFraction": 0.95},
+    {"bucketId": "gemini-5h", "displayName": "Five Hour Limit Remaining", "window": "5h", "resetTime": "2026-09-15T19:31:46Z", "remainingFraction": 0.90},
+  ]},
+  {"displayName": "Claude and GPT models", "buckets": [
+    {"bucketId": "3p-weekly", "displayName": "Weekly Limit Remaining", "window": "weekly", "resetTime": "2026-09-18T12:56:14Z", "remainingFraction": 0.98},
+    {"bucketId": "3p-5h", "displayName": "Five Hour Limit Remaining", "window": "5h", "resetTime": "2026-09-15T22:16:22Z", "remainingFraction": 1.0},
+  ]},
+]})
+expect("Antigravity collector orders the windows, reads used from remaining, and omits an unused 3P window",
+       [(entry["label"], entry.get("title"), round(entry["percent"], 2)) for entry in read],
+       [("Session (5-hour)", "Session", 0.1), ("Weekly (7-day)", "Weekly", 0.05), ("Claude/GPT Weekly", "Claude/GPT Weekly", 0.02)], read)
 
-[[ $(jq -r 'length' <<<"$limits") == "3" ]] ||
-  fail "Antigravity collector omits unused 3P session limit" "$limits"
-pass "Antigravity collector omits unused 3P session limit"
-
-reordered=$(test_limits '{"groups": [
+read = limits({"groups": [
   {"displayName": "Claude and GPT models", "buckets": [{"window": "5h", "remainingFraction": 1.0}]},
-  {"displayName": "Gemini Models", "buckets": [{"window": "weekly", "remainingFraction": 0.5}]}
-]}')
-[[ $(jq -c 'map({label, percent})' <<<"$reordered") == '[{"label":"Weekly (7-day)","percent":0.5}]' ]] ||
-  fail "Antigravity collector finds the Gemini group wherever it is listed" "$reordered"
-pass "Antigravity collector finds the Gemini group wherever it is listed"
+  {"displayName": "Gemini Models", "buckets": [{"window": "weekly", "remainingFraction": 0.5}]},
+]})
+expect("Antigravity collector finds the Gemini group wherever it is listed", [(entry["label"], entry["percent"]) for entry in read], [("Weekly (7-day)", 0.5)], read)
 
-snake=$(test_limits '{"buckets": [
+read = limits({"buckets": [
   {"window": "5h", "remaining_fraction": 0.4, "reset_time": "2026-09-15T19:31:46Z"},
   {"window": "weekly", "remainingFraction": "plenty"},
-  {"bucketId": "gemini-weekly", "remainingFraction": Infinity}
-]}')
-[[ $(jq -c 'map({label, percent, resetsAt})' <<<"$snake") == '[{"label":"Session (5-hour)","percent":0.6,"resetsAt":"2026-09-15T19:31:46+00:00"}]' ]] ||
-  fail "Antigravity collector reads snake_case buckets listed without groups and skips unreadable fractions" "$snake"
-pass "Antigravity collector reads snake_case buckets listed without groups and skips unreadable fractions"
+  {"bucketId": "gemini-weekly", "remainingFraction": float("inf")},
+]})
+expect("Antigravity collector reads snake_case buckets listed without groups and skips unreadable fractions",
+       [(entry["label"], round(entry["percent"], 2), entry["resetsAt"]) for entry in read], [("Session (5-hour)", 0.6, "2026-09-15T19:31:46+00:00")], read)
 
-# The whole record with Google's endpoints and the keyring standing in. The
-# keyring answers with keyring.json, Google answers as STATE says, and each
-# request's endpoint, token, and host is logged so a test can tell what was
-# asked.
-test_tmp=$(mktemp -d)
-trap 'rm -rf "$test_tmp"' EXIT
-mkdir -p "$test_tmp/bin"
-cat >"$test_tmp/bin/secret-tool" <<'EOF'
-#!/bin/bash
-cat "$HOME/keyring.json" 2>/dev/null
-EOF
-chmod +x "$test_tmp/bin/secret-tool"
-in_an_hour=$(python3 -c 'import datetime as dt; print((dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat())')
-an_hour_ago=$(python3 -c 'import datetime as dt; print((dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)).isoformat())')
-reset_at=$(python3 -c 'import datetime as dt; print((dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=3)).isoformat())')
+# ---------------------------------------------------------------- contract
 
-# The id token names the account: header.{"email":"me@example.com"}.signature
-me_id_token="header.eyJlbWFpbCI6Im1lQGV4YW1wbGUuY29tIn0.signature"
-other_id_token="header.eyJlbWFpbCI6Im90aGVyQGV4YW1wbGUuY29tIn0.signature"
+machine()
 
-sign_in() {
-  local refresh=${4-refresh-main}
-  printf '{"auth_method":"consumer","id_token":"%s","token":{"access_token":"%s","refresh_token":"%s","expiry":"%s"}}\n' \
-    "${3:-$me_id_token}" "$1" "$refresh" "$2" >"$test_tmp/keyring.json"
-}
 
-collect() {
-  local state=$1
-  shift
-  HOME="$test_tmp" AGY_DIR="$test_tmp/agy" XDG_CACHE_HOME="$test_tmp/cache" PATH="$test_tmp/bin:$PATH" \
-    COLLECTOR="$COLLECTOR" RESET_AT="$reset_at" STATE="$state" ASKED="$test_tmp/asked" python3 - "$@" <<'PY'
-import importlib.machinery, importlib.util, io, json, os, sys, urllib.error
+def add_prompt():
+  with (home() / "agy" / "history.jsonl").open("a") as history:
+    history.write(json.dumps({"timestamp": iso_in(0), "conversation_id": f"c{time.time_ns()}"}) + "\n")
 
-loader = importlib.machinery.SourceFileLoader("collector", os.environ["COLLECTOR"])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
 
-answers = {
-  "loadCodeAssist": {"paidTier": {"id": "g1-pro-tier", "name": "Google AI Pro"}},
-  "retrieveUserQuotaSummary": {"groups": [{"displayName": "Gemini Models", "buckets": [
-    {"window": "5h", "remainingFraction": 0.75, "resetTime": os.environ["RESET_AT"]}
-  ]}]},
-}
-state = os.environ["STATE"]
+(home() / "agy").mkdir()
+adapter = Adapter("agy", plant=sign_in, answer=ANSWER, requests_per_probe=2, grow=add_prompt,
+                  pi_root=lambda: home() / ".pi" / "agent" / "sessions")
+fresh = check_limits_contract(adapter)
+expect("Antigravity collector reports its plan and live limits", [fresh["tierLabel"], fresh["limits"][0]["percent"]], ["Pro", 0.25], fresh)
+check_scan_cache(adapter)
 
-def urlopen(request, timeout=None):
-  endpoint = request.full_url.rsplit(":", 1)[1]
-  with open(os.environ["ASKED"], "a") as asked:
-    asked.write(f"{endpoint} {request.get_header('Authorization')} {request.full_url.split('/')[2]}\n")
-  if state == "down":
-    raise urllib.error.URLError("offline")
-  if state in ("401", "500"):
-    raise urllib.error.HTTPError(request.full_url, int(state), "No", {}, io.BytesIO())
-  if state == "noquota" and endpoint == "retrieveUserQuotaSummary":
-    return io.BytesIO(b'{"groups": []}')
-  return io.BytesIO(json.dumps(answers[endpoint]).encode())
+record, http = agy()
+expect("Antigravity collector asks with agy's token", {r["headers"].get("authorization") for r in http.requests}, {"Bearer token-main"})
+caches = [path.name for path in limits_cache_files("agy")]
+check("Antigravity collector caches limits per account, named by a digest rather than the email",
+      len(caches) == 1 and re.fullmatch(r"agy-limits-[0-9a-f]{16}\.json", caches[0]) and "me@example.com" not in caches[0], caches)
 
-collector.urllib.request.urlopen = urlopen
-sys.argv = ["omarchy-agent-usage-agy"] + sys.argv[1:]
-collector.main()
-PY
-}
+# A damaged entry in the kept answer is dropped, not shown.
+edit_limits_cache("agy", resets_past=True)
+for path in limits_cache_files("agy"):
+  data = json.loads(path.read_text())
+  path.write_text(json.dumps(dict(data, limits=data["limits"] + ["damaged"])))
+record, _ = agy("down")
+expect("Antigravity collector drops a damaged kept window and shows an elapsed one at zero",
+       record["limits"], [{"label": "Session (5-hour)", "title": "Session", "percent": 0.0, "resetsAt": ""}], record)
+agy()
 
-asked() {
-  if [[ -e $test_tmp/asked ]]; then
-    cat "$test_tmp/asked"
-    rm -f "$test_tmp/asked"
-  fi
-}
-
-sign_in token-main "$in_an_hour"
-record=$(collect up --force)
-[[ $(jq -c '{id, ready, tierLabel, usageStatusText, authHelpText, stale: .limitsStale, retryAdvised, percent: .limits[0].percent}' <<<"$record") == '{"id":"agy","ready":true,"tierLabel":"Pro","usageStatusText":"","authHelpText":"","stale":false,"retryAdvised":false,"percent":0.25}' ]] ||
-  fail "Antigravity collector reports its plan and live limits" "$record"
-(( $(jq '.limitsFetchedAt' <<<"$record") > 0 )) || fail "Antigravity collector says when the limits were fetched" "$record"
-[[ $(asked | awk '{print $3}' | sort -u) == "token-main" ]] || fail "Antigravity collector asks with agy's token" "$record"
-pass "Antigravity collector reports its plan and live limits"
-
-caches=$(cd "$test_tmp/cache/omarchy/agent-usage" && ls agy-limits-*.json)
-[[ $caches =~ ^agy-limits-[0-9a-f]{16}\.json$ && ! -e $test_tmp/cache/omarchy/agent-usage/agy-limits.json ]] ||
-  fail "Antigravity collector caches limits per account" "$caches"
-grep -q "me@example.com" <<<"$caches" && fail "Antigravity collector names its cache by a digest, not the email" "$caches"
-pass "Antigravity collector caches limits per account"
-
-# Within the probe interval a normal run reuses the answer it just got;
-# --force asks again.
-record=$(collect up)
-[[ -z $(asked) && $(jq -c '{stale: .limitsStale, percent: .limits[0].percent}' <<<"$record") == '{"stale":false,"percent":0.25}' ]] ||
-  fail "Antigravity collector reuses a fresh answer without asking Google again" "$record"
-record=$(collect up --force)
-[[ $(asked | wc -l) == "2" ]] || fail "Antigravity collector asks again when forced" "$record"
-pass "Antigravity collector reuses a fresh answer, and asks again when forced"
-
-fetched=$(jq '.limitsFetchedAt' <<<"$record")
-record=$(collect down --force)
-[[ $(jq -c '{tierLabel, usageStatusText, stale: .limitsStale, retryAdvised, percent: .limits[0].percent}' <<<"$record") == '{"tierLabel":"Pro","usageStatusText":"","stale":true,"retryAdvised":true,"percent":0.25}' ]] ||
-  fail "Antigravity collector keeps the last limits, marked stale, after a failed check" "$record"
-[[ $(jq '.limitsFetchedAt' <<<"$record") == "$fetched" ]] || fail "stale Antigravity limits keep when they were fetched" "$record"
-[[ $(jq -r '.authHelpText' <<<"$record") == *"Couldn't reach"* ]] || fail "Antigravity collector says the check couldn't reach Google" "$record"
-pass "Antigravity collector keeps the last limits, marked stale, after a failed check"
-
-record=$(collect 500 --force)
-[[ $(jq -c '{usageStatusText, stale: .limitsStale, retryAdvised}' <<<"$record") == '{"usageStatusText":"","stale":true,"retryAdvised":false}' ]] ||
-  fail "Antigravity collector advises no quick retry when Google answered with an error" "$record"
-pass "Antigravity collector advises no quick retry when Google answered with an error"
-
-record=$(collect 401 --force)
-[[ $(jq -c '{usageStatusText, stale: .limitsStale, percent: .limits[0].percent}' <<<"$record") == '{"usageStatusText":"Sign-in expired","stale":true,"percent":0.25}' ]] ||
-  fail "Antigravity collector reports a refused sign-in as expired" "$record"
-asked >/dev/null
-pass "Antigravity collector reports a refused sign-in as expired"
-
-# A kept window whose reset has passed is back at zero, not dropped.
-cache_file=$(ls "$test_tmp/cache/omarchy/agent-usage"/agy-limits-*.json)
-python3 - "$cache_file" <<'PY'
-import json, sys
-path = sys.argv[1]
-data = json.load(open(path))
-data["limits"][0]["resetsAt"] = "2020-01-01T00:00:00+00:00"
-data["limits"].append("damaged")
-json.dump(data, open(path, "w"))
-PY
-record=$(collect down --force)
-[[ $(jq -c '.limits' <<<"$record") == '[{"label":"Session (5-hour)","title":"Session","percent":0.0,"resetsAt":""}]' ]] ||
-  fail "Antigravity collector shows an elapsed kept window at zero" "$record"
-asked >/dev/null
-pass "Antigravity collector shows an elapsed kept window at zero"
+# ------------------------------------------------------------ the sign-in
 
 # A lapsed access token is renewed the next time agy runs, so the kept limits
 # stay up without a new sign-in; without a refresh token behind it, a new
 # sign-in is needed. Neither is sent to Google.
-sign_in token-main "$an_hour_ago"
-record=$(collect up --force)
-[[ -z $(asked) && $(jq -c '{usageStatusText, stale: .limitsStale, n: (.limits | length)}' <<<"$record") == '{"usageStatusText":"Limits paused","stale":true,"n":1}' ]] ||
-  fail "Antigravity collector pauses limits while agy's access token has lapsed" "$record"
-[[ $(jq -r '.authHelpText' <<<"$record") == *"signing in again is not needed"* ]] || fail "Antigravity collector says no new sign-in is needed" "$record"
-pass "Antigravity collector pauses limits while agy's access token has lapsed"
+sign_in(expiry=iso_in(-3600))
+record, http = agy()
+check("Antigravity collector pauses limits while agy's access token has lapsed, asking nothing",
+      http.count == 0 and record["usageStatusText"] == "Limits paused" and record["limitsStale"] is True and len(record["limits"]) == 1
+      and "signing in again is not needed" in record["authHelpText"], record)
 
-sign_in token-main "$an_hour_ago" "$me_id_token" ""
-record=$(collect up --force)
-[[ -z $(asked) && $(jq -r '.usageStatusText' <<<"$record") == "Sign-in expired" ]] ||
-  fail "Antigravity collector reports a lapsed sign-in without a refresh token as expired" "$record"
-pass "Antigravity collector reports a lapsed sign-in without a refresh token as expired"
+sign_in(expiry=iso_in(-3600), refresh="")
+record, http = agy()
+expect("Antigravity collector reports a lapsed sign-in without a refresh token as expired", [http.count, record["usageStatusText"]], [0, "Sign-in expired"], record)
 
 # Another account signed in here never wears the last one's limits.
-sign_in token-other "$an_hour_ago" "$other_id_token"
-record=$(collect down --force)
-[[ $(jq -c '{limits, tierLabel, limitsFetchedAt}' <<<"$record") == '{"limits":[],"tierLabel":"","limitsFetchedAt":0}' ]] ||
-  fail "Antigravity collector shows no other account's kept limits" "$record"
-pass "Antigravity collector shows no other account's kept limits"
+sign_in("token-other", iso_in(-3600), OTHER)
+record, _ = agy("down")
+expect("Antigravity collector shows no other account's kept limits",
+       [record["limits"], record["tierLabel"], record["limitsFetchedAt"]], [[], "", 0], record)
 
 # A plan with no quota windows to report is healthy, with no meters.
-sign_in token-other "$in_an_hour" "$other_id_token"
-record=$(collect noquota --force)
-[[ $(jq -c '{limits, tierLabel, usageStatusText, authHelpText, stale: .limitsStale}' <<<"$record") == '{"limits":[],"tierLabel":"Pro","usageStatusText":"","authHelpText":"","stale":false}' ]] ||
-  fail "Antigravity collector treats a plan without quota windows as healthy" "$record"
-asked >/dev/null
-pass "Antigravity collector treats a plan without quota windows as healthy"
+sign_in("token-other", iso_in(3600), OTHER)
+record, _ = agy(routes={TIER: ANSWER[TIER], QUOTA: {"groups": []}})
+expect("Antigravity collector treats a plan without quota windows as healthy",
+       [record["limits"], record["tierLabel"], record["usageStatusText"], record["authHelpText"], record["limitsStale"]], [[], "Pro", "", "", False], record)
 
 # The bearer token goes only to an https destination.
-record=$(CLOUD_CODE_URL="http://evil.example" collect up --force)
-[[ $(asked | awk '{print $4}' | sort -u) == "daily-cloudcode-pa.googleapis.com" ]] ||
-  fail "Antigravity collector ignores a plain-http destination" "$record"
-record=$(CLOUD_CODE_URL="https://mirror.example" collect up --force)
-[[ $(asked | awk '{print $4}' | sort -u) == "mirror.example" ]] ||
-  fail "Antigravity collector honors an https destination" "$record"
-pass "Antigravity collector asks only an https destination, defaulting to Google's"
+os.environ["CLOUD_CODE_URL"] = "http://evil.example"
+_, http = agy()
+expect("Antigravity collector ignores a plain-http destination", {r["url"].split("/")[2] for r in http.requests}, {"daily-cloudcode-pa.googleapis.com"})
+os.environ["CLOUD_CODE_URL"] = "https://mirror.example"
+_, http = agy()
+expect("Antigravity collector honors an https destination", {r["url"].split("/")[2] for r in http.requests}, {"mirror.example"})
+del os.environ["CLOUD_CODE_URL"]
 
-rm -rf "$test_tmp/cache"
-record=$(collect down --force)
-[[ $(jq -c '{limits, usageStatusText, retryAdvised}' <<<"$record") == '{"limits":[],"usageStatusText":"Antigravity limits unavailable","retryAdvised":true}' ]] ||
-  fail "Antigravity collector invents no limits when it has never reached Google" "$record"
-asked >/dev/null
-pass "Antigravity collector invents no limits when it has never reached Google"
-
-# A normal run reuses a scan for a few seconds; --force rescans.
-mkdir -p "$test_tmp/agy"
-now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-echo '{"timestamp":"'"$now"'","conversation_id":"c1"}' >"$test_tmp/agy/history.jsonl"
-record=$(collect up --force)
-echo '{"timestamp":"'"$now"'","conversation_id":"c2"}' >>"$test_tmp/agy/history.jsonl"
-record=$(collect up)
-[[ $(jq '.totalPrompts' <<<"$record") == "1" ]] || fail "Antigravity collector reuses a recent scan" "$record"
-record=$(collect up --limits-only)
-[[ $(jq '.totalPrompts' <<<"$record") == "1" ]] || fail "Antigravity collector reuses a scan on a limits-only run" "$record"
-record=$(collect up --force)
-[[ $(jq '.totalPrompts' <<<"$record") == "2" ]] || fail "Antigravity collector rescans when forced" "$record"
-asked >/dev/null
-pass "Antigravity collector reuses a recent scan, and rescans when forced"
+for path in limits_cache_files("agy"):
+  path.unlink()
+record, _ = agy("down")
+expect("Antigravity collector invents no limits when it has never reached Google",
+       [record["limits"], record["usageStatusText"], record["retryAdvised"]], [[], "Antigravity limits unavailable", True], record)
+PY
