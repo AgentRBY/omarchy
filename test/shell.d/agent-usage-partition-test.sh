@@ -385,6 +385,8 @@ for cid in collectors:
     problems.append(f"ready {record.get('ready')!r}")
   if record.get("usageStatusText") != "":
     problems.append(f"usageStatusText {record.get('usageStatusText')!r} (authHelpText {record.get('authHelpText')!r})")
+  elif record.get("authHelpText") != "":
+    problems.append(f"authHelpText {record.get('authHelpText')!r} with no status")
   if record.get("limits"):
     problems.append("limits not empty")
   if "balance" in record:
@@ -513,7 +515,7 @@ PY
 # ------------------------------------------------------------------ verdict
 
 declare -A DESCRIPTIONS=(
-  [empty-home]="every collector prints the unused-machine record in an empty home: ready false, no status, no limits, no balance, empty stats, the full field set"
+  [empty-home]="every collector prints the unused-machine record in an empty home: ready false, no status or help, no limits, no balance, empty stats, the full field set"
   [fixture-run]="every collector prints a record against the fixture home, offline and in time"
   [fixture-shape]="every collector's fixture record has the contract's full field set"
   [attribution]="every token a collector counts comes from a fixture row"

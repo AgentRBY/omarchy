@@ -1,12 +1,16 @@
 #!/bin/bash
 
-source "$(dirname "$0")/base-test.sh"
+set -euo pipefail
+
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 require_command jq
 require_command python3
 
-TEST_HOME=$(mktemp -d)
-trap 'rm -rf "$TEST_HOME"' EXIT
+SCRATCH=$(mktemp -d)
+trap 'rm -rf "$SCRATCH"' EXIT
+TEST_HOME="$SCRATCH/test"
+mkdir "$TEST_HOME"
 # The collector caches its scan; keep it out of the real cache.
 export XDG_CACHE_HOME="$TEST_HOME/.cache"
 
@@ -91,7 +95,7 @@ printf '%s\n' "$record" | jq -e '.modelUsage["gpt-6-astra"].inputTokens == 100 a
   fail "Hermes collector reads HERMES_HOME and every named profile"
 pass "Hermes collector reads HERMES_HOME and every named profile"
 
-empty_home=$(mktemp -d)
+empty_home=$(mktemp -d "$SCRATCH/home.XXXXXX")
 record=$(HOME="$empty_home" HERMES_HOME="" PATH=/usr/bin:/bin "$ROOT/bin/omarchy-agent-usage-hermes")
 rm -rf "$empty_home"
 printf '%s\n' "$record" | jq -e '.limits == [] and .tierLabel == "" and .totalSessions == 0 and .activeDays == 0 and .modelUsage == {}' >/dev/null ||
@@ -118,7 +122,7 @@ pass "Hermes collector is ready once Hermes state exists"
 
 # An unreadable state.db says Hermes is unavailable, with the detail in the
 # help text, and the readable profiles still count.
-bad_home=$(mktemp -d)
+bad_home=$(mktemp -d "$SCRATCH/home.XXXXXX")
 make_state "$bad_home/.hermes/profiles/work/state.db" gpt-6-sol:1000
 mkdir -p "$bad_home/.hermes"
 printf 'not a database at all, just text that is long enough to read' >"$bad_home/.hermes/state.db"
@@ -135,7 +139,7 @@ rm -rf "$bad_home"
 
 # The scan is reused for SCAN_REUSE_SECONDS, for LIMITS_ONLY_REUSE_SECONDS on
 # --limits-only, and never on --force.
-cache_home=$(mktemp -d)
+cache_home=$(mktemp -d "$SCRATCH/home.XXXXXX")
 make_state "$cache_home/.hermes/state.db" gpt-6-astra:10
 run_cached() {
   HOME="$cache_home" HERMES_HOME="" XDG_CACHE_HOME="$cache_home/.cache" "$ROOT/bin/omarchy-agent-usage-hermes" "$@" | jq -r .totalSessions
@@ -171,30 +175,11 @@ age_cache -3600
 [[ $(run_cached --limits-only) == "4" ]] || fail "Hermes collector never reuses a future-dated scan"
 pass "Hermes collector never reuses a future-dated scan"
 
-# The scan is rebuilt under its lock: a concurrent run waits for it.
-lock_file=$(find "$cache_home/.cache/omarchy/agent-usage" -name 'hermes-scan-*.lock' | head -n 1)
-[[ -n $lock_file ]] || fail "Hermes collector keeps a scan lock"
-waited=$(python3 - "$lock_file" "$ROOT/bin/omarchy-agent-usage-hermes" "$cache_home" <<'PY'
-import fcntl, os, subprocess, sys, time
-lock = open(sys.argv[1], "w")
-fcntl.flock(lock, fcntl.LOCK_EX)
-env = dict(os.environ, HOME=sys.argv[3], HERMES_HOME="", XDG_CACHE_HOME=sys.argv[3] + "/.cache")
-started = time.time()
-proc = subprocess.Popen([sys.argv[2], "--force"], env=env, stdout=subprocess.DEVNULL)
-time.sleep(1.2)
-still_running = proc.poll() is None
-fcntl.flock(lock, fcntl.LOCK_UN)
-proc.wait()
-print("true" if still_running else "false")
-PY
-)
-[[ $waited == "true" ]] || fail "Hermes collector rebuilds the scan under its lock"
-pass "Hermes collector rebuilds the scan under its lock"
 rm -rf "$cache_home"
 
 # Every active date travels, not only the latest 400, and broken token counts
 # or start times skip their row instead of inflating the record.
-dates_home=$(mktemp -d)
+dates_home=$(mktemp -d "$SCRATCH/home.XXXXXX")
 make_state "$dates_home/.hermes/state.db"
 python3 - "$dates_home/.hermes/state.db" <<'PY'
 import datetime as dt, sqlite3, sys

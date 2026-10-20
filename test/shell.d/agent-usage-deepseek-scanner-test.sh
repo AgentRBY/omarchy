@@ -1,6 +1,8 @@
 #!/bin/bash
 
-source "$(dirname "$0")/base-test.sh"
+set -euo pipefail
+
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 require_command jq
 require_command python3
@@ -393,12 +395,3 @@ result=$(collect "$CACHE_HOME" --force)
 [[ $(jq -r '.todayTotalTokens' <<<"$result") == "100" ]] ||
   fail "DeepSeek collector --force rescans" "$result"
 pass "DeepSeek collector caches and reuses local stats"
-
-# Without rg the sessions can't be read, and a scan missing them is never
-# cached as the whole story.
-rm -rf "$CACHE_HOME/.cache"
-HOME="$CACHE_HOME" XDG_CACHE_HOME="$CACHE_HOME/.cache" XDG_DATA_HOME="$CACHE_HOME/.local/share" \
-  PATH="$CACHE_HOME/no-bin" "$ROOT/bin/omarchy-agent-usage-deepseek" >/dev/null 2>&1
-[[ -z $(find "$CACHE_HOME/.cache" -name 'deepseek-scan-*.json' 2>/dev/null) ]] ||
-  fail "DeepSeek collector doesn't cache a scan that couldn't read the sessions"
-pass "DeepSeek collector doesn't cache a scan that couldn't read the sessions"

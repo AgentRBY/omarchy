@@ -327,15 +327,3 @@ printf '*\n' >"$HOME/.gitignore"
 record=$(KIMCHI_API_KEY=key-coder collect)
 [[ $(jq -r '.totalSessions' <<<"$record") == 4 ]] || fail "an ignoring git checkout in HOME doesn't hide sessions" "$record"
 pass "an ignoring git checkout in HOME doesn't hide sessions"
-
-# A scan that couldn't read every session isn't kept for the next run.
-if (( EUID != 0 )); then
-  chmod 000 "$fork/fork.jsonl"
-  rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-scan-*.json
-  record=$(KIMCHI_API_KEY=key-coder collect)
-  chmod 644 "$fork/fork.jsonl"
-  [[ $(jq -r '.totalSessions' <<<"$record") == 3 ]] || fail "an unreadable session is skipped" "$record"
-  ! compgen -G "$XDG_CACHE_HOME/omarchy/agent-usage/kimchi-scan-*.json" >/dev/null ||
-    fail "a partial scan is not cached" "$(ls "$XDG_CACHE_HOME/omarchy/agent-usage")"
-  pass "a scan that couldn't read every session isn't cached"
-fi

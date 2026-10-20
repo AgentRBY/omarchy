@@ -1,6 +1,8 @@
 #!/bin/bash
 
-source "$(dirname "$0")/base-test.sh"
+set -euo pipefail
+
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 require_command python3
 
@@ -116,3 +118,23 @@ PY
 [[ $plan == "Max 5x" ]] ||
   fail "Claude collector never labels a secondary account from the primary's profile" "$plan"
 pass "Claude collector never labels a secondary account from the primary's profile"
+
+# The credentials carry two plan facts: the subscription and the rate-limit
+# tier it runs under. With no profile beside them, they settle the label.
+plan_label() {
+  read_plan "{\"claudeAiOauth\":{\"accessToken\":\"token\",\"expiresAt\":1,\"rateLimitTier\":\"$1\",\"subscriptionType\":\"$2\"}}" ""
+}
+
+# A Team premium seat runs on the Max 5x rate-limit tier, and the tier alone
+# used to label it "Max 5x" — the plan the seat is not on.
+[[ $(plan_label default_claude_max_5x team) == "Team 5x" ]] ||
+  fail "Claude collector labels a Team seat by its subscription, not its rate-limit tier" "$(plan_label default_claude_max_5x team)"
+pass "Claude collector labels a Team seat by its subscription, not its rate-limit tier"
+
+# Max keeps its multiplier, with or without a subscription type alongside the
+# tier, and a plan whose tier names no multiplier is just the plan.
+[[ $(plan_label default_claude_max_20x max) == "Max 20x" && $(plan_label default_claude_max_5x "") == "Max 5x" ]] ||
+  fail "Claude collector still labels Max by its multiplier" "$(plan_label default_claude_max_20x max) / $(plan_label default_claude_max_5x "")"
+[[ $(plan_label default_claude_pro pro) == "Pro" && $(plan_label "" team) == "Team" ]] ||
+  fail "Claude collector labels a plan without a multiplier by its subscription alone" "$(plan_label default_claude_pro pro) / $(plan_label "" team)"
+pass "Claude collector keeps Max multipliers and plain plan names"

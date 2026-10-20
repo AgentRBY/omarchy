@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # The shared collector module, shell/plugins/agents/collectors.py, holds the
-# parts of the collector contract every collector shares. Each collector's
-# own tests cover its record end to end; this one holds the module's pieces
-# to the contract directly, so a collector built on them inherits it.
+# parts of the collector contract every collector shares. This test holds the
+# module's pieces to the contract directly, so a collector built on them
+# inherits it, and a collector's own test covers only its own sources,
+# credentials, and answer.
 
 set -euo pipefail
 
@@ -16,6 +17,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 WORK="$WORK" python3 - <<'PY'
+import contextlib
 import json
 import os
 import sqlite3
@@ -95,6 +97,40 @@ check(
   "the scan reuse windows are 20, 900, and 0 seconds",
   (collectors.scan_max_age(False, False), collectors.scan_max_age(False, True), collectors.scan_max_age(True, True)) == (20, 900, 0),
 )
+
+# ------------------------------------------------------------------- files
+
+# Collectors overlap in practice: the update command backgrounds one per agent
+# while the panel refreshes on its own. Writers aiming at one cache file must
+# all land, not trip over a shared temp path.
+import threading  # noqa: E402
+
+race = work / "race" / "cache.json"
+race.parent.mkdir()
+failures = []
+barrier = threading.Barrier(8)
+
+
+def hammer(writer):
+  barrier.wait()
+  for round_ in range(25):
+    try:
+      collectors.write_json(race, {"writer": writer, "round": round_})
+    except Exception as error:
+      failures.append(repr(error))
+
+
+writers = [threading.Thread(target=hammer, args=(writer,)) for writer in range(8)]
+for thread in writers:
+  thread.start()
+for thread in writers:
+  thread.join()
+check(
+  "concurrent writers to one file all land, leaving one intact file and no temp files",
+  not failures and isinstance(json.loads(race.read_text()).get("writer"), int) and [path.name for path in race.parent.iterdir()] == ["cache.json"],
+  json.dumps({"failures": failures[:3], "files": sorted(path.name for path in race.parent.iterdir())}),
+)
+check("written files stay readable to others", race.stat().st_mode & 0o777 == 0o644, oct(race.stat().st_mode))
 
 # ------------------------------------------------------------------ record
 
@@ -195,6 +231,36 @@ partial = collectors.cached_scan("demo", ["c"], 900, lambda: ({**collectors.empt
 whole = collectors.cached_scan("demo", ["b"], 900, scan, with_complete=True)
 check("a caller can ask whether the scan was complete, a cached one being so", partial[0]["totalPrompts"] == 7 and partial[1] is False and whole == (whole[0], True) and whole[0]["totalPrompts"] == 5)
 
+# A scan is rebuilt under its lock, so a run that starts while another scans
+# waits for it, then takes its result rather than reading every source again.
+import subprocess  # noqa: E402
+
+HOLDER = '''
+import json, os, sys, time, fcntl
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+print("locked", flush=True)
+time.sleep(1.0)
+envelope = json.loads(sys.argv[3])
+envelope["scannedAtMs"] = int(time.time() * 1000)
+with open(sys.argv[2], "w") as handle:
+  json.dump(envelope, handle)
+'''
+locked_cache, locked_lock = collectors.scan_cache_paths("demo", ["locked"])
+envelope = {"schemaVersion": collectors.SCAN_CACHE_VERSION, "scanDate": today, "stats": {**collectors.empty_stats(), "totalPrompts": 42}}
+holder = subprocess.Popen([sys.executable, "-c", HOLDER, str(locked_lock), str(locked_cache), json.dumps(envelope)], stdout=subprocess.PIPE, text=True)
+holder.stdout.readline()
+scans_before = len(calls)
+started = time.time()
+waited_for = collectors.cached_scan("demo", ["locked"], 20, scan)
+waited = time.time() - started
+holder.wait()
+check(
+  "a run that starts during a scan waits on its lock, then takes that scan rather than scanning again",
+  waited >= 0.8 and waited_for["totalPrompts"] == 42 and len(calls) == scans_before,
+  f"waited {waited:.2f}s, got {waited_for['totalPrompts']}, scanned {len(calls) - scans_before} more times",
+)
+
 # ------------------------------------------------------------------ limits
 
 cache = collectors.LimitsCache("demo", "who@example.com")
@@ -213,6 +279,18 @@ check(
   json.dumps(kept.limits),
 )
 check("a fresh answer stands in for a probe, but not past --force", kept.fresh(False) and not kept.fresh(True))
+interval = collectors.LimitsCache("demo", "interval")
+interval.save([{"label": "Weekly", "percent": 0.1, "resetsAt": future}])
+aged = json.loads(interval.path.read_text())
+aged["fetchedAtMs"] = collectors.now_ms() - 14_000
+interval.path.write_text(json.dumps(aged))
+young = collectors.LimitsCache("demo", "interval").fresh(False)
+aged["fetchedAtMs"] = collectors.now_ms() - 16_000
+interval.path.write_text(json.dumps(aged))
+check(
+  "an answer stands in for a probe for 15 seconds",
+  collectors.PROBE_MIN_INTERVAL_SECONDS == 15 and young and not collectors.LimitsCache("demo", "interval").fresh(False),
+)
 check("the stale fallback carries when the limits were measured", kept.kept() == (kept.limits, fetched))
 os.utime(kept.path, (0, 0))
 check("the limits cache is read whatever its file time", collectors.LimitsCache("demo", "who@example.com").fetched_at == fetched)
@@ -418,6 +496,34 @@ check(
 )
 check("canonical roots drop an alias and a root inside another", collectors.canonical_roots([harness, work / "alias", harness / "inner", work / "harness"]) == [(work / "harness").resolve()])
 
+# A scan that couldn't read every session says so, and cached_scan above keeps
+# such a scan out of the cache.
+pattern = r'"provider"\s*:\s*"(demo|other)"'
+real_path = os.environ["PATH"]
+os.environ["PATH"] = str(work / "no-bin")
+try:
+  # The warning it prints is the collector's to show, not this test's.
+  with contextlib.redirect_stderr(io.StringIO()):
+    rows, complete = collectors.scan_pi_sessions(pattern, lambda provider, model, entry: provider == "demo")
+finally:
+  os.environ["PATH"] = real_path
+check("without rg the sessions can't be read, and the scan says it is incomplete", rows == [] and not complete)
+if os.geteuid() != 0:
+  # rg still prints the matches it could read, and only its exit status tells.
+  locked = sessions / "p" / "locked.jsonl"
+  write_session(locked, [reply("demo", 5000, "locked")])
+  locked.chmod(0)
+  try:
+    rows, complete = collectors.scan_pi_sessions(pattern, lambda provider, model, entry: provider == "demo")
+  finally:
+    locked.chmod(0o600)
+    locked.unlink()
+  check(
+    "a session rg couldn't read makes the scan incomplete, the readable ones still counted",
+    not complete and sorted(row.input_tokens + row.output_tokens + row.cache_read + row.cache_write for row in rows) == by_tokens,
+    json.dumps([row._asdict() for row in rows]),
+  )
+
 # --------------------------------------------------------------- opencode
 
 db = home / ".local" / "share" / "opencode" / "opencode.db"
@@ -482,6 +588,58 @@ check("the database is opened read-only", (db.parent / "opencode-v2.db").read_by
 rows, complete = collectors.scan_opencode(["demo"], accept_demo)
 check("a database error marks the scan incomplete", not complete and rows == [])
 
+# opencode keeps its database open while it runs, so its newest rows sit in
+# the write-ahead log; a read-only open still sees them.
+wal_db = work / "wal" / "opencode.db"
+wal_db.parent.mkdir()
+WAL_WRITER = '''
+import os, sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+conn.execute("PRAGMA journal_mode=WAL")
+conn.execute("CREATE TABLE message (id text PRIMARY KEY, session_id text, time_created integer, time_updated integer, data text)")
+conn.execute("INSERT INTO message VALUES ('msg_wal', 'ses_wal', 0, 0, ?)", (sys.argv[2],))
+conn.commit()
+# Killed with the connection open, so the rows stay in the log.
+os.kill(os.getpid(), 9)
+'''
+subprocess.run([sys.executable, "-c", WAL_WRITER, str(wal_db), v1("demo", {"input": 61})])
+os.environ["OPENCODE_DB"] = str(wal_db)
+wal_before = (wal_db.parent / "opencode.db-wal").is_file()
+rows, complete = collectors.scan_opencode(["demo"], accept_demo)
+check("a database left open with its rows in the write-ahead log still reads", wal_before and complete and [row.input_tokens for row in rows] == [61],
+      json.dumps({"wal": wal_before, "rows": [row._asdict() for row in rows]}))
+
+# A fresh V2 install has no `message` table at all, and some builds keep the
+# provider and model at the top level of a session_message row, with the role
+# in its type column. Either way the store reads on its own.
+v2_only = work / "v2-only.db"
+conn = sqlite3.connect(v2_only)
+conn.execute("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL,"
+             " seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)")
+
+
+def flat(provider, tokens):
+  return json.dumps({"providerID": provider, "modelID": "flat-model", "tokens": {"input": tokens}, "time": {"created": now_ms}})
+
+
+conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, 1, ?, ?, ?)", [
+  ("flat_reply", "ses_a", "assistant", now_ms, now_ms, flat("demo", 5)),
+  ("flat_prompt", "ses_a", "user", now_ms, now_ms, flat("demo", 900)),
+  ("flat_other", "ses_a", "assistant", now_ms, now_ms, flat("other", 900)),
+  ("nested_reply", "ses_b", "assistant", now_ms, now_ms, v2("demo", {"input": 7})),
+  ("broken", "ses_b", "assistant", now_ms, now_ms, "not json"),
+])
+conn.commit()
+conn.close()
+os.environ["OPENCODE_DB"] = str(v2_only)
+rows, complete = collectors.scan_opencode(["demo"], accept_demo)
+os.environ.pop("OPENCODE_DB")
+check(
+  "a database with only the V2 store reads on its own, flat rows and nested alike",
+  complete and sorted((row.session, row.model, row.input_tokens) for row in rows) == [("opencode:ses_a", "flat-model", 5), ("opencode:ses_b", "v2-model", 7)],
+  json.dumps([row._asdict() for row in rows]),
+)
+
 # --------------------------------------------------------------- sign-ins
 
 import base64  # noqa: E402
@@ -517,6 +675,7 @@ conn.execute("CREATE TABLE ItemTable (key TEXT, value BLOB)")
 conn.execute("INSERT INTO ItemTable VALUES ('cursorAuth/accessToken', ?)", (jwt({"sub": "ide", "exp": later}).encode(),))
 conn.commit()
 conn.close()
+state_db_bytes = state_db.read_bytes()
 check("the editor's sign-in stands when the CLI has none", collectors.account_key(collectors.cursor_token()) == "ide")
 cli = config / "cursor" / "auth.json"
 cli.parent.mkdir(parents=True)
@@ -531,6 +690,11 @@ check("CURSOR_AUTH_PATH moves the CLI's sign-in", collectors.cursor_auth_path() 
 check("an explicit auth path wins over CURSOR_AUTH_PATH", collectors.account_key(collectors.cursor_token(cli)) == "cli")
 os.environ["CURSOR_API_KEY"] = " exported "
 check("an exported key comes first", collectors.cursor_token() == "exported")
+check(
+  "the editor's database is read without touching it",
+  state_db.read_bytes() == state_db_bytes and sorted(path.name for path in state_db.parent.iterdir()) == ["state.vscdb"],
+  json.dumps(sorted(path.name for path in state_db.parent.iterdir())),
+)
 for name in ("CURSOR_API_KEY", "CURSOR_AUTH_PATH"):
   os.environ.pop(name)
 

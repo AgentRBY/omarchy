@@ -348,7 +348,6 @@ def probe_reuse(root):
   assert cache["fetchedAtMs"] == first["limitsFetchedAt"] and "fetchedAt" not in cache
   run("--force")
   assert len(requests) == 2, "--force reused a recent probe"
-  assert sys.modules["collectors"].PROBE_MIN_INTERVAL_SECONDS == 15
 
 def unreachable(root):
   os.environ["KIMI_API_KEY"] = "AT_env"

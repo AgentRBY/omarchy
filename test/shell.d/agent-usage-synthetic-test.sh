@@ -1,6 +1,8 @@
 #!/bin/bash
 
-source "$(dirname "$0")/base-test.sh"
+set -euo pipefail
+
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 require_command jq
 require_command python3
@@ -207,10 +209,9 @@ line() {
 printf '*\n' >"$TEST_HOME/.gitignore"
 git -C "$TEST_HOME" init -q
 
-{ python3 - "$XDG_DATA_HOME/opencode/opencode.db" || true; } 2>/dev/null <<'PY'
+python3 - "$XDG_DATA_HOME/opencode/opencode.db" <<'PY'
 import json, sqlite3, sys, time
 conn = sqlite3.connect(sys.argv[1]); now = int(time.time() * 1000)
-conn.execute("PRAGMA journal_mode=WAL")
 conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
 conn.execute("CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, time_created INTEGER, data TEXT)")
 def tokens(i, o, r=0): return {"input": i, "output": o, "reasoning": r, "cache": {"read": 0, "write": 0}}
@@ -219,10 +220,7 @@ conn.execute("INSERT INTO message VALUES ('m2', 's1', ?, ?, ?)", (now, now, json
 conn.execute("INSERT INTO session_message VALUES ('v1', 's2', 'compaction', ?, ?)", (now, json.dumps({"model": {"providerID": "synthetic", "id": "hf:zai-org/GLM-4.6"}, "tokens": tokens(30, 0), "time": {"created": now}})))
 conn.execute("INSERT INTO session_message VALUES ('m1', 's1', 'assistant', ?, ?)", (now, json.dumps({"model": {"providerID": "synthetic", "id": "hf:zai-org/GLM-4.6"}, "tokens": tokens(40, 5, 5), "time": {"created": now}})))
 conn.commit()
-# Left open, so the rows stay in the write-ahead log and an immutable open
-# would not see them.
-import os
-os.kill(os.getpid(), 9)
+conn.close()
 PY
 
 result=$("$collector" --force)

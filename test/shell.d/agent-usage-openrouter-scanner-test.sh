@@ -1,6 +1,8 @@
 #!/bin/bash
 
-source "$(dirname "$0")/base-test.sh"
+set -euo pipefail
+
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 require_command jq
 require_command python3
@@ -481,23 +483,6 @@ print(json.dumps({"normal": normal, "limitsOnly": limits_only, "forced": forced}
 PY
 )
 check "$(jq -c . <<<"$scan_reuse")" '{"normal":true,"limitsOnly":999,"forced":true}' "scan reuse follows --limits-only and --force"
-
-# 18. The local scan is rebuilt under its lock, so a concurrent run waits for
-# the scan in progress instead of reading the database a second time.
-lock_wait=$(run_py <<'PY'
-import fcntl, subprocess
-from datetime import datetime
-cache_file, lock_file = mod.scan_cache_paths()
-holder = subprocess.Popen([sys.executable, "-c", "import fcntl,sys,time; f=open(sys.argv[1],'w'); fcntl.flock(f, fcntl.LOCK_EX); print('locked', flush=True); time.sleep(1.5)", str(lock_file)], stdout=subprocess.PIPE, text=True)
-holder.stdout.readline()
-started = time.time()
-mod.cached_local_stats(0)
-waited = time.time() - started
-holder.wait()
-print(json.dumps({"waited": waited >= 1.0}))
-PY
-)
-check "$(jq -r .waited <<<"$lock_wait")" "true" "the local scan is rebuilt under its lock"
 
 # 19. The 30-day history is reused like a scan, and when /activity can't be
 # reached, today's last answer stands in for it.

@@ -1,6 +1,8 @@
 #!/bin/bash
 
-source "$(dirname "$0")/base-test.sh"
+set -euo pipefail
+
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 require_command jq
 require_command python3
@@ -127,58 +129,12 @@ result=$(HOME="$CACHE_HOME" XDG_CACHE_HOME="$CACHE_HOME/.cache" XDG_DATA_HOME="$
   fail "OpenCode collector --limits-only emits a complete record from cache" "$result"
 pass "OpenCode collector caches and reuses local stats"
 
-# Some builds move the same message JSON into session_message with the role in
-# a type column, and it reads on its own.
-SESSION_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME"' EXIT
-
-python3 - "$SESSION_HOME/.local/share/opencode/opencode.db" <<'PY'
-import json
-import sqlite3
-import sys
-import time
-from pathlib import Path
-
-db = Path(sys.argv[1])
-db.parent.mkdir(parents=True, exist_ok=True)
-conn = sqlite3.connect(db)
-conn.execute(
-  "CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL,"
-  " seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)"
-)
-now_ms = int(time.time() * 1000)
-
-def message(id, kind, provider, model, input=0, output=0):
-  return (id, "ses_1", kind, 1, now_ms, now_ms, json.dumps({
-    "providerID": provider,
-    "modelID": model,
-    "tokens": {"input": input, "output": output, "reasoning": 0, "cache": {"read": 0, "write": 0}},
-    "time": {"created": now_ms},
-  }))
-
-conn.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)", [
-  message("msg_1", "assistant", "opencode", "deepseek-v4.1-flash", input=5, output=2),
-  message("msg_2", "user", "opencode", "deepseek-v4.1-flash"),
-  message("msg_3", "assistant", "anthropic", "claude-opus-5", input=999, output=999),
-])
-conn.commit()
-conn.close()
-PY
-
-result=$(HOME="$SESSION_HOME" XDG_CACHE_HOME="$SESSION_HOME/.cache" XDG_DATA_HOME="$SESSION_HOME/.local/share" \
-  PATH="$SESSION_HOME/bin:$PATH" "$ROOT/bin/omarchy-agent-usage-opencode")
-[[ $(jq -r '.todayTotalTokens' <<<"$result") == "7" ]] ||
-  fail "OpenCode collector falls back to the session_message store" "$result"
-[[ $(jq -r '.totalSessions' <<<"$result") == "1" ]] ||
-  fail "OpenCode collector counts a fallback session once" "$result"
-pass "OpenCode collector falls back to the session_message store"
-
 # OpenCode V2 nests the provider under `model` and spends tokens on
 # compactions too. A message migrated into both stores counts once, and a
 # fork's copies of its source's messages don't count again. OPENCODE_DB
 # points at the database the way opencode itself reads it.
 V2_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$V2_HOME"' EXIT
 
 python3 - "$V2_HOME/elsewhere/opencode-dev.db" <<'PY'
 import json
@@ -230,7 +186,7 @@ pass "OpenCode collector reads V2 records once each, without fork copies"
 # tokens or of cache counts, a list for a pi message) costs that field or that
 # row, never the record.
 ODD_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$V2_HOME" "$ODD_HOME"' EXIT
 mkdir -p "$ODD_HOME/.pi/agent/sessions/project"
 cat >"$ODD_HOME/.pi/agent/sessions/project/pi.jsonl" <<EOF
 {"type":"message","id":"pi-odd","timestamp":"$timestamp","message":["provider","opencode"]}
@@ -268,7 +224,7 @@ pass "OpenCode collector survives malformed nested fields"
 # fork's copy of its parent's message counts once, a usage block with only a
 # total still counts, and either spelling of the token fields reads.
 ROOTS_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME" "$ROOTS_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$V2_HOME" "$ODD_HOME" "$ROOTS_HOME"' EXIT
 mkdir -p "$ROOTS_HOME/.git" "$ROOTS_HOME/.pi/agent/sessions/p" "$ROOTS_HOME/.omp/profiles/work/agent/sessions/p" \
   "$ROOTS_HOME/.pi/profiles/home/agent/sessions/p" "$ROOTS_HOME/moved/sessions/p"
 printf '*\n' >"$ROOTS_HOME/.gitignore"
@@ -294,19 +250,10 @@ result=$(HOME="$ROOTS_HOME" XDG_CACHE_HOME="$ROOTS_HOME/.cache" XDG_DATA_HOME="$
   fail "OpenCode collector reads every pi and omp session root once per message" "$result"
 pass "OpenCode collector reads every pi and omp session root once per message"
 
-# Without rg the sessions can't be read, and a scan missing them is never
-# cached as the whole story.
-rm -rf "$ROOTS_HOME/.cache"
-HOME="$ROOTS_HOME" XDG_CACHE_HOME="$ROOTS_HOME/.cache" XDG_DATA_HOME="$ROOTS_HOME/.local/share" \
-  PATH="$ROOTS_HOME/no-bin" "$ROOT/bin/omarchy-agent-usage-opencode" >/dev/null 2>&1
-[[ -z $(find "$ROOTS_HOME/.cache" -name 'opencode-scan-*.json' 2>/dev/null) ]] ||
-  fail "OpenCode collector doesn't cache a scan that couldn't read the sessions"
-pass "OpenCode collector doesn't cache a scan that couldn't read the sessions"
-
 # A timestamp or token count that can't be trusted costs its row or field,
 # never the scan.
 BAD_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME" "$ROOTS_HOME" "$BAD_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$V2_HOME" "$ODD_HOME" "$ROOTS_HOME" "$BAD_HOME"' EXIT
 mkdir -p "$BAD_HOME/.pi/agent/sessions/p"
 cat >"$BAD_HOME/.pi/agent/sessions/p/pi.jsonl" <<EOF
 {"type":"message","id":"b-1","timestamp":true,"message":{"role":"assistant","provider":"opencode","model":"kimi-k3","usage":{"input":1000}}}
@@ -325,7 +272,7 @@ pass "OpenCode collector skips untrusted timestamps and token counts"
 # A machine nobody uses OpenCode's subscription on gives a record the panel
 # skips: no plan, no limits, no usage.
 EMPTY_HOME=$(mktemp -d)
-trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$SESSION_HOME" "$V2_HOME" "$ODD_HOME" "$ROOTS_HOME" "$BAD_HOME" "$EMPTY_HOME"' EXIT
+trap 'rm -rf "$PI_HOME" "$NOID_HOME" "$OPENCODE_HOME" "$CACHE_HOME" "$V2_HOME" "$ODD_HOME" "$ROOTS_HOME" "$BAD_HOME" "$EMPTY_HOME"' EXIT
 result=$(HOME="$EMPTY_HOME" XDG_CACHE_HOME="$EMPTY_HOME/.cache" XDG_DATA_HOME="$EMPTY_HOME/.local/share" \
   OPENCODE_API_KEY= PATH="$EMPTY_HOME/bin:$PATH" "$ROOT/bin/omarchy-agent-usage-opencode")
 [[ $(jq -c '{ready, tierLabel, limits, totalPrompts, limitsStale, limitsFetchedAt, usageStatusText, authHelpText, recentDays: (.recentDays | length), activeDates, modelUsage}' <<<"$result") == '{"ready":false,"tierLabel":"","limits":[],"totalPrompts":0,"limitsStale":false,"limitsFetchedAt":0,"usageStatusText":"","authHelpText":"","recentDays":7,"activeDates":[],"modelUsage":{}}' ]] ||

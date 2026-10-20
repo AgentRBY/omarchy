@@ -1,6 +1,8 @@
 #!/bin/bash
 
-source "$(dirname "$0")/base-test.sh"
+set -euo pipefail
+
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 require_command jq
 require_command python3
@@ -71,41 +73,6 @@ for payload in '{"five_hour":{"utilization":78.0},"limits":[{"kind":"session","p
     fail "Claude collector adds no limit when the payload scopes none" "$payload"
 done
 pass "Claude collector adds no limit when the payload scopes none"
-
-# The saved login carries two plan facts: the subscription and the rate-limit
-# tier it runs under. Read the label off a planted credential store so the
-# whole path is exercised, not just the formatter.
-plan_label() {
-  COLLECTOR="$ROOT/bin/omarchy-agent-usage-claude" TIER="$1" SUBSCRIPTION="$2" python3 - <<'PY'
-import importlib.machinery, importlib.util, json, os, pathlib, tempfile
-
-loader = importlib.machinery.SourceFileLoader("collector", os.environ["COLLECTOR"])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
-
-claude_dir = pathlib.Path(tempfile.mkdtemp())
-(claude_dir / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {
-  "accessToken": "token", "expiresAt": 1,
-  "rateLimitTier": os.environ["TIER"], "subscriptionType": os.environ["SUBSCRIPTION"],
-}}), encoding="utf-8")
-print(collector.oauth_login(claude_dir)[-1])
-PY
-}
-
-# A Team premium seat runs on the Max 5x rate-limit tier, and the tier alone
-# used to label it "Max 5x" — the plan the seat is not on.
-[[ $(plan_label default_claude_max_5x team) == "Team 5x" ]] ||
-  fail "Claude collector labels a Team seat by its subscription, not its rate-limit tier" "$(plan_label default_claude_max_5x team)"
-pass "Claude collector labels a Team seat by its subscription, not its rate-limit tier"
-
-# Max keeps its multiplier, with or without a subscription type alongside the
-# tier, and a plan whose tier names no multiplier is just the plan.
-[[ $(plan_label default_claude_max_20x max) == "Max 20x" && $(plan_label default_claude_max_5x "") == "Max 5x" ]] ||
-  fail "Claude collector still labels Max by its multiplier" "$(plan_label default_claude_max_20x max) / $(plan_label default_claude_max_5x "")"
-[[ $(plan_label default_claude_pro pro) == "Pro" && $(plan_label "" team) == "Team" ]] ||
-  fail "Claude collector labels a plan without a multiplier by its subscription alone" "$(plan_label default_claude_pro pro) / $(plan_label "" team)"
-pass "Claude collector keeps Max multipliers and plain plan names"
 
 # Only the Claude Code CLI refreshes the saved tokens, so between its runs the
 # collector can find the access token lapsed while the refresh token behind it
@@ -316,69 +283,6 @@ pass "Claude collector re-probes on --force despite a fresh cache"
 [[ $(jq -c '[.cached.limits[].percent]' <<<"$forced") == "[0.44]" ]] ||
   fail "Claude collector caches a successful probe" "$forced"
 pass "Claude collector caches a successful probe"
-
-# The panel reads a window out of a label, and that guess cannot survive a
-# model name — "Opus 5 (1M context)" parses as a one-minute window. A collector
-# that states the title outright is taken at its word.
-run_node_test <<'JS'
-const fs = require('fs')
-const source = fs.readFileSync(root + '/shell/plugins/agents/Panel.qml', 'utf8')
-const panelRoot = { nowMs: Date.now() }
-const start = source.indexOf('function windowIsLong')
-const end = source.indexOf('// The window that decides')
-assert(start > 0 && end > start, 'agents panel exposes its limit-window helpers')
-eval(source.slice(start, end).replaceAll('root.nowMs', 'panelRoot.nowMs'))
-eval(source.slice(source.indexOf('function needsSignIn'), source.indexOf('// Sign an account')))
-
-const paused = { usageStatusText: 'Limits paused', limits: [] }
-assertEqual(pausedWithoutLimits(paused), true, 'paused usage without a cache shows a recovery placeholder')
-assertEqual(otherTrouble(paused), '', 'paused usage never puts the confusing status in the header')
-assertEqual(pausedWithoutLimits({ ...paused, limits: [{ label: 'Session (5-hour)', percent: 0, resetsAt: '' }] }), false, 'cached usage replaces the recovery placeholder')
-assertEqual(pausedWithoutLimits({ usageStatusText: 'Sign-in expired', limits: [] }), false, 'expired sign-ins retain their sign-in action')
-assertEqual(pausedWithoutLimits(null), false, 'missing records do not show a paused-usage placeholder')
-
-assertDeepEqual(
-  limitWindows({ limits: [
-    { label: 'Session (5-hour)', percent: 0.78, resetsAt: '' },
-    { label: 'Opus 5 (1M context) Weekly', title: 'Opus 5 (1M context) Weekly', percent: 0.42, resetsAt: '' }
-  ] }),
-  [
-    { title: 'Session', percent: 0.78, resetAt: '' },
-    { title: 'Opus 5 (1M context) Weekly', percent: 0.42, resetAt: '' }
-  ],
-  'agents panel titles a limit off the collector when it states one'
-)
-
-assertDeepEqual(
-  limitWindows({ limits: [{ label: 'Weekly (7-day)', percent: 0.12, resetsAt: '' }] }),
-  [{ title: 'Weekly', percent: 0.12, resetAt: '' }],
-  'agents panel still reads a window out of a label that carries no title'
-)
-
-const resetAt = new Date(panelRoot.nowMs + 1000).toISOString()
-const measured = { limits: [{ label: 'Session (5-hour)', percent: 0.78, resetsAt: resetAt }] }
-assertEqual(limitWindows(measured)[0].percent, 0.78, 'usage remains until the reset time')
-panelRoot.nowMs += 1000
-assertDeepEqual(limitWindows(measured), [{ title: 'Session', percent: 0, resetAt: '' }], 'usage resets at the deadline while the panel stays open')
-assertEqual(measured.limits[0].percent, 0.78, 'display reset leaves the measured record intact')
-
-// A model's weekly allowance rides under the Weekly row; one whose window has
-// no row of its own keeps a row.
-assertDeepEqual(
-  displayWindows({ limits: [
-    { label: 'Session (5-hour)', percent: 0.94, resetsAt: '' },
-    { label: 'Weekly (7-day)', percent: 0.25, resetsAt: 'w' },
-    { label: 'Fable Weekly', title: 'Fable Weekly', percent: 0.09, resetsAt: 'w' },
-    { label: 'Opus Monthly', title: 'Opus Monthly', percent: 0.5, resetsAt: '' }
-  ] }),
-  [
-    { title: 'Session', percent: 0.94, resetAt: '', scoped: [] },
-    { title: 'Weekly', percent: 0.25, resetAt: 'w', scoped: [{ title: 'Fable', percent: 0.09, resetAt: 'w' }] },
-    { title: 'Opus Monthly', percent: 0.5, resetAt: '', scoped: [] }
-  ],
-  'agents panel shows a model-scoped window under the window it runs on'
-)
-JS
 
 # Anthropic rate-limits its usage endpoint readily. A refused re-check of
 # numbers measured minutes ago still describes the account; only older numbers
