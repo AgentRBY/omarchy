@@ -50,9 +50,6 @@
   "system.reboot": {
     "label": "Reboot"
   },
-  "system.reboot-boot-menu": {
-    "label": "Reboot to Boot Menu"
-  },
   "system.shutdown": {
     "label": "Shutdown"
   },
@@ -1055,6 +1052,9 @@
   },
   "remove.browser.zen": {
     "label": "Zen"
+  },
+  "remove.service.1password": {
+    "label": "1Password"
   },
   "remove.service.dropbox": {
     "label": "Dropbox"
