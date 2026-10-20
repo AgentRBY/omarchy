@@ -290,18 +290,26 @@ mv "$RELOCATED_HOME/.local/share/opencode/opencode.db" "$RELOCATED_HOME/.local/s
 run_all "$RELOCATED_HOME" "$WORK/relocated-results" PI_CODING_AGENT_DIR="$RELOCATED_HOME/pi-moved" OPENCODE_DB=moved/elsewhere.db
 
 # A local.json naming every claimed provider (and a self-hosted box of its
-# own) must not pull any of them into the local collector.
+# own) must not pull any of them into the local collector. Fireworks counts
+# its whole account rather than these rows, so no cell owns its pi turns, but
+# naming fireworks or fireworks-ai in local.json must not count them twice.
 CONFIGURED_HOME="$WORK/configured"
 cp -a "$FIXTURE_HOME" "$CONFIGURED_HOME"
 rm -rf "$CONFIGURED_HOME/.cache"
-mkdir -p "$CONFIGURED_HOME/.config/omarchy/agents"
-python3 - "$WORK/cells.json" "$CONFIGURED_HOME/.config/omarchy/agents/local.json" <<'PY'
+mkdir -p "$CONFIGURED_HOME/.config/omarchy/agents" "$CONFIGURED_HOME/.pi/agent/sessions/fireworks"
+python3 - "$WORK/cells.json" "$CONFIGURED_HOME/.config/omarchy/agents/local.json" "$CONFIGURED_HOME/.pi/agent/sessions/fireworks/session.jsonl" <<'PY'
 import json
 import sys
+from datetime import datetime, timezone
 
 cells = json.load(open(sys.argv[1]))
-providers = sorted({cell["provider"] for cell in cells if cell["owner"] and cell["owner"] != "local"})
+providers = sorted({cell["provider"] for cell in cells if cell["owner"] and cell["owner"] != "local"} | {"fireworks", "fireworks-ai"})
 json.dump({"providers": providers}, open(sys.argv[2], "w"))
+stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+with open(sys.argv[3], "w") as handle:
+  for provider in ("fireworks", "fireworks-ai"):
+    message = {"role": "assistant", "provider": provider, "model": f"{provider}-account-pt", "usage": {"input": 77, "output": 0, "cacheRead": 0, "cacheWrite": 0}}
+    handle.write(json.dumps({"type": "message", "id": f"fw-{provider}", "timestamp": stamp, "message": message}) + "\n")
 PY
 mkdir -p "$CONFIGURED_HOME/.cache" "$CONFIGURED_HOME/.run"
 run_collector "$CONFIGURED_HOME" local "$WORK/configured-local" PI_CODING_AGENT_DIR="$CONFIGURED_HOME/pi-moved"
@@ -497,8 +505,9 @@ record, error = load("configured-local")
 if record is None:
   report("local-config", False, f"local: {error}")
 else:
-  per_tag, _ = counted(record)
-  leaked = sorted({f"{cells[tag]['provider']}" for tag in per_tag if cells[tag]["owner"] != "local"})
+  per_tag, strays = counted(record)
+  leaked = sorted({f"{cells[tag]['provider']}" for tag in per_tag if cells[tag]["owner"] != "local"} |
+                  {stray.partition("-account-pt=")[0] for stray in strays if "-account-pt=" in stray})
   missed = sorted({cells[tag]["provider"] + " via " + cells[tag]["source"] for tag in cells if cells[tag]["owner"] == "local" and tag not in per_tag})
   problems = ([f"counts claimed providers it was configured with: {', '.join(leaked)}"] if leaked else []) + \
              ([f"missed {', '.join(missed)}"] if missed else [])
