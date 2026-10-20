@@ -117,4 +117,24 @@ for incomplete in ([{}], [{"currency": "USD", "total_balance": None}], [{"total_
 # Untrusted amounts read as nothing rather than as a number.
 expect("DeepSeek collector reads untrusted amounts as zero",
        [float(load_collector("deepseek").money(value)) for value in ("NaN", "Infinity", True, "abc", None, "3.5")], [0.0, 0.0, 0.0, 0.0, 0.0, 3.5])
+
+# The key pi keeps, where PI_CODING_AGENT_DIR moves it, or omp's. Only a
+# literal key: a `!command` or `$VAR` entry is pi's to resolve, never sent.
+sandbox()
+
+
+def saved_key():
+  return load_collector("deepseek").api_key()
+
+
+pi_auth(home() / ".omp" / "agent", "deepseek", "key-omp")
+expect("DeepSeek collector reads the key omp saved", saved_key(), "key-omp")
+pi_auth(None, "deepseek", "key-pi")
+expect("DeepSeek collector prefers the key pi saved", saved_key(), "key-pi")
+os.environ["PI_CODING_AGENT_DIR"] = str(home() / "pi-moved")
+pi_auth(home() / "pi-moved", "deepseek", "key-moved")
+expect("DeepSeek collector reads pi's key where PI_CODING_AGENT_DIR moves it", saved_key(), "key-moved")
+pi_auth(home() / "pi-moved", "deepseek", "!pass show deepseek")
+pi_auth(home() / ".omp" / "agent", "deepseek", "$DEEPSEEK_KEY")
+expect("DeepSeek collector never takes a pi !command or $VAR entry as a key", saved_key(), "")
 PY

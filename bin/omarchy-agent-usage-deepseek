@@ -313,11 +313,17 @@ def read_key_from_dict(parsed: Any, provider: str) -> str:
   if not isinstance(parsed, dict):
     return ""
   entry = parsed.get(provider)
-  if isinstance(entry, str):
-    return entry.strip()
-  if not isinstance(entry, dict):
-    return ""
-  return str(entry.get("key") or entry.get("apiKey") or entry.get("api_key") or "").strip()
+  if isinstance(entry, dict):
+    entry = entry.get("key") or entry.get("apiKey") or entry.get("api_key")
+  key = entry.strip() if isinstance(entry, str) else ""
+  # Only a literal key is taken: a pi `$VAR` or `!command` entry is resolved
+  # by pi alone, and sent as it stands it would read as a refused key.
+  return "" if key.startswith(("!", "$")) else key
+
+
+def pi_agent_dir() -> Path:
+  configured = os.environ.get("PI_CODING_AGENT_DIR", "").strip()
+  return Path(os.path.expanduser(configured)) if configured else Path.home() / ".pi" / "agent"
 
 
 def read_json_key(path: Path, provider: str) -> str:
@@ -377,12 +383,14 @@ def read_dotenv_key(path: Path) -> str:
 
 def api_key() -> str:
   # The environment first, then the agents that keep a DeepSeek key, read
-  # only: pi, opencode, and dsh's managed store with its `.env` fallback.
+  # only: pi and omp, opencode, and dsh's managed store with its `.env`
+  # fallback.
   env_key = str(os.environ.get("DEEPSEEK_API_KEY", "")).strip()
   if env_key:
     return env_key
   for read in (
-    lambda: read_json_key(Path.home() / ".pi" / "agent" / "auth.json", "deepseek"),
+    lambda: read_json_key(pi_agent_dir() / "auth.json", "deepseek"),
+    lambda: read_json_key(Path.home() / ".omp" / "agent" / "auth.json", "deepseek"),
     lambda: read_json_key(data_home() / "opencode" / "auth.json", "deepseek"),
     lambda: read_dsh_credentials_key(dsh_home() / ".credentials.yaml"),
     lambda: read_dotenv_key(dsh_home() / ".env"),
