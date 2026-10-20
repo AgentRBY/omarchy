@@ -162,8 +162,9 @@ expect("several budgets on one clock each keep their own provider caps",
         {"title": "Team pool Monthly", "percent": 0.25}, {"title": "Openai budget (Team pool)", "percent": 0.1}], record)
 
 record = kimchi(key="key-empty")
-expect("an empty balance says Kimchi is rate limited",
-       [record["tierLabel"], record["balance"]["remaining"], record["usageStatusText"]], ["Community", 0.0, "Out of credits, rate limited"], record)
+expect("an empty balance shows, with the rate limiting in the help and no status outside the contract",
+       [record["tierLabel"], record["balance"]["remaining"], record["usageStatusText"], record["authHelpText"]],
+       ["Community", 0.0, "", "Out of credits; Kimchi's gateway is rate limiting requests."], record)
 
 record = kimchi(key="key-revoked")
 expect("a rejected key says to log in again in Kimchi", "Log in again in Kimchi" in record["authHelpText"], True, record)

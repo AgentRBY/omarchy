@@ -42,6 +42,7 @@ AGENT_ID = "kimchi"
 AGENT_NAME = "Kimchi"
 AUTH_HELP = "Start Kimchi and log in, or set KIMCHI_API_KEY."
 REJECTED_HELP = "Kimchi rejected its API key. Log in again in Kimchi, or update KIMCHI_API_KEY."
+OUT_OF_CREDITS_HELP = "Out of credits; Kimchi's gateway is rate limiting requests."
 REGION_LLM_BASE = {"us": "https://llm.kimchi.dev", "eu": "https://llm.eu.kimchi.dev"}
 PLAN_LABELS = {"community": "Community", "coder": "Coder", "teams": "Teams", "enterprise": "Enterprise"}
 BUDGET_LABELS = {
@@ -153,7 +154,7 @@ def credits_part(data):
   # The gateway throttles an account with no credits left, and with no funded
   # figure the balance gauge has no way to raise that alarm itself.
   if has_credits is False or (remaining is not None and remaining <= 0):
-    part["usageStatusText"] = "Out of credits, rate limited"
+    part["outOfCredits"] = True
   return part
 
 
@@ -299,8 +300,11 @@ def collect_billing(force):
   if rejected:
     result["usageStatusText"] = "Sign-in expired"
     result["authHelpText"] = REJECTED_HELP
-  elif credits.get("usageStatusText"):
-    result["usageStatusText"] = credits["usageStatusText"]
+  elif credits.get("outOfCredits") or credits.get("usageStatusText"):
+    # The balance shows what's left; no status in the contract's vocabulary
+    # says "throttled", so the detail goes in the help. A credits answer kept
+    # before this marked it with a status of its own.
+    result["authHelpText"] = OUT_OF_CREDITS_HELP
   elif "credits" not in parts:
     result["usageStatusText"] = "Balance unavailable"
     result["authHelpText"] = (
