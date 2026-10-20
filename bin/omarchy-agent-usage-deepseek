@@ -517,7 +517,7 @@ def collect_balance(key: str, api_base_url: str, force: bool) -> dict[str, Any]:
     return result
 
   balance = {"remaining": str(live["remaining"]), "currency": live["currency"]}
-  fetched_at = cache.save([], balance=balance) if cache is not None else now_ms()
+  fetched_at = cache.save([], only_if_newer=True, balance=balance) if cache is not None else now_ms()
   result.update(balance=balance_record(live["remaining"], live["currency"]), fetchedAtMs=fetched_at)
   return result
 

@@ -321,11 +321,11 @@ def collect_limits(force):
 
     probe = probe_limits(candidate)
     if probe.get("ok"):
-      return answer(probe["limits"], cache.save(probe["limits"]), False)
+      return answer(probe["limits"], cache.save(probe["limits"], only_if_newer=True), False)
 
     if probe.get("noPlan"):
       # The windows of a plan that's gone mean nothing now, so they go too.
-      cache.save([], noPlan=True)
+      cache.save([], only_if_newer=True, noPlan=True)
       no_plan = True
       continue
 

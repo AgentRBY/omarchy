@@ -247,7 +247,7 @@ def collect_limits(key, base_url, force):
 
   probe = probe_quotas(key, base_url)
   if probe["ok"]:
-    result.update(limits=probe["limits"], fetchedAtMs=cache.save(probe["limits"]))
+    result.update(limits=probe["limits"], fetchedAtMs=cache.save(probe["limits"], only_if_newer=True))
     return result
 
   # Last good numbers, marked stale, beat an empty section while the check

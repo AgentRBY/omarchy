@@ -31,6 +31,9 @@ state = {"mode": "up"}
 # A stand-in for api.synthetic.new: /v2/quotas answers with MODERN while up,
 # and with the mode's status otherwise.
 def quotas(request):
+  # Something to do while the request is in flight, once.
+  if state.get("during"):
+    state.pop("during")()
   if isinstance(state["mode"], int):
     return state["mode"], {"error": "refused"}
   return MODERN if request["path"] == "/v2/quotas" else {}
@@ -134,6 +137,16 @@ with serve(500):
 expect("a failed check with nothing kept says the limits are unavailable",
        [record["usageStatusText"], record["limits"], record["limitsFetchedAt"]], ["Synthetic limits unavailable", [], 0], record)
 check("a failed check says what failed", "status 500" in record["authHelpText"], record)
+
+# An answer never rolls back one another run stamped while this one waited
+# on the network.
+synthetic()
+state["during"] = lambda: edit_limits_cache("synthetic", fetched_ago=-60)
+synthetic()
+expect("Synthetic never overwrites a newer cached answer with its own",
+       [json.loads(path.read_text())["fetchedAtMs"] > ms_in(30) for path in limits_cache_files("synthetic")], [True])
+for path in limits_cache_files("synthetic"):
+  path.unlink()
 
 check_scan_cache(adapter)
 

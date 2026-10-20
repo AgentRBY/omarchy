@@ -51,6 +51,18 @@ fresh = check_limits_contract(Adapter("opencode", plant=keyed, answer={ZEN: USAG
 expect("OpenCode collector maps every Zen usage window, under the Go plan",
        [windows(fresh), fresh["tierLabel"]], [[("Rolling (5h)", 0.16), ("Weekly (7-day)", 0.06), ("Monthly", 0.29)], "Go"], fresh)
 
+# An answer (limits, or no plan) never rolls back one another run stamped
+# while this one waited on the network.
+for later_answer in (USAGE, 403):
+  def later_run(request, later_answer=later_answer):
+    edit_limits_cache("opencode", fetched_ago=-60)
+    return later_answer
+  opencode(later_run)
+  expect(f"OpenCode collector never overwrites a newer cached answer with its own ({'limits' if later_answer == USAGE else 'no plan'})",
+         [json.loads(path.read_text())["fetchedAtMs"] > ms_in(30) for path in limits_cache_files("opencode")], [True])
+  edit_limits_cache("opencode", fetched_ago=0)
+opencode(USAGE)
+
 # A failed check keeps the plan along with the windows.
 record, _ = opencode(mode=500)
 expect("OpenCode collector keeps the Go plan with the kept windows", [record["tierLabel"], record["limitsStale"]], ["Go", True], record)

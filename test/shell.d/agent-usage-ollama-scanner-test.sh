@@ -121,6 +121,18 @@ check("Ollama explains a rejected key", "rejected" in record["authHelpText"], re
 record = ollama(routes={**ROUTES, ME: urllib.error.URLError(OSError("plan lookup timed out"))})
 expect("Ollama keeps the cached plan when the plan lookup fails", [record["tierLabel"], record["limitsStale"]], ["Pro", False], record)
 
+# An answer never rolls back one another run stamped while this one waited
+# on the network.
+def later_run(request):
+  edit_limits_cache("ollama", fetched_ago=-60)
+  return ROUTES[USAGE]
+
+
+ollama(routes={**ROUTES, USAGE: later_run})
+expect("Ollama never overwrites a newer cached answer with its own",
+       [json.loads(path.read_text())["fetchedAtMs"] > ms_in(30) for path in limits_cache_files("ollama")], [True])
+edit_limits_cache("ollama", fetched_ago=0)
+
 # Another key never shows this one's numbers or plan.
 os.environ["OLLAMA_API_KEY"] = "other-key"
 record = ollama(mode="down")

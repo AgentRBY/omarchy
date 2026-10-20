@@ -114,6 +114,21 @@ for incomplete in ([{}], [{"currency": "USD", "total_balance": None}], [{"total_
   record, _ = deepseek(500)
   expect(f"DeepSeek collector never caches {incomplete} over the last balance", [record["balance"]["remaining"], record["limitsStale"]], [8.15, True], record)
 
+# A balance never rolls back one another run stamped while this one waited on
+# the network.
+def later_run(request):
+  edit_limits_cache("deepseek", fetched_ago=-60)
+  return balance(request)
+
+
+for path in limits_cache_files("deepseek"):
+  path.unlink()
+deepseek()
+with FakeHttp({BALANCE: later_run}):
+  collect("deepseek", "--force")
+expect("DeepSeek collector never overwrites a newer cached balance with its own",
+       [json.loads(path.read_text())["fetchedAtMs"] > ms_in(30) for path in limits_cache_files("deepseek")], [True])
+
 # Untrusted amounts read as nothing rather than as a number.
 expect("DeepSeek collector reads untrusted amounts as zero",
        [float(load_collector("deepseek").money(value)) for value in ("NaN", "Infinity", True, "abc", None, "3.5")], [0.0, 0.0, 0.0, 0.0, 0.0, 3.5])

@@ -240,7 +240,7 @@ def collect_limits(access_key: str, force: bool) -> dict[str, Any]:
     # A plan lookup that failed keeps the plan last named, rather than
     # blanking a label the account still has.
     plan = cached_plan if plan is None else plan
-    fetched_at = cache.save(probe["limits"], plan=plan)
+    fetched_at = cache.save(probe["limits"], only_if_newer=True, plan=plan)
     result.update(limits=probe["limits"], tierLabel=plan, live=True, fetchedAtMs=fetched_at)
     return result
 
