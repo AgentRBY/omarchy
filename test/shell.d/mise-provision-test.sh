@@ -23,7 +23,7 @@ done
 mapfile -d '' -t args <"$OMARCHY_TEST_MISE_LOG"
 [[ ${args[*]} == "reshim --system reshim" ]] ||
   fail "provisioning builds the lazy shims without installing packages or writing the user's config"
-pass "provisioning leaves lazy Kimi, Cursor, and Muse shims to mise"
+pass "provisioning leaves the lazy agent shims to mise"
 
 # The settings package ships this, so the user's config stays theirs.
 grep -Fx 'upgrade.auto_prune = false' "$ROOT/etc/mise/conf.d/omarchy.toml" >/dev/null ||

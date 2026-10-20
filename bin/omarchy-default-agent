@@ -39,13 +39,14 @@ copilot | github-copilot) agent="copilot"; name="GitHub Copilot" ;;
 muse | muse-code | musecode) agent="muse"; name="Muse Code" ;;
 cursor | cursor-agent) agent="cursor-agent"; name="Cursor CLI" ;;
 kimi | kimi-code) agent="kimi"; name="Kimi"; agent_package="npm:@moonshot-ai/kimi-code" ;;
-qwen | qwen-code) agent="qwen"; name="Qwen Code"; agent_package="npm:@qwen-code/qwen-code" ;;
+qwen | qwen-code) agent="qwen"; name="Qwen Code" ;;
 dsh | deepseek | deepseek-harness)
   agent="dsh"; name="DeepSeek Harness"
   # Every DSH release so far is a prerelease, and mise's npm backend lists only
-  # stable versions, so a bare package name resolves to nothing. Drop the pin
-  # once a stable release exists upstream.
-  agent_package="npm:@deepseek-ai/dsh@0.2.0-rc.2"
+  # stable versions, so a bare package name resolves to nothing. Install the
+  # version Omarchy's declaration pins, and drop both pins once a stable
+  # release exists upstream.
+  agent_tool="npm:@deepseek-ai/dsh"; agent_package="$agent_tool@0.2.0-rc.2"
   ;;
 mcode | minimax-code | minimax) agent="mcode"; name="MiniMax Code"; agent_package="npm:@minimax-ai/code[allow_builds=better-sqlite3]" ;;
 goose) agent="goose"; name="Goose"; agent_package="aqua:aaif-goose/goose" ;;
@@ -73,6 +74,8 @@ phantombot) agent="phantombot"; name="Phantombot"; agent_package="github:phantom
 esac
 
 agent_package=${agent_package:-$agent}
+# The name Omarchy declares the tool under, when the package also names a version.
+agent_tool=${agent_tool:-$agent_package}
 
 # Hermes and OpenClaw are not mise tools: each is a self-updating runtime in
 # the user's home, Hermes the desktop app's and OpenClaw the one its Control
@@ -100,7 +103,7 @@ else
   # preinstalls, like one without Omarchy's declarations, selects it instead.
   agent_install() {
     user_install && return
-    if omarchy-mise-default-tools declares "$agent_package"; then
+    if omarchy-mise-default-tools declares "$agent_tool"; then
       mise install "$agent_package"
     else
       mise use -g "$agent_package"

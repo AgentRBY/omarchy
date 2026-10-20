@@ -147,8 +147,9 @@ agy_package="antigravity-cli"
 ori_package="ori"
 legacy_ori_package="github:OpenRouterLabs/ori-releases"
 kimi_package="npm:@moonshot-ai/kimi-code"
-qwen_package="npm:@qwen-code/qwen-code"
-dsh_package="npm:@deepseek-ai/dsh@0.2.0-rc.2"
+qwen_package="qwen"
+dsh_tool="npm:@deepseek-ai/dsh"
+dsh_package="$dsh_tool@0.2.0-rc.2"
 mcode_package="npm:@minimax-ai/code[allow_builds=better-sqlite3]"
 goose_package="aqua:aaif-goose/goose"
 kiro_cli_package="http:kiro-cli[platforms_linux_x64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-x86_64-linux.tar.gz,platforms_linux_arm64_url=https://prod.download.cli.kiro.dev/stable/{{version}}/kirocli-aarch64-linux.tar.gz,version_list_url=https://prod.download.cli.kiro.dev/stable/latest/manifest.json,version_json_path=.version]"
@@ -182,19 +183,6 @@ assert_lazy_stub "$omp_package" omp
 assert_lazy_stub "$crush_package" crush
 assert_lazy_stub "$ori_package" ori
 assert_lazy_stub "$kimi_package" kimi
-assert_lazy_stub "$qwen_package" qwen
-assert_lazy_stub "$dsh_package" dsh
-assert_lazy_stub "$mcode_package" mcode
-assert_lazy_stub "$goose_package" goose
-assert_lazy_stub "$kiro_cli_package" kiro-cli
-assert_lazy_stub "$vibe_package" vibe
-assert_lazy_stub "$freebuff_package" freebuff
-assert_lazy_stub "$zeroclaw_package" zeroclaw
-assert_lazy_stub "$kilo_package" kilo
-assert_lazy_stub "$devin_package" devin
-assert_lazy_stub "$amp_package" amp
-assert_lazy_stub "$commandcode_package" commandcode
-assert_lazy_stub "$phantombot_package" phantombot
 assert_lazy_stub "$cursor_agent_package" cursor-agent
 assert_lazy_stub "$muse_package" muse
 pass "custom agent lazy stubs preserve their mise packages"
@@ -216,12 +204,35 @@ for tool in codex claude copilot opencode pi "\"$kimi_package\""; do
   grep -Eq "^$tool = \\{ version = \"latest\", lazy = true, auto_update = \"4h\", " "$lazy_config" ||
     fail "user setup declares $tool as a self-updating native lazy tool"
 done
-[[ $(grep -c 'auto_update = "4h"' "$lazy_config") == 12 ]] || fail "only the agent CLIs update themselves"
+grep -Eq "^$qwen_package = \\{ version = \"latest\", lazy = true, auto_update = \"4h\", minimum_release_age = \"0s\" \\}$" "$lazy_config" ||
+  fail "user setup declares Qwen Code as a self-updating native lazy tool"
+# A tool without registry bin metadata names the commands mise shims for it.
+declare -A declared_bins=(
+  [$amp_package]='"amp"'
+  ["\"$mcode_package\""]='"mcode"'
+  ["\"$goose_package\""]='"goose"'
+  ["\"$kiro_cli_package\""]='"kiro-cli"'
+  ["\"$vibe_package\""]='"vibe"'
+  ["\"$freebuff_package\""]='"freebuff"'
+  ["\"$zeroclaw_package\""]='"zeroclaw", "zerocode"'
+  ["\"$kilo_package\""]='"kilo"'
+  ["\"$devin_package\""]='"devin"'
+  ["\"$commandcode_package\""]='"commandcode"'
+  ["\"$phantombot_package\""]='"phantombot"'
+)
+for tool in "${!declared_bins[@]}"; do
+  grep -Fx "$tool = { version = \"latest\", lazy = true, auto_update = \"4h\", lazy_bins = [${declared_bins[$tool]}], minimum_release_age = \"0s\" }" "$lazy_config" >/dev/null ||
+    fail "user setup declares $tool as a self-updating native lazy tool with its commands"
+done
+# Every DSH release is a prerelease, so it stays pinned and doesn't update itself.
+grep -Fx "\"$dsh_tool\" = { version = \"${dsh_package##*@}\", lazy = true, lazy_bins = [\"dsh\"], minimum_release_age = \"0s\" }" "$lazy_config" >/dev/null ||
+  fail "user setup declares the pinned DeepSeek Harness prerelease as a native lazy tool"
+[[ $(grep -c 'auto_update = "4h"' "$lazy_config") == 24 ]] || fail "only the agent CLIs update themselves"
 for tool in node uv; do
   grep -Eq "^$tool = \\{ version = \"latest\", lazy = true, minimum_release_age = \"0s\" \\}$" "$lazy_config" ||
     fail "user setup declares $tool as a native lazy tool"
 done
-[[ $(grep -c 'lazy = true' "$lazy_config") == 22 ]] || fail "user setup declares every default mise tool as lazy"
+[[ $(grep -c 'lazy = true' "$lazy_config") == 35 ]] || fail "user setup declares every default mise tool as lazy"
 grep -Fx "reshim --system" "$mise_history" >/dev/null || fail "user setup builds the system lazy bootstrap shims"
 pass "user setup configures system lazy tools from registry shorthands"
 : >"$stub_log"
@@ -246,58 +257,6 @@ pass "Muse migration preserves existing installs and the preinstall opt-out"
 : >"$stub_log"
 OMARCHY_TEST_MISSING_COMMAND=kimi source "$ROOT/migrations/1786967403.sh" >/dev/null
 grep -Fx "$kimi_package kimi" "$stub_log" >/dev/null || fail "Kimi migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=qwen source "$ROOT/migrations/1792032538.sh" >/dev/null
-grep -Fx "$qwen_package qwen" "$stub_log" >/dev/null || fail "Qwen Code migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=dsh source "$ROOT/migrations/1792033356.sh" >/dev/null
-grep -Fx "$dsh_package dsh" "$stub_log" >/dev/null || fail "DeepSeek Harness migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=mcode source "$ROOT/migrations/1792033557.sh" >/dev/null
-grep -Fx "$mcode_package mcode" "$stub_log" >/dev/null || fail "MiniMax Code migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=goose source "$ROOT/migrations/1792033725.sh" >/dev/null
-grep -Fx "$goose_package goose" "$stub_log" >/dev/null || fail "Goose migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=kiro-cli source "$ROOT/migrations/1792033795.sh" >/dev/null
-grep -Fx "$kiro_cli_package kiro-cli" "$stub_log" >/dev/null || fail "Kiro CLI migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=vibe source "$ROOT/migrations/1792033880.sh" >/dev/null
-grep -Fx "$vibe_package vibe" "$stub_log" >/dev/null || fail "Mistral Vibe migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=freebuff source "$ROOT/migrations/1792033907.sh" >/dev/null
-grep -Fx "$freebuff_package freebuff" "$stub_log" >/dev/null || fail "Freebuff migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=zeroclaw source "$ROOT/migrations/1792034058.sh" >/dev/null
-grep -Fx "$zeroclaw_package zeroclaw" "$stub_log" >/dev/null || fail "ZeroClaw migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=kilo source "$ROOT/migrations/1792034151.sh" >/dev/null
-grep -Fx "$kilo_package kilo" "$stub_log" >/dev/null || fail "Kilo migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=devin source "$ROOT/migrations/1792034198.sh" >/dev/null
-grep -Fx "$devin_package devin" "$stub_log" >/dev/null || fail "Devin CLI migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=commandcode source "$ROOT/migrations/1792034306.sh" >/dev/null
-grep -Fx "$commandcode_package commandcode" "$stub_log" >/dev/null || fail "Command Code migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=phantombot source "$ROOT/migrations/1792034353.sh" >/dev/null
-grep -Fx "$phantombot_package phantombot" "$stub_log" >/dev/null || fail "Phantombot migration creates its lazy stub"
-
-: >"$stub_log"
-OMARCHY_TEST_MISSING_COMMAND=amp source "$ROOT/migrations/1792034243.sh" >/dev/null
-grep -Fx "$amp_package" "$stub_log" >/dev/null || fail "Amp migration creates its lazy stub"
 
 : >"$stub_log"
 source "$ROOT/migrations/1785617047.sh" >/dev/null
@@ -402,19 +361,6 @@ source "$ROOT/migrations/1785846769.sh" >/dev/null
 source "$ROOT/migrations/1787342993.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=cursor-agent source "$ROOT/migrations/1788577553.sh" >/dev/null
 OMARCHY_TEST_MISSING_COMMAND=kimi source "$ROOT/migrations/1786967403.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=qwen source "$ROOT/migrations/1792032538.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=dsh source "$ROOT/migrations/1792033356.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=mcode source "$ROOT/migrations/1792033557.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=goose source "$ROOT/migrations/1792033725.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=kiro-cli source "$ROOT/migrations/1792033795.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=vibe source "$ROOT/migrations/1792033880.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=freebuff source "$ROOT/migrations/1792033907.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=zeroclaw source "$ROOT/migrations/1792034058.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=kilo source "$ROOT/migrations/1792034151.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=devin source "$ROOT/migrations/1792034198.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=amp source "$ROOT/migrations/1792034243.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=commandcode source "$ROOT/migrations/1792034306.sh" >/dev/null
-OMARCHY_TEST_MISSING_COMMAND=phantombot source "$ROOT/migrations/1792034353.sh" >/dev/null
 [[ ! -s $stub_log ]] || fail "agent migrations respect the preinstall opt-out"
 [[ ! -e $test_home/.local/bin/omp ]] || fail "agent migration removes the obsolete Oh My Pi wrapper after opt-out"
 
@@ -548,22 +494,9 @@ pass "agent migrations install working wrappers without overriding the preinstal
 
 "$ROOT/bin/omarchy-mise-install" "$muse_package" muse
 "$ROOT/bin/omarchy-mise-install" "$kimi_package" kimi
-"$ROOT/bin/omarchy-mise-install" "$qwen_package" qwen
-"$ROOT/bin/omarchy-mise-install" "$dsh_package" dsh
-"$ROOT/bin/omarchy-mise-install" "$mcode_package" mcode
-"$ROOT/bin/omarchy-mise-install" "$goose_package" goose
-"$ROOT/bin/omarchy-mise-install" "$kiro_cli_package" kiro-cli
-"$ROOT/bin/omarchy-mise-install" "$vibe_package" vibe
-"$ROOT/bin/omarchy-mise-install" "$freebuff_package" freebuff
-"$ROOT/bin/omarchy-mise-install" "$zeroclaw_package" zeroclaw
-"$ROOT/bin/omarchy-mise-install" "$kilo_package" kilo
-"$ROOT/bin/omarchy-mise-install" "$devin_package" devin
-"$ROOT/bin/omarchy-mise-install" "$amp_package" amp
-"$ROOT/bin/omarchy-mise-install" "$commandcode_package" commandcode
-"$ROOT/bin/omarchy-mise-install" "$phantombot_package" phantombot
 touch "$test_home/.local/bin/agy" "$test_home/.local/bin/ori"
 omarchy-remove-preinstalls >/dev/null
-for command in agy omp ori grok crush cursor-agent muse kimi qwen dsh mcode goose kiro-cli vibe freebuff zeroclaw kilo devin amp commandcode phantombot; do
+for command in agy omp ori grok crush cursor-agent muse kimi; do
   [[ ! -e $test_home/.local/bin/$command ]] || fail "Remove Preinstalls deletes the $command lazy stub"
 done
 pass "Remove Preinstalls deletes every optional agent lazy stub"
@@ -902,6 +835,18 @@ mapfile -d '' -t agent_open_args <"$agent_open_log"
 [[ ${#agent_open_args[@]} == 2 && ${agent_open_args[0]} == "omarchy-agent" && ${agent_open_args[1]} == "--inline" ]] ||
   fail "newly installed Muse opens in the installation terminal"
 pass "Muse installs visibly through mise and opens directly"
+
+saved_agent=$(<"$agent_file")
+for agent in qwen dsh mcode goose kiro-cli vibe freebuff zeroclaw kilo devin amp commandcode phantombot; do
+  package_var="${agent//-/_}_package"
+  : >"$mise_history"
+  omarchy-default-agent --install "$agent" >/dev/null
+  grep -Fx "install ${!package_var}" "$mise_history" >/dev/null || fail "visible $agent installation installs Omarchy's declaration"
+  grep -q '^use ' "$mise_history" && fail "$agent selection leaves the user config alone when the system config declares it"
+  [[ $(omarchy-default-agent) == "$agent" ]] || fail "visible $agent installation changes the selection"
+done
+printf '%s\n' "$saved_agent" >"$agent_file"
+pass "the added agents install through Omarchy's mise declarations"
 
 : >"$terminal_log"
 : >"$muse_login_log"
