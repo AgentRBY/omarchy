@@ -128,4 +128,13 @@ expect("MiniMax credentials use opencode's login", credentials()[0], "mmx_openco
 opencode.unlink()
 pi_auth(None, "minimax-cn", "mmx_pi_cn")
 expect("MiniMax credentials use a China-region key pi saved, on the China host", credentials(), ["mmx_pi_cn", "https://api.minimaxi.com"])
+
+# A key saved under a provider id MiniMax doesn't bill belongs to a gateway
+# in front of it, and is never sent to MiniMax as a bearer.
+sandbox()
+os.environ["MMX_CONFIG_DIR"] = str(home() / ".mmx")
+opencode_auth(None, "minimax-coding", "gateway_key")
+pi_auth(None, "minimax-token-plan", "gateway_key")
+pi_auth(home() / ".omp" / "agent", "minimax-proxy", "gateway_key")
+expect("MiniMax credentials take keys only under the provider ids MiniMax bills", credentials()[0], "")
 PY

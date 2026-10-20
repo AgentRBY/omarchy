@@ -167,7 +167,9 @@ def credentials() -> tuple[str, str]:
     # The key opencode or pi signed in to MiniMax with; a China-region
     # provider's key only answers on the China host.
     for path in (data_home() / "opencode" / "auth.json", pi_agent_dir() / "auth.json", Path.home() / ".omp" / "agent" / "auth.json"):
-      api_key, provider = saved_key(path, ("minimax", "minimax-coding", "minimax-token-plan") + PROVIDERS[1:])
+      # Only the provider ids MiniMax bills: a key saved under any other
+      # name belongs to a gateway, and is never sent to MiniMax.
+      api_key, provider = saved_key(path, PROVIDERS)
       if api_key:
         if provider.startswith("minimax-cn"):
           base_url = CN_BASE_URL
