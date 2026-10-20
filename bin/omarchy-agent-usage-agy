@@ -439,7 +439,7 @@ def omp_usage(omp):
   try:
     output = subprocess.run(
       [omp, "usage", "--json", "--provider", "google-antigravity"],
-      capture_output=True, text=True, timeout=20, check=True,
+      stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20, check=True,
     ).stdout
     reports = [r for r in json.loads(output).get("reports") or [] if isinstance(r, dict) and r.get("provider") == "google-antigravity"]
   except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
@@ -453,10 +453,12 @@ def omp_usage(omp):
     window = limit.get("window") if isinstance(limit.get("window"), dict) else {}
     amount = limit.get("amount") if isinstance(limit.get("amount"), dict) else {}
     label = str(limit.get("label") or "")
-    # A shared allowance is listed once per model family that draws on it.
-    if (label, window.get("id")) in seen:
+    # A shared allowance is listed once per model family that draws on it. An
+    # id of another shape (a list, an object) still names one window.
+    key = (label, str(window.get("id")))
+    if key in seen:
       continue
-    seen.add((label, window.get("id")))
+    seen.add(key)
     fraction = amount.get("usedFraction")
     if isinstance(fraction, bool) or not isinstance(fraction, (int, float)):
       continue
@@ -473,8 +475,14 @@ def omp_answer(omp, entries):
   if not answer:
     return None
   quota, email = answer
-  renewed = [e for e in omp_logins() if not email or e["email"] == email]
-  entry = (renewed or [e for e in entries if not email or e["email"] == email] or [dict(entries[0], email=email)])[0]
+  if email:
+    renewed = [e for e in omp_logins() if e["email"] == email]
+    entry = (renewed or [e for e in entries if e["email"] == email] or [dict(entries[0], email=email)])[0]
+  else:
+    # A report naming no account answers for omp's only sign-in. With several,
+    # there is no telling whose it is: it is shown, and kept for none of them.
+    signed_in = omp_logins() or entries
+    entry = signed_in[0] if len(signed_in) == 1 else dict(signed_in[0], email="", refresh="", accessToken="", expiresAt=0)
   tier = ""
   if token_fresh(entry, time.time()):
     try:

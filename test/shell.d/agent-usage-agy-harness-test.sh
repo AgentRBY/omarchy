@@ -35,7 +35,9 @@ def machine():
   stubs = home() / "bin"
   stubs.mkdir()
   for name, body in (("secret-tool", "exit 1"),
-                     ("omp", '[[ "$*" == "usage --json --provider google-antigravity" ]] || exit 2\ncat "$HOME/omp-report.json" 2>/dev/null')):
+                     ("omp", '[[ "$*" == "usage --json --provider google-antigravity" ]] || exit 2\n'
+                             '[[ $(readlink /proc/$$/fd/0) == /dev/null ]] || { echo "stdin is not /dev/null" >>"$HOME/omp-stdin"; exit 3; }\n'
+                             'cat "$HOME/omp-report.json" 2>/dev/null')):
     (stubs / name).write_text(f"#!/bin/bash\n{body}\n")
     (stubs / name).chmod(0o755)
   os.environ["PATH"] = f"{stubs}:{REAL_PATH}"
@@ -130,6 +132,25 @@ record, asked = agy()
 expect("Antigravity collector takes omp's limits from omp usage, sending omp's lapsed token nowhere",
        [asked, record["limitsStale"], record["usageStatusText"], record["authHelpText"], [(entry["title"], entry["percent"]) for entry in record["limits"]]],
        [[], False, "", "", [("Session", 0.6), ("Weekly", 0.3), ("Claude/GPT Weekly", 0.1)]], record)
+
+check("omp usage runs with nothing on its stdin", not (home() / "omp-stdin").exists())
+
+# A window id of another shape still names one window, and a report naming no
+# account, with several omp sign-ins, is shown but kept for none of them.
+conn = sqlite3.connect(home() / ".omp" / "agent" / "agent.db")
+conn.execute("INSERT INTO auth_credentials (provider, credential_type, data) VALUES ('google-antigravity', 'oauth', ?)",
+             (json.dumps({"access": "third-token", "refresh": "r3", "expires": ms_in(-60), "email": "third@example.com"}),))
+conn.commit()
+conn.close()
+for path in limits_cache_files("agy"):
+  path.unlink()
+write_json(home() / "omp-report.json", {"reports": [{"provider": "google-antigravity", "limits": [
+  {"label": "Gemini", "amount": {"usedFraction": 0.2}, "window": {"id": ["odd"], "resetsAt": 32503680000000}},
+  {"label": "Gemini", "amount": {"usedFraction": 0.6}, "window": {"id": "5h", "resetsAt": 32503680000000}},
+]}]})
+record, asked = agy()
+expect("an anonymous omp report with several sign-ins is shown, kept for none, past an odd window id",
+       [asked, record["limitsStale"], [entry["percent"] for entry in record["limits"]], limits_cache_files("agy")], [[], False, [0.6], []], record)
 
 # opencode files any Google sign-in under "google"; only the Antigravity
 # plugin's accounts file makes it an Antigravity one.
