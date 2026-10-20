@@ -330,6 +330,31 @@ expect("the quota token comes from COPILOT_QUOTA_TOKEN, GH_TOKEN, then GITHUB_TO
 configured(remote=True)
 record = copilot("--force", "--copilot-home", str(home() / "never-ran"), routes=GH_ROUTES)
 expect("remote: true asks GitHub without a Copilot CLI home", [copilot.asked, meter(record)["limits"]], [["Bearer quota-token"], [["Monthly allowance", 0.1, True]]], record)
+
+# An allowance missing an amount, or with one that can't be read, is a failed
+# check that keeps the last allowance, stale; an explicitly unlimited one
+# needs no amounts.
+def snapshot_without(*keys, **changes):
+  answer = quota("individual", 300, 30)
+  snapshot = answer["quota_snapshots"]["premium_interactions"]
+  for key in keys:
+    del snapshot[key]
+  snapshot.update(changes)
+  return {QUOTA_URL: answer}
+
+
+incomplete = {
+  "no entitlement": snapshot_without("entitlement"),
+  "no credits_used": snapshot_without("credits_used"),
+  "unreadable entitlement": snapshot_without(entitlement="lots"),
+}
+kept = {name: meter(copilot(routes=routes)) for name, routes in incomplete.items()}
+expect("an incomplete allowance keeps the last one, stale",
+       kept, {name: {"limits": [["Monthly allowance", 0.1, True]], "stale": True, "status": "", "retry": False, "tier": "Pro"} for name in incomplete}, kept)
+record = copilot(routes=snapshot_without("entitlement", "credits_used", unlimited=True))
+expect("an unlimited allowance needs no amounts", meter(record),
+       {"limits": [], "stale": False, "status": "", "retry": False, "tier": "Pro"}, record)
+
 for name in ("COPILOT_QUOTA_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
   del os.environ[name]
 PY

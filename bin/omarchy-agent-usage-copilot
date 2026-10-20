@@ -43,6 +43,7 @@ import calendar
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -587,6 +588,17 @@ def github_credential() -> tuple[str, str]:
   return (token, token) if token else ("", "")
 
 
+# A quota amount as GitHub sends it, or None when it isn't a readable one.
+def quota_amount(value: Any) -> float | None:
+  if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+    return None
+  try:
+    amount = float(value)
+  except ValueError:
+    return None
+  return amount if math.isfinite(amount) and amount >= 0 else None
+
+
 def ask_quota(token: str) -> dict[str, Any]:
   """Ask GitHub for the account-wide credit balance."""
   request = urllib.request.Request(
@@ -618,12 +630,20 @@ def ask_quota(token: str) -> dict[str, Any]:
     return {"available": False, "reason": "no-quota"}
 
   # Under token-based billing the snapshot counts AI credits directly; only
-  # the local store and transcripts count in nano units.
+  # the local store and transcripts count in nano units. A limited allowance
+  # needs both amounts: one missing or unreadable would pass for no meter or
+  # an untouched allowance and replace the last good answer, so it is a
+  # failed check instead.
+  unlimited = snapshot.get("unlimited") is True
+  entitlement = quota_amount(snapshot.get("entitlement"))
+  used = quota_amount(snapshot.get("credits_used"))
+  if not unlimited and (entitlement is None or used is None):
+    return {"available": False, "reason": "bad-payload"}
   return {
     "available": True,
-    "unlimited": bool(snapshot.get("unlimited")),
-    "entitlement": positive_float(snapshot.get("entitlement")),
-    "used": positive_float(snapshot.get("credits_used")),
+    "unlimited": unlimited,
+    "entitlement": entitlement or 0.0,
+    "used": used or 0.0,
     "resetsAt": str(payload.get("quota_reset_date_utc") or ""),
     "planLabel": API_PLAN_LABELS.get(str(payload.get("copilot_plan") or "").strip().lower(), ""),
   }
