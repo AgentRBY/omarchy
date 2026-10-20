@@ -187,6 +187,20 @@ del os.environ["PI_CODING_AGENT_DIR"]
 record = openrouter()
 expect("pi's and omp's saved OpenRouter key is used", saved + [openrouter.asked, record["tierLabel"]],
        ["sk-pi", "sk-omp", ["/credits=sk-pi", "/key=sk-pi"], "Prepaid"], record)
+opencode_auth(None, "openrouter", "sk-opencode")
+record = openrouter()
+expect("opencode's saved OpenRouter key comes before pi's", openrouter.asked, ["/credits=sk-opencode", "/key=sk-opencode"], record)
+
+# A "management" key that /activity refuses (an inference key, or one
+# revoked) falls back to the local scan: machine numbers with prompt counts,
+# and no sign-in asked for, since the inference key still answers.
+sandbox()
+write_pi_session(home() / ".pi" / "agent" / "sessions" / "--p--" / "s.jsonl", [pi_reply("openrouter", 100, id="a1", model="anthropic/claude-test")])
+for code in (401, 403):
+  record = openrouter(OPENROUTER_API_KEY="sk-test", OPENROUTER_MANAGEMENT_KEY="sk-refused", routes=with_routes(activity=code))
+  expect(f"a management key /activity refuses ({code}) falls back to the local scan",
+         picked(record, "scope", "hasPromptStats", "totalPrompts", "todayTotalTokens", "usageStatusText", "retryAdvised") + [openrouter.asked],
+         [None, True, 1, 100, "", None, ["/activity=sk-refused", "/credits=sk-test", "/key=sk-test"]], record)
 
 # ---------------------------------------------------------- failed checks
 
@@ -206,8 +220,8 @@ for code in (401, 403):
   openrouter()
   refused = openrouter(mode=code)
   expect(f"a {code} keeps the last meter and asks to sign in again",
-         picked(refused, "usageStatusText", "limitsStale", "retryAdvised", "ready") + [len(refused["limits"]), refused["authHelpText"].startswith("OpenRouter refused the API key. ")],
-         ["Sign-in expired", True, None, True, 1, True], refused)
+         picked(refused, "usageStatusText", "limitsStale", "retryAdvised", "ready", "limits") + [refused["authHelpText"].startswith("OpenRouter refused the API key. ")],
+         ["Sign-in expired", True, None, True, fresh["limits"], True], refused)
 
 # A failed /credits keeps the last good balance, marked stale; with none
 # kept, the balance says it is unavailable.
@@ -235,9 +249,9 @@ for incomplete in ({"data": {}}, {}, {"data": {"limit": 10}}, {"data": {"limit":
   openrouter()
   record = openrouter(routes=with_routes(key=incomplete))
   expect(f"an incomplete /key answer {incomplete} keeps the last meter, stale",
-         [len(record["limits"])] + picked(record, "limitsStale", "usageStatusText"), [1, True, ""], record)
+         picked(record, "limits", "limitsStale", "usageStatusText"), [fresh["limits"], True, ""], record)
   record = openrouter(routes=with_routes(key=502))
-  expect(f"an incomplete /key answer {incomplete} never replaces the cached meter", [len(record["limits"]), record["limitsStale"]], [1, True], record)
+  expect(f"an incomplete /key answer {incomplete} never replaces the cached meter", picked(record, "limits", "limitsStale"), [fresh["limits"], True], record)
 
 # An explicitly unlimited key is a good answer that clears the meter.
 openrouter()
