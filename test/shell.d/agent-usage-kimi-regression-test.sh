@@ -252,7 +252,8 @@ def key_help(root):
   os.environ["KIMI_API_KEY"] = "AT_invalid"
   state["usage_status"] = 401
   data = record()
-  check("a refused KIMI_API_KEY says to change it, which a login can't", "KIMI_API_KEY" in data["authHelpText"], data)
+  # AUTH_HELP names KIMI_API_KEY too, so the check is for this remedy's own words.
+  expect("a refused KIMI_API_KEY says to change it, which a login can't", data["authHelpText"], "Kimi rejected the credentials. Update or unset KIMI_API_KEY.", data)
 
 
 def refused(root):
@@ -261,8 +262,8 @@ def refused(root):
   state["usage_status"] = 401
   data = record()
   expect("a refused sign-in says so beside the last good limits, kept stale",
-         [data["usageStatusText"], "kimi login" in data["authHelpText"], data["limits"] == good["limits"], data["limitsStale"]],
-         ["Sign-in expired", True, True, True], data)
+         [data["usageStatusText"], data["authHelpText"], data["limits"] == good["limits"], data["limitsStale"]],
+         ["Sign-in expired", "Kimi rejected the credentials. Sign in again with `kimi login`.", True, True], data)
 
 
 def waiting_for_auth(root):
@@ -283,6 +284,7 @@ def trust(root):
   expect("plain HTTP is refused off loopback", refused, True)
   expect("loopback HTTP is allowed but sent no token", scanner.trusted_url("http://127.0.0.1:9000/usages")[1], False)
   expect("kimi.com is trusted with a token", scanner.trusted_url("https://api.kimi.com/coding/v1/usages")[1], True)
+  expect("a domain merely ending in kimi.com is sent no token", scanner.trusted_url("https://evilkimi.com/x")[1], False)
 
 
 def destination(root):
