@@ -86,6 +86,19 @@ record = hermes()
 expect("a state.db without a usage table still counts its sessions and prompts",
        [record["usageStatusText"], record["totalSessions"], record["todayPrompts"], record["modelUsage"]], ["", 1, 1, {}], record)
 
+# A start or a prompt stamped as text, or in the future, is no today.
+sandbox()
+odd = state_db(home() / ".hermes" / "state.db")
+conn = sqlite3.connect(odd)
+conn.execute("INSERT INTO sessions VALUES ('text', 'soon')")
+conn.execute("INSERT INTO sessions VALUES ('future', ?)", (time.time() + 3 * 86400,))
+conn.executemany("INSERT INTO messages VALUES (?, 'text', 'user', ?)", [(3, "soon"), (4, time.time() + 3 * 86400)])
+conn.commit()
+conn.close()
+record = hermes()
+expect("text and future times count in the totals but not today",
+       [record["totalSessions"], record["todaySessions"], record["totalPrompts"], record["todayPrompts"]], [3, 1, 3, 1], record)
+
 # Named profiles live under ~/.hermes/profiles even when HERMES_HOME moves the
 # default home elsewhere.
 sandbox()

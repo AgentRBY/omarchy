@@ -19,7 +19,7 @@ import argparse
 import os
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # The shared collector plumbing ships with the agents panel.
@@ -67,11 +67,14 @@ def day_start(day):
 def scan(path, totals, today):
   conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
   try:
-    today_start = day_start(today)
+    # Today is a number between today's start and tomorrow's: SQLite ranks
+    # any text above every number, and a time from the future is no today.
+    span = (day_start(today), day_start(today + timedelta(days=1)))
+    today_only = "typeof({0}) IN ('integer', 'real') AND {0} >= ? AND {0} < ?"
     totals["sessions"] += conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-    totals["todaySessions"] += conn.execute("SELECT COUNT(*) FROM sessions WHERE started_at >= ?", (today_start,)).fetchone()[0]
+    totals["todaySessions"] += conn.execute("SELECT COUNT(*) FROM sessions WHERE " + today_only.format("started_at"), span).fetchone()[0]
     totals["prompts"] += conn.execute("SELECT COUNT(*) FROM messages WHERE role = 'user'").fetchone()[0]
-    totals["todayPrompts"] += conn.execute("SELECT COUNT(*) FROM messages WHERE role = 'user' AND timestamp >= ?", (today_start,)).fetchone()[0]
+    totals["todayPrompts"] += conn.execute("SELECT COUNT(*) FROM messages WHERE role = 'user' AND " + today_only.format("timestamp"), span).fetchone()[0]
 
     # A start time SQLite can't read as an epoch dates to NULL and names no day.
     for date in conn.execute("SELECT DISTINCT date(started_at, 'unixepoch', 'localtime') FROM sessions WHERE started_at > 0"):
