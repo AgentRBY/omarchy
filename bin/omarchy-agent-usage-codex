@@ -878,6 +878,12 @@ def collect_limits(home=None, force=False, primary=True):
     rpc.update(limits=fallback, fetchedAtMs=fetched_at_ms, tierLabel=rpc["tierLabel"] or str(cache.data.get("tierLabel") or ""))
     if rpc["usageStatusText"] == "Codex limits unavailable":
       rpc["usageStatusText"] = ""
+  elif same_login and cache.fetched_at > 0:
+    # The last answer was a plan without windows, which has no limits to
+    # lose: a failed recheck is no news, though a sign-in to restore still is.
+    rpc["tierLabel"] = rpc["tierLabel"] or str(cache.data.get("tierLabel") or "")
+    if rpc["usageStatusText"] == "Codex limits unavailable":
+      rpc.update(usageStatusText="", authHelpText="")
   return rpc
 
 

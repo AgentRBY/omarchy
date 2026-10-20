@@ -81,6 +81,18 @@ for mode, retry, status in (("backend", False, ""), ("died", True, ""), ("crashe
     "tier": kept["tierLabel"], "status": kept["usageStatusText"], "help": bool(kept["authHelpText"]), "retry": kept.get("retryAdvised", False),
   }, {"limits": True, "stale": True, "at": True, "tier": "pro", "status": status, "help": True, "retry": retry}, kept)
 
+# A plan without windows is an answer too: a later failed probe has no limits
+# to lose, so it is no trouble, whatever went wrong. A sign-out still says so.
+no_windows = codex("ok", CODEX_RATE_LIMITS=json.dumps({"planType": "free"}))
+expect("a Codex plan without windows is a healthy answer", [no_windows["limits"], no_windows["usageStatusText"], no_windows["tierLabel"]], [[], "", "free"], no_windows)
+for mode, retry, status in (("backend", False, ""), ("died", True, ""), ("crashed", False, ""), ("auth", False, "Waiting for auth")):
+  failed = codex(mode)
+  expect(f"a failed Codex probe ({mode}) after a plan without windows is no trouble", {
+    "limits": failed["limits"], "tier": failed["tierLabel"], "status": failed["usageStatusText"], "help": bool(failed["authHelpText"]),
+    "retry": failed.get("retryAdvised", False),
+  }, {"limits": [], "tier": "free", "status": status, "help": bool(status), "retry": retry}, failed)
+good = codex("ok")
+
 # A stall costs the app-server's whole 8-second answer timeout, so this run's
 # collector waits half a second instead. (The collector reads its
 # environment when it loads, so it loads inside the mode.)
