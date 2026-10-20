@@ -275,19 +275,20 @@ def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
   cache = LimitsCache(AGENT_ID, platform, api_key)
 
   def reuse() -> dict[str, Any]:
-    result.update(limits=cache.limits, tierLabel=str(cache.data.get("tierLabel") or ""), live=True, fetchedAtMs=cache.fetched_at)
+    result.update(limits=cache.limits, tierLabel=str(cache.data.get("tierLabel") or ""), live=True, fetchedAtMs=cache.fetched_at if cache.limits else 0)
     return result
 
   # --force is a person asking for fresh numbers, so it skips the reuse
   # window; the interval absorbs repeated panel opens, not a refresh press.
-  if cache.fresh(force):
+  # A key without a plan is an answer too, and stands in like any other.
+  if cache.fresh(force, allow_empty=True):
     return reuse()
 
   with cache.lock():
     if not force:
       # Another run may have probed while this one waited for the lock.
       cache.reload()
-      if cache.fresh(force):
+      if cache.fresh(force, allow_empty=True):
         return reuse()
 
     probe = fetch_limits(api_key, platform)
@@ -296,12 +297,14 @@ def collect_limits(api_key: str, platform: str, force: bool) -> dict[str, Any]:
       result.update(limits=probe["limits"], tierLabel=probe["tierLabel"], live=True, fetchedAtMs=fetched_at)
       return result
 
-  # A working key without a Coding Plan is a pay-as-you-go account: Z.ai has
-  # no limits to show for it, which is no trouble, and limits kept from a plan
-  # that has since lapsed no longer describe it.
-  if probe.get("noPlan"):
-    result["live"] = True
-    return result
+    # A working key without a Coding Plan is a pay-as-you-go account: Z.ai
+    # has no limits to show for it, which is no trouble. The windows kept from
+    # a plan that has since lapsed go with it, so a later failed check can't
+    # bring them back.
+    if probe.get("noPlan"):
+      cache.save([], tierLabel="", noWindows=True)
+      result["live"] = True
+      return result
 
   # A transport failure reached no server — typically the seconds after login
   # before the network is up — so ask the shell to retry sooner than its
