@@ -123,7 +123,8 @@ cells_path = Path(sys.argv[2])
 # - pi's `openai` is an OpenAI API key, which no collector bills; opencode's
 #   `openai` is the ChatGPT sign-in the Codex collector reads.
 # - pi records an Antigravity sign-in as `google-antigravity`; opencode's
-#   Antigravity plugin records `google` with an `antigravity-` model.
+#   Antigravity plugin records a `google` provider (`google`, `google-vertex`)
+#   with an `antigravity-` model.
 PROVIDERS = [
   ("anthropic", "claude-pt", "", "claude", "claude"),
   ("openai-codex", "gpt-pt", "openai-codex-responses", "codex", "-"),
@@ -146,6 +147,7 @@ PROVIDERS = [
   ("openrouter", "router-pt", "", "openrouter", "openrouter"),
   ("google-antigravity", "antigravity-pt", "", "agy", "-"),
   ("google", "antigravity-pt", "", "-", "agy"),
+  ("google-vertex", "antigravity-pt", "", "-", "agy"),
   ("devin", "devin-pt", "", "devin", "devin"),
   ("synthetic", "synthetic-pt", "", "synthetic", "synthetic"),
   ("mistral", "devstral-pt", "", "vibe", "vibe"),
