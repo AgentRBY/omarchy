@@ -253,6 +253,15 @@ record = muse()
 expect("Muse keeps counting today from the count before today",
        pick(record, "totalPrompts", "todayPrompts", "todaySessions"), {"totalPrompts": 10, "todayPrompts": 6, "todaySessions": 2}, record)
 
+# After a gap of days, what a count grew by since the last scan wasn't all
+# typed today, so the counts start over from now, as on a first scan.
+kept = json.loads(prompts_files[0].read_text())
+kept.update(day=(date.today() - timedelta(days=3)).isoformat(), last={"earlier": 3})
+prompts_files[0].write_text(json.dumps(kept))
+record = muse()
+expect("Muse puts nothing a session grew by over a gap of days on today",
+       pick(record, "totalPrompts", "todayPrompts", "todaySessions"), {"totalPrompts": 10, "todayPrompts": 2, "todaySessions": 1}, record)
+
 # An index that's there but unreadable falls back on completions, and that
 # scan isn't cached.
 (muse_dir() / "session-index.db").write_text("not a database")

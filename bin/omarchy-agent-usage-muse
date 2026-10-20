@@ -43,7 +43,7 @@ import sqlite3
 import sys
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 # The shared collector plumbing ships with the agents panel.
@@ -228,7 +228,8 @@ def scan_session_index(stats):
 # instead what each count grew by since the last scan before today, which
 # this collector keeps in a file of its own; a session created today counts
 # whole. A session from before today that no earlier scan saw counts from
-# when it is first seen, since nothing says when its earlier prompts came.
+# when it is first seen, since nothing says when its earlier prompts came;
+# so does every session after a gap of days since the last scan.
 def prompts_today(database, counts, created_today, today):
   digest = hashlib.sha1(str(database).encode("utf-8")).hexdigest()[:16]
   path = cache_root() / f"muse-prompts-{digest}.json"
@@ -236,10 +237,11 @@ def prompts_today(database, counts, created_today, today):
   day = kept.get("day") if isinstance(kept.get("day"), str) else ""
   if day == today:
     start = kept.get("start")
-  elif day and day < today:
+  elif day == (date.fromisoformat(today) - timedelta(days=1)).isoformat():
     start = kept.get("last")
   else:
-    # Never scanned, or kept from a clock that went back.
+    # Never scanned, kept from a clock that went back, or from before a gap
+    # of days: what a count grew by since then wasn't all typed today.
     start = None
   start = {str(key): token_count(value) for key, value in start.items()} if isinstance(start, dict) else {}
   for session_id, prompts in counts.items():
