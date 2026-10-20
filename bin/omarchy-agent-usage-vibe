@@ -79,11 +79,13 @@ def epoch_seconds(value):
     except ValueError:
       try:
         parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
-      except ValueError:
+        # A zoneless time at the edge of the calendar (year 1 or 9999) can't
+        # be placed in a zone off UTC.
+        if parsed.tzinfo is None:
+          parsed = parsed.astimezone()
+        seconds = parsed.timestamp()
+      except (OverflowError, OSError, ValueError):
         return None
-      if parsed.tzinfo is None:
-        parsed = parsed.astimezone()
-      seconds = parsed.timestamp()
   else:
     return None
   if seconds != seconds:

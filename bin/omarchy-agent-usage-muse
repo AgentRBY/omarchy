@@ -152,11 +152,13 @@ def local_day(value):
       pass
     try:
       dt = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
-    except ValueError:
+      # A zoneless time at the edge of the calendar (year 1 or 9999) can't
+      # be placed in a zone off UTC.
+      if dt.tzinfo is None:
+        dt = dt.astimezone()
+      seconds = dt.timestamp()
+    except (OverflowError, OSError, ValueError):
       return None
-    if dt.tzinfo is None:
-      dt = dt.astimezone()
-    seconds = dt.timestamp()
   # Muse didn't exist before 2000 and can't write from the future.
   if not 946_684_800 <= seconds <= time.time() + 2 * 86_400:
     return None

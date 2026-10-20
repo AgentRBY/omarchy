@@ -90,6 +90,25 @@ expect("Vibe counts Mistral sessions, their subagents, and typed prompts only, b
   "two days ago": 110,
 }, record)
 
+# A zoneless start at the edge of the calendar, in a zone off UTC, is no
+# start to book; the scan still completes, and is cached.
+sandbox()
+saved_tz = os.environ.get("TZ")
+os.environ["TZ"] = "Asia/Tokyo"
+time.tzset()
+write_meta(session_root() / "session_20260101_150000_eeee", "0001-01-01T00:00:00", 100, 0, 10)
+write_meta(session_root() / "session_20260101_160000_ffff", NOW, 100, 0, 10)
+try:
+  record = vibe()
+finally:
+  if saved_tz is None:
+    os.environ.pop("TZ")
+  else:
+    os.environ["TZ"] = saved_tz
+  time.tzset()
+expect("a zoneless start at year 1 off UTC skips that session, and the scan is cached",
+       [record["totalSessions"], bool(scan_cache_files("vibe"))], [1, True], record)
+
 # ------------------------------------------------------- model resolution
 
 sandbox()

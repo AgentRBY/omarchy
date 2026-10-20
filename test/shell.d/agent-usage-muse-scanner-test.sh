@@ -70,6 +70,25 @@ def pick(record, *keys):
   return {key: record[key] for key in keys}
 
 
+# ---------------------------------------------------------- edge times
+
+# A zoneless time at the edge of the calendar, in a zone off UTC, dates
+# nothing: that row goes undated, and the record still prints.
+new_muse_home()
+saved_tz = os.environ.get("TZ")
+os.environ["TZ"] = "Asia/Tokyo"
+time.tzset()
+session("sess-edge", completion("muse-spark-1.3-contributor", "0001-01-01T00:00:00", input=10), completion("muse-spark-1.3-contributor", "9999-12-31T23:59:59", input=20))
+try:
+  record = muse()
+finally:
+  if saved_tz is None:
+    os.environ.pop("TZ")
+  else:
+    os.environ["TZ"] = saved_tz
+  time.tzset()
+expect("Muse reads zoneless times at year 1 and 9999 off UTC as undated", [record["ready"], record["modelUsage"]["muse-spark-1.3-contributor"]["inputTokens"]], [True, 30], record)
+
 # ---------------------------------------------------------- native and opencode
 
 # One main session with a completion and a subagent under it, one session from
