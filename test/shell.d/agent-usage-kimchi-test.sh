@@ -1,62 +1,45 @@
 #!/bin/bash
 
+# The Kimchi collector's own sources: the key and region the Kimchi CLI keeps
+# in its config, the gateway's credits and budget answers (each kept on its
+# own), and the pi-format sessions under its harness. The unused-machine
+# record is held centrally by the partition test, the pi reader by the shared
+# test, and the limits and scan caches by the contract checks.
+
 set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+source "$SHELL_TEST_DIR/agent-usage-helpers.sh"
 
-require_command jq
-require_command python3
+agent_sandbox
 
-test_tmp=$(mktemp -d)
-trap 'rm -rf "$test_tmp"' EXIT
+python3 - <<'PY'
+from agent_usage_fixtures import *
 
-export HOME="$test_tmp/home"
-export XDG_STATE_HOME="$test_tmp/state"
-export XDG_CACHE_HOME="$test_tmp/cache"
-unset KIMCHI_API_KEY KIMCHI_BASE_URL KIMCHI_REGION KIMCHI_CODING_AGENT_DIR
-
-period_end=$(python3 -c 'import datetime as dt; print((dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=20)).isoformat())')
-period_start=$(python3 -c 'import datetime as dt; print((dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=11)).isoformat())')
-export PERIOD_END="$period_end" PERIOD_START="$period_start"
-
-# A Kimchi login the way the CLI leaves it.
-signed_in() {
-  mkdir -p "$HOME/.config/kimchi"
-  jq -n --arg key "$1" --arg region "${2:-us}" '{apiKey: $key, region: $region}' >"$HOME/.config/kimchi/config.json"
-}
+PERIOD = {"startTime": iso_in(-11 * 86400), "endTime": iso_in(20 * 86400)}
 
 # The gateway answers per key: credits for every key, a budget only for some,
-# and nothing at all for a revoked one. Each request is logged so the test can
-# check which gateway was asked.
-collect() {
-  COLLECTOR="$ROOT/bin/omarchy-agent-usage-kimchi" REQUESTS="$test_tmp/requests" python3 - "$@" <<'PY'
-import importlib.machinery, importlib.util, io, json, os, sys, urllib.error
-
-loader = importlib.machinery.SourceFileLoader("collector", os.environ["COLLECTOR"])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-collector = importlib.util.module_from_spec(spec)
-loader.exec_module(collector)
-
-credits = {
+# and a refusal for a revoked one.
+CREDITS = {
   "key-coder": {"serverless": True, "tier": "coder", "is_paid_tier": True, "remaining": "24.95", "has_credits": True},
   "key-budget": {"serverless": True, "tier": "TEAMS", "remaining": 30, "has_credits": True},
   "key-empty": {"serverless": True, "tier": "free", "remaining": "0", "has_credits": False},
   "key-sprint": {"serverless": True, "tier": "teams", "remaining": 12, "has_credits": True},
   "key-pair": {"serverless": True, "tier": "teams", "remaining": 5, "has_credits": True},
 }
-budgets = {
+BUDGETS = {
   "key-sprint": {"period": {"startTime": "2026-10-01T00:00:00Z", "endTime": "2026-10-15T00:00:00Z"}, "budgets": [
     {"scope": "TEAM_POOLED", "scopeId": "t-1", "budgetLimitUsd": "100", "totalSpendUsd": "10", "providerBudgets": [
       {"provider": "openai", "limitType": "CAPPED", "budgetLimitUsd": "20", "usageUsd": "5"},
     ]},
   ]},
-  "key-budget": {"period": {"startTime": os.environ["PERIOD_START"], "endTime": os.environ["PERIOD_END"]}, "budgets": [
+  "key-budget": {"period": PERIOD, "budgets": [
     {"scope": "USER", "scopeId": "u-1", "budgetLimitUsd": "50", "totalSpendUsd": "20", "providerBudgets": [
       {"provider": "anthropic", "limitType": "PROVIDER_LIMIT_TYPE_CAPPED", "budgetLimitUsd": "10", "usageUsd": "2.5"},
       {"provider": "openai", "limitType": "UNLIMITED", "usageUsd": "4"},
     ]},
   ]},
-  "key-pair": {"period": {"startTime": os.environ["PERIOD_START"], "endTime": os.environ["PERIOD_END"]}, "budgets": [
+  "key-pair": {"period": PERIOD, "budgets": [
     {"scope": "USER", "scopeId": "u-1", "budgetLimitUsd": "50", "totalSpendUsd": "10", "providerBudgets": [
       {"provider": "anthropic", "limitType": "CAPPED", "budgetLimitUsd": "10", "usageUsd": "9"},
     ]},
@@ -65,265 +48,250 @@ budgets = {
     ]},
   ]},
 }
+# An endpoint a test breaks on its own: its answer, whatever the key.
+broken = {}
+DOWN = urllib.error.URLError(OSError("Name or service not known"))
 
-def urlopen(request, timeout=None):
-  with open(os.environ["REQUESTS"], "a") as log:
-    log.write(request.full_url + "\n")
-  key = request.get_header("Authorization").split(" ", 1)[1]
-  down = os.environ.get("GATEWAY_DOWN", "")
-  if key == "key-offline" or down == "all" or (down and request.full_url.endswith("/v1/" + down)):
-    raise urllib.error.URLError("offline")
-  if os.environ.get("GATEWAY_ERROR") and request.full_url.endswith("/v1/" + os.environ["GATEWAY_ERROR"]):
-    raise urllib.error.HTTPError(request.full_url, 500, "Internal Server Error", {}, None)
-  if os.environ.get("GATEWAY_ODD") and request.full_url.endswith("/v1/" + os.environ["GATEWAY_ODD"]):
-    return io.BytesIO(os.environ.get("GATEWAY_ODD_BODY", '{"message": "ok"}').encode())
-  if key == "key-revoked":
-    raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, None)
-  answers = credits if request.full_url.endswith("/v1/credits") else budgets
-  return io.BytesIO(json.dumps(answers.get(key, {"period": {"startTime": "", "endTime": ""}, "budgets": []})).encode())
 
-collector.urllib.request.urlopen = urlopen
-sys.argv = ["omarchy-agent-usage-kimchi"] + (os.environ.get("COLLECT_ARGS") or "--force").split()
-collector.main()
-PY
-}
+def gateway(resource, answers):
+  def answer(request):
+    if resource in broken:
+      return broken[resource]
+    key = request.get_header("Authorization").split(" ", 1)[1]
+    if key == "key-revoked":
+      return 401
+    if key == "key-offline":
+      return DOWN
+    return answers.get(key, {"period": {"startTime": "", "endTime": ""}, "budgets": []})
+  return answer
 
-record=$(collect)
-[[ $(jq -c '{ready, tierLabel, limits, hasLocalStats, balance, usageStatusText, authHelpText, limitsStale, limitsFetchedAt, totalPrompts, days: (.recentDays | length), modelUsage}' <<<"$record") == '{"ready":false,"tierLabel":"","limits":[],"hasLocalStats":false,"balance":null,"usageStatusText":"","authHelpText":"","limitsStale":false,"limitsFetchedAt":0,"totalPrompts":0,"days":7,"modelUsage":{}}' ]] ||
-  fail "a machine nobody signed in to Kimchi on gives an empty record" "$record"
-[[ ! -s $test_tmp/requests ]] || fail "no key means the gateway is never asked" "$(cat "$test_tmp/requests")"
-pass "a machine nobody signed in to Kimchi on gives an empty record"
 
-signed_in key-coder
-record=$(collect)
-[[ $(jq -c '{ready, tierLabel, limits, balance, usageStatusText, authHelpText}' <<<"$record") == '{"ready":true,"tierLabel":"Coder","limits":[],"balance":{"remaining":24.95,"funded":0,"spent":0,"currency":"USD","estimated":false},"usageStatusText":"","authHelpText":""}' ]] ||
-  fail "a Coder plan reports its plan and prepaid credits" "$record"
-[[ $(sort -u "$test_tmp/requests") == $'https://llm.kimchi.dev/v1/budget\nhttps://llm.kimchi.dev/v1/credits' ]] ||
-  fail "the US region asks the US gateway" "$(cat "$test_tmp/requests")"
-pass "a Coder plan reports its plan and prepaid credits"
+ROUTES = {"/v1/credits": gateway("credits", CREDITS), "/v1/budget": gateway("budget", BUDGETS)}
 
-: >"$test_tmp/requests"
-signed_in key-coder eu
-collect >/dev/null
-[[ $(sort -u "$test_tmp/requests") == $'https://llm.eu.kimchi.dev/v1/budget\nhttps://llm.eu.kimchi.dev/v1/credits' ]] ||
-  fail "the EU region asks the EU gateway" "$(cat "$test_tmp/requests")"
-: >"$test_tmp/requests"
-KIMCHI_BASE_URL="https://gateway.example/openai/v1/" collect >/dev/null
-[[ $(sort -u "$test_tmp/requests") == $'https://gateway.example/v1/budget\nhttps://gateway.example/v1/credits' ]] ||
-  fail "KIMCHI_BASE_URL names the gateway, without its OpenAI path" "$(cat "$test_tmp/requests")"
-pass "the gateway follows Kimchi's region and KIMCHI_BASE_URL"
 
-record=$(KIMCHI_API_KEY=key-budget collect)
-[[ $(jq -c '{tierLabel, limit: (.limits[0] | {label, title, percent}), unfunded: (.balance | .funded == 0 and .spent == 0 and .remaining == 30)}' <<<"$record") == '{"tierLabel":"Teams","limit":{"label":"Budget","title":"Monthly","percent":0.4},"unfunded":true}' ]] ||
-  fail "a monthly spend budget becomes a Monthly limit, and its cap never poses as funding" "$record"
-[[ $(jq -c '[.limits[1:][] | {title, percent}]' <<<"$record") == '[{"title":"Anthropic Monthly","percent":0.25}]' ]] ||
-  fail "a capped provider is a scoped allowance on the budget's clock, an uncapped one isn't" "$record"
-[[ $(jq -r '.limits[0].resetsAt' <<<"$record") == "$period_end" ]] || fail "the budget resets when its period ends" "$record"
-record=$(KIMCHI_API_KEY=key-sprint collect)
-[[ $(jq -c '[.limits[] | {title, percent}]' <<<"$record") == '[{"title":null,"percent":0.1},{"title":"Openai budget","percent":0.25}]' ]] ||
-  fail "a period with no clock name still shows its capped providers" "$record"
-pass "a monthly spend budget becomes a Monthly limit with its provider caps"
+# A Kimchi login the way the CLI leaves it.
+def signed_in(key="key-budget", region="us"):
+  write_json(home() / ".config" / "kimchi" / "config.json", {"apiKey": key, "region": region})
+
+
+def kimchi(*args, key=None, **env):
+  saved = dict(os.environ)
+  if key:
+    env["KIMCHI_API_KEY"] = key
+  os.environ.update(env)
+  try:
+    with FakeHttp(ROUTES) as http:
+      record = collect("kimchi", *(args or ("--force",)))
+  finally:
+    os.environ.clear()
+    os.environ.update(saved)
+  kimchi.asked = sorted({request["url"] for request in http.requests})
+  return record
+
+
+def harness():
+  return home() / ".config" / "kimchi" / "harness"
+
+
+def reply(id, model, usage, timestamp="now"):
+  return pi_reply("kimchi-dev", model=model, usage=usage, timestamp=timestamp, id=id)
+
+
+def kept(record):
+  return {"stale": record["limitsStale"], "tierLabel": record["tierLabel"], "limits": len(record["limits"]),
+          "credits": (record.get("balance") or {}).get("remaining"), "retry": record.get("retryAdvised"), "status": record["usageStatusText"]}
+
+
+# ------------------------------------------------------------ the gateway
+
+# Without a key the gateway is never asked; the partition test holds the rest
+# of the unused-machine record.
+sandbox()
+record = kimchi()
+expect("no key means the gateway is never asked", [record["ready"], kimchi.asked], [False, []], record)
+
+signed_in("key-coder")
+record = kimchi()
+expect("a Coder plan reports its plan and prepaid credits",
+       {key: record.get(key) for key in ("ready", "tierLabel", "limits", "balance", "usageStatusText", "authHelpText")},
+       {"ready": True, "tierLabel": "Coder", "limits": [], "balance": {"remaining": 24.95, "funded": 0, "spent": 0, "currency": "USD", "estimated": False},
+        "usageStatusText": "", "authHelpText": ""}, record)
+expect("the US region asks the US gateway", kimchi.asked, ["https://llm.kimchi.dev/v1/budget", "https://llm.kimchi.dev/v1/credits"])
+signed_in("key-coder", "eu")
+kimchi()
+expect("the EU region asks the EU gateway", kimchi.asked, ["https://llm.eu.kimchi.dev/v1/budget", "https://llm.eu.kimchi.dev/v1/credits"])
+kimchi(KIMCHI_BASE_URL="https://gateway.example/openai/v1/")
+expect("KIMCHI_BASE_URL names the gateway, without its OpenAI path", kimchi.asked, ["https://gateway.example/v1/budget", "https://gateway.example/v1/credits"])
+
+# ------------------------------------------------------------- contract
+
+sandbox()
+
+
+def add_session():
+  add_session.count = getattr(add_session, "count", 0) + 1
+  write_pi_session(harness() / "sessions" / "--grown--" / f"{add_session.count}.jsonl", [reply(f"g-{add_session.count}", "glm-5.3", {"input": 1})])
+
+
+adapter = Adapter("kimchi", plant=signed_in, answer=ROUTES, requests_per_probe=2, grow=add_session, pi_root=lambda: harness() / "sessions")
+fresh = check_limits_contract(adapter)
+expect("a monthly spend budget becomes a Monthly limit, and its cap never poses as funding",
+       [fresh["tierLabel"], {key: fresh["limits"][0].get(key) for key in ("label", "title", "percent")}, fresh["balance"]],
+       ["Teams", {"label": "Budget", "title": "Monthly", "percent": 0.4}, {"remaining": 30.0, "funded": 0, "spent": 0, "currency": "USD", "estimated": False}], fresh)
+expect("a capped provider is a scoped allowance on the budget's clock, an uncapped one isn't",
+       [{"title": limit["title"], "percent": limit["percent"]} for limit in fresh["limits"][1:]], [{"title": "Anthropic Monthly", "percent": 0.25}], fresh)
+expect("the budget resets when its period ends", fresh["limits"][0]["resetsAt"], PERIOD["endTime"], fresh)
+check_scan_cache(adapter)
+
+# ------------------------------------------------------------ the answer
+
+sandbox()
+signed_in()
+record = kimchi(key="key-sprint")
+expect("a period with no clock name still shows its capped providers",
+       [{"title": limit.get("title"), "percent": limit["percent"]} for limit in record["limits"]],
+       [{"title": None, "percent": 0.1}, {"title": "Openai budget", "percent": 0.25}], record)
 
 # Two budgets on one clock: the panel hangs a cap on the meter its title
 # names, so each budget is titled by its scope and its caps name the budget
 # they belong to, instead of both caps landing on the last Monthly meter.
-record=$(KIMCHI_API_KEY=key-pair collect)
-[[ $(jq -c '[.limits[] | {title, percent}]' <<<"$record") == '[{"title":"Budget Monthly","percent":0.2},{"title":"Anthropic budget (Budget)","percent":0.9},{"title":"Team pool Monthly","percent":0.25},{"title":"Openai budget (Team pool)","percent":0.1}]' ]] ||
-  fail "several budgets on one clock each keep their own provider caps" "$record"
-pass "several budgets on one clock each keep their own provider caps"
+record = kimchi(key="key-pair")
+expect("several budgets on one clock each keep their own provider caps",
+       [{"title": limit["title"], "percent": limit["percent"]} for limit in record["limits"]],
+       [{"title": "Budget Monthly", "percent": 0.2}, {"title": "Anthropic budget (Budget)", "percent": 0.9},
+        {"title": "Team pool Monthly", "percent": 0.25}, {"title": "Openai budget (Team pool)", "percent": 0.1}], record)
 
-record=$(KIMCHI_API_KEY=key-empty collect)
-[[ $(jq -c '{tierLabel, empty: (.balance.remaining == 0), usageStatusText}' <<<"$record") == '{"tierLabel":"Community","empty":true,"usageStatusText":"Out of credits, rate limited"}' ]] ||
-  fail "an empty balance says Kimchi is rate limited" "$record"
-pass "an empty balance says Kimchi is rate limited"
+record = kimchi(key="key-empty")
+expect("an empty balance says Kimchi is rate limited",
+       [record["tierLabel"], record["balance"]["remaining"], record["usageStatusText"]], ["Community", 0.0, "Out of credits, rate limited"], record)
 
-record=$(KIMCHI_API_KEY=key-revoked collect)
-[[ $(jq -c '{ready, usageStatusText, retry: .retryAdvised}' <<<"$record") == '{"ready":true,"usageStatusText":"Sign-in expired","retry":null}' ]] ||
-  fail "a rejected key asks for a sign-in" "$record"
-[[ $(jq -r '.authHelpText' <<<"$record") == *"Log in again in Kimchi"* ]] || fail "a rejected key says to log in again in Kimchi" "$record"
-record=$(KIMCHI_API_KEY=key-offline collect)
-[[ $(jq -c '{usageStatusText, retry: .retryAdvised}' <<<"$record") == '{"usageStatusText":"Balance unavailable","retry":true}' ]] ||
-  fail "an unreachable gateway asks for a sooner retry" "$record"
-pass "a rejected key and an unreachable gateway are told apart"
+record = kimchi(key="key-revoked")
+expect("a rejected key says to log in again in Kimchi", "Log in again in Kimchi" in record["authHelpText"], True, record)
+record = kimchi(key="key-offline")
+expect("an unreachable gateway with nothing kept says the balance is unavailable and asks for a sooner retry",
+       [record["usageStatusText"], record.get("retryAdvised")], ["Balance unavailable", True], record)
 
-# A gateway that stops answering leaves the last numbers up, marked stale and
-# dated, rather than an empty section.
-record=$(KIMCHI_API_KEY=key-budget collect)
-fetched=$(jq -r '.limitsFetchedAt' <<<"$record")
-(( fetched > 0 )) && [[ $(jq -r '.limitsStale' <<<"$record") == false ]] || fail "a live answer is dated and not stale" "$record"
-record=$(KIMCHI_API_KEY=key-budget GATEWAY_DOWN=all collect)
-[[ $(jq -c '{tierLabel, stale: .limitsStale, at: .limitsFetchedAt, limits: (.limits | length), kept: (.balance.remaining == 30), usageStatusText, retry: .retryAdvised}' <<<"$record") == '{"tierLabel":"Teams","stale":true,"at":'"$fetched"',"limits":2,"kept":true,"usageStatusText":"","retry":true}' ]] ||
-  fail "an outage keeps the last credits and budgets, marked stale" "$record"
-record=$(KIMCHI_API_KEY=key-coder GATEWAY_DOWN=all collect)
-[[ $(jq -c '{tierLabel, limits}' <<<"$record") == '{"tierLabel":"Coder","limits":[]}' ]] ||
-  fail "another key never shows the last key's numbers" "$record"
-pass "an outage keeps the last credits and budgets, marked stale"
+# Another key never shows the last key's numbers.
+kimchi(key="key-budget")
+broken.update(credits=DOWN, budget=DOWN)
+record = kimchi(key="key-coder")
+broken.clear()
+expect("another key never shows the last key's numbers", [record["tierLabel"], record["limits"]], ["", []], record)
 
 # One endpoint failing keeps that endpoint's last answer and takes the other's
 # fresh one, without letting the half that came back replace the cache.
-record=$(KIMCHI_API_KEY=key-budget collect)
-record=$(KIMCHI_API_KEY=key-budget GATEWAY_DOWN=budget collect)
-[[ $(jq -c '{stale: .limitsStale, limits: (.limits | length), credits: (.balance.remaining == 30), retry: .retryAdvised}' <<<"$record") == '{"stale":true,"limits":2,"credits":true,"retry":true}' ]] ||
-  fail "a failed budget endpoint keeps its last limits beside fresh credits" "$record"
-record=$(KIMCHI_API_KEY=key-budget GATEWAY_DOWN=credits collect)
-[[ $(jq -c '{stale: .limitsStale, tierLabel, limits: (.limits | length), credits: (.balance.remaining == 30)}' <<<"$record") == '{"stale":true,"tierLabel":"Teams","limits":2,"credits":true}' ]] ||
-  fail "a failed credits endpoint keeps its last plan and balance beside fresh limits" "$record"
-pass "one endpoint failing keeps its own last answer"
+kimchi(key="key-budget")
+broken["budget"] = DOWN
+record = kimchi(key="key-budget")
+expect("a failed budget endpoint keeps its last limits beside fresh credits", kept(record),
+       {"stale": True, "tierLabel": "Teams", "limits": 2, "credits": 30.0, "retry": True, "status": ""}, record)
+broken.clear()
+broken["credits"] = DOWN
+record = kimchi(key="key-budget")
+expect("a failed credits endpoint keeps its last plan and balance beside fresh limits", kept(record),
+       {"stale": True, "tierLabel": "Teams", "limits": 2, "credits": 30.0, "retry": True, "status": ""}, record)
+broken.clear()
 
 # A reply of an unexpected shape is a failed check, not an empty account: the
 # last answer stays up, stale, and a server that answered isn't retried sooner.
-for odd in budget credits; do
-  for body in '{"message": "ok"}' '[]' 'null'; do
-    record=$(KIMCHI_API_KEY=key-budget collect)
-    record=$(KIMCHI_API_KEY=key-budget GATEWAY_ODD=$odd GATEWAY_ODD_BODY="$body" collect)
-    [[ $(jq -c '{stale: .limitsStale, tierLabel, limits: (.limits | length), credits: (.balance.remaining == 30), retry: .retryAdvised, usageStatusText}' <<<"$record") == '{"stale":true,"tierLabel":"Teams","limits":2,"credits":true,"retry":null,"usageStatusText":""}' ]] ||
-      fail "an unexpected $odd reply ($body) keeps the last answer, stale" "$record"
-  done
-done
-pass "an unexpected reply keeps the last answer, stale"
+for odd in ("budget", "credits"):
+  for body in ({"message": "ok"}, [], None):
+    kimchi(key="key-budget")
+    broken[odd] = b"null" if body is None else body
+    record = kimchi(key="key-budget")
+    broken.clear()
+    expect(f"an unexpected {odd} reply ({json.dumps(body)}) keeps the last answer, stale", kept(record),
+           {"stale": True, "tierLabel": "Teams", "limits": 2, "credits": 30.0, "retry": None, "status": ""}, record)
 
 # A part that fails before anything was cached is missing, not current: the
 # record is stale, but a server that answered with an error isn't retried
 # sooner.
-rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-limits-*.json
-record=$(KIMCHI_API_KEY=key-sprint GATEWAY_ERROR=budget collect)
-[[ $(jq -c '{stale: .limitsStale, limits, credits: (.balance.remaining == 12), retry: .retryAdvised, usageStatusText}' <<<"$record") == '{"stale":true,"limits":[],"credits":true,"retry":null,"usageStatusText":""}' ]] ||
-  fail "a budget endpoint failing with nothing cached leaves the record stale" "$record"
-rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-credits-*.json
-record=$(KIMCHI_API_KEY=key-sprint GATEWAY_ERROR=credits collect)
-[[ $(jq -c '{stale: .limitsStale, balance, usageStatusText, retry: .retryAdvised}' <<<"$record") == '{"stale":true,"balance":null,"usageStatusText":"Balance unavailable","retry":null}' ]] ||
-  fail "a credits endpoint failing with nothing cached says credits are unavailable" "$record"
-pass "a part that fails before anything was cached is missing, not current"
+for path in limits_cache_files("kimchi"):
+  path.unlink()
+broken["budget"] = 500
+record = kimchi(key="key-sprint")
+broken.clear()
+expect("a budget endpoint failing with nothing cached leaves the record stale",
+       [record["limitsStale"], record["limits"], record["balance"]["remaining"], record.get("retryAdvised"), record["usageStatusText"]], [True, [], 12.0, None, ""], record)
+for path in cache_root().glob("kimchi-credits-*.json"):
+  path.unlink()
+broken["credits"] = 500
+record = kimchi(key="key-sprint")
+broken.clear()
+expect("a credits endpoint failing with nothing cached says credits are unavailable",
+       [record["limitsStale"], record.get("balance"), record["usageStatusText"], record.get("retryAdvised")], [True, None, "Balance unavailable", None], record)
 
 # Refreshes can overlap; an answer fetched earlier never replaces one fetched
 # later, so a slow run finishing last can't roll the cache back.
-KIMCHI_API_KEY=key-budget collect >/dev/null
-credits_cache=$(ls -t "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-credits-*.json | head -1)
-later=$(python3 -c 'import time; print(int(time.time() * 1000) + 60000)')
-jq --argjson at "$later" '.fetchedAtMs = $at | .tierLabel = "Enterprise"' "$credits_cache" >"$test_tmp/credits.json"
-mv "$test_tmp/credits.json" "$credits_cache"
-KIMCHI_API_KEY=key-budget collect >/dev/null
-[[ $(jq -r '.tierLabel' "$credits_cache") == "Enterprise" ]] || fail "an earlier answer never replaces a later one" "$(cat "$credits_cache")"
-record=$(KIMCHI_API_KEY=key-budget GATEWAY_DOWN=all collect)
-[[ $(jq -r '.tierLabel' <<<"$record") == "Enterprise" ]] || fail "an outage falls back to the latest answer" "$record"
-pass "overlapping refreshes keep the latest answer"
+kimchi(key="key-budget")
+credits_cache = max(cache_root().glob("kimchi-credits-*.json"), key=lambda path: path.stat().st_mtime)
+write_json(credits_cache, dict(json.loads(credits_cache.read_text()), fetchedAtMs=ms_in(60), tierLabel="Enterprise"))
+kimchi(key="key-budget")
+expect("an earlier answer never replaces a later one", json.loads(credits_cache.read_text())["tierLabel"], "Enterprise")
+broken.update(credits=DOWN, budget=DOWN)
+expect("an outage falls back to the latest answer", kimchi(key="key-budget")["tierLabel"], "Enterprise")
 
 # The same key asked of another gateway is another answer.
-record=$(KIMCHI_API_KEY=key-budget KIMCHI_BASE_URL="https://gateway.example" GATEWAY_DOWN=all collect)
-[[ $(jq -c '{tierLabel, limits, usageStatusText}' <<<"$record") == '{"tierLabel":"","limits":[],"usageStatusText":"Balance unavailable"}' ]] ||
-  fail "another gateway never shows the last gateway's numbers" "$record"
-pass "another gateway never shows the last gateway's numbers"
+record = kimchi(key="key-budget", KIMCHI_BASE_URL="https://gateway.example")
+broken.clear()
+expect("another gateway never shows the last gateway's numbers",
+       [record["tierLabel"], record["limits"], record["usageStatusText"]], ["", [], "Balance unavailable"], record)
 
-# Tokens come from assistant messages in the pi session files: cached input
-# kept apart, a repeated entry counted once, user turns and other entries
-# skipped.
-sessions="$HOME/.config/kimchi/harness/sessions/--home-me--"
-mkdir -p "$sessions"
-now=$(python3 -c 'import datetime as dt; print(dt.datetime.now(dt.timezone.utc).isoformat())')
-now_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
-reply() {
-  jq -nc --arg id "$1" --arg at "$2" --arg model "$3" --argjson usage "$4" \
-    '{type: "message", id: $id, timestamp: $at, message: {role: "assistant", model: $model, provider: "kimchi-dev", usage: $usage}}'
-}
-{
-  jq -nc '{type: "session", id: "s-1"}'
-  jq -nc --arg at "$now" '{type: "message", id: "u-1", timestamp: $at, message: {role: "user", content: "hi", usage: {input: 999}}}'
-  reply a-1 "$now" minimax-m3 '{"input": 100, "output": 20, "cacheRead": 800, "cacheWrite": 5, "totalTokens": 925}'
-  reply a-1 "$now" minimax-m3 '{"input": 100, "output": 20, "cacheRead": 800, "cacheWrite": 5, "totalTokens": 925}'
-  reply a-2 "$now" glm-5.3 '{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 75}'
-  jq -nc --arg at "$now" '{type: "custom", id: "c-1", timestamp: $at, data: {usage: {input: 999}}}'
-} >"$sessions/today.jsonl"
-{
-  reply b-1 "2026-01-02T10:00:00Z" minimax-m3 '{"input": 300, "output": 30, "cacheRead": 0, "cacheWrite": 0}'
-} >"$sessions/old.jsonl"
-jq -nc --argjson at "$now_ms" '{type: "message", id: "a-3", message: {role: "assistant", model: "glm-5.3", timestamp: $at, usage: {input: 10, output: 5}}}' >>"$sessions/today.jsonl"
+# A budget cached under its old name, kimchi-budget-*, is still read, its
+# elapsed window zeroed and one with no reset time kept as it is.
+for path in cache_root().glob("kimchi-credits-*.json"):
+  path.unlink()
+kimchi(key="key-budget")
+limits_cache = max(limits_cache_files("kimchi"), key=lambda path: path.stat().st_mtime)
+cached = json.loads(limits_cache.read_text())
+cached["limits"][0].update(resetsAt=iso_in(-3600), percent=0.9)
+cached["limits"][1]["resetsAt"] = ""
+write_json(limits_cache.with_name(limits_cache.name.replace("kimchi-limits-", "kimchi-budget-")), cached)
+limits_cache.unlink()
+broken["budget"] = DOWN
+record = kimchi(key="key-budget")
+broken.clear()
+expect("a budget cached under its old name is read, elapsed at zero and an unclocked one as it was",
+       [[round(limit["percent"] * 100), limit["resetsAt"]] for limit in record["limits"]] + [record["limitsStale"]], [[0, ""], [25, ""], True], record)
 
-record=$(KIMCHI_API_KEY=key-coder collect)
-[[ $(jq -c '{hasLocalStats, todayPrompts, todaySessions, totalPrompts, totalSessions, activeDays, todayTotalTokens, todayTokensByModel, today: .recentDays[6].messageCount}' <<<"$record") == '{"hasLocalStats":true,"todayPrompts":3,"todaySessions":1,"totalPrompts":4,"totalSessions":2,"activeDays":2,"todayTotalTokens":1015,"todayTokensByModel":{"minimax-m3":925,"glm-5.3":90},"today":1015}' ]] ||
-  fail "Kimchi counts sessions, prompts, and tokens from its session files" "$record"
-[[ $(jq -cS '.modelUsage' <<<"$record") == '{"glm-5.3":{"cacheCreationInputTokens":0,"cacheReadInputTokens":0,"inputTokens":85,"outputTokens":5},"minimax-m3":{"cacheCreationInputTokens":5,"cacheReadInputTokens":800,"inputTokens":400,"outputTokens":50}}' ]] ||
-  fail "Kimchi's tokens by model keep cached input apart" "$record"
-pass "Kimchi counts sessions, prompts, and tokens from its session files"
+# ---------------------------------------------------------------- sessions
+
+# Tokens come from assistant messages in the harness's pi session files:
+# cached input kept apart, a repeated entry counted once, user turns and other
+# entries skipped, whatever the provider.
+sandbox()
+sessions = harness() / "sessions" / "--home-me--"
+now = iso_in(0)
+write_pi_session(sessions / "today.jsonl", [
+  {"type": "session", "id": "s-1"},
+  {"type": "message", "id": "u-1", "timestamp": now, "message": {"role": "user", "content": "hi", "usage": {"input": 999}}},
+  reply("a-1", "minimax-m3", {"input": 100, "output": 20, "cacheRead": 800, "cacheWrite": 5, "totalTokens": 925}),
+  reply("a-1", "minimax-m3", {"input": 100, "output": 20, "cacheRead": 800, "cacheWrite": 5, "totalTokens": 925}),
+  reply("a-2", "glm-5.3", {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 75}),
+  {"type": "custom", "id": "c-1", "timestamp": now, "data": {"usage": {"input": 999}}},
+  {"type": "message", "id": "a-3", "message": {"role": "assistant", "model": "glm-5.3", "timestamp": ms_in(0), "usage": {"input": 10, "output": 5}}},
+])
+write_pi_session(sessions / "old.jsonl", [reply("b-1", "minimax-m3", {"input": 300, "output": 30, "cacheRead": 0, "cacheWrite": 0}, timestamp="2026-01-02T10:00:00Z")])
+record = kimchi(key="key-coder")
+expect("Kimchi counts sessions, prompts, and tokens from its session files",
+       {key: record[key] for key in ("hasLocalStats", "todayPrompts", "todaySessions", "totalPrompts", "totalSessions", "activeDays", "todayTotalTokens", "todayTokensByModel")}
+       | {"today": record["recentDays"][6]["messageCount"]},
+       {"hasLocalStats": True, "todayPrompts": 3, "todaySessions": 1, "totalPrompts": 4, "totalSessions": 2, "activeDays": 2,
+        "todayTotalTokens": 1015, "todayTokensByModel": {"minimax-m3": 925, "glm-5.3": 90}, "today": 1015}, record)
+expect("Kimchi's tokens by model keep cached input apart", record["modelUsage"], {
+  "minimax-m3": {"inputTokens": 400, "outputTokens": 50, "cacheReadInputTokens": 800, "cacheCreationInputTokens": 5},
+  "glm-5.3": {"inputTokens": 85, "outputTokens": 5, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0},
+}, record)
 
 # KIMCHI_CODING_AGENT_DIR moves the harness, as it does for the CLI.
-mkdir -p "$test_tmp/harness/sessions/--elsewhere--"
-reply x-1 "$now" kimi-k2.6 '{"input": 7, "output": 3}' >"$test_tmp/harness/sessions/--elsewhere--/s.jsonl"
-record=$(KIMCHI_API_KEY=key-coder KIMCHI_CODING_AGENT_DIR="$test_tmp/harness" collect)
-[[ $(jq -c '{totalSessions, todayTokensByModel}' <<<"$record") == '{"totalSessions":1,"todayTokensByModel":{"kimi-k2.6":10}}' ]] ||
-  fail "KIMCHI_CODING_AGENT_DIR names the harness the sessions are read from" "$record"
-pass "KIMCHI_CODING_AGENT_DIR names the harness the sessions are read from"
-
-# A limits-only refresh reuses the last scan rather than reading every session.
-KIMCHI_API_KEY=key-coder collect >/dev/null
-reply b-2 "$now" minimax-m3 '{"input": 1, "output": 1}' >"$sessions/later.jsonl"
-record=$(KIMCHI_API_KEY=key-coder COLLECT_ARGS="--limits-only" collect)
-[[ $(jq -r '.totalSessions' <<<"$record") == 2 ]] || fail "a limits-only refresh reuses the session scan" "$record"
-pass "a limits-only refresh reuses the session scan"
-
-# A scan from another day is never reused, so yesterday's sessions don't
-# count as today's after midnight.
-scan_cache=$(ls -t "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-scan-*.json | head -1)
-jq '.scanDate = "2000-01-01"' "$scan_cache" >"$test_tmp/stats.json"
-mv "$test_tmp/stats.json" "$scan_cache"
-record=$(KIMCHI_API_KEY=key-coder COLLECT_ARGS="--limits-only" collect)
-[[ $(jq -r '.totalSessions' <<<"$record") == 3 ]] || fail "a scan from another day is made again" "$record"
-pass "a scan from another day is made again"
-
-# A recent answer is reused rather than asking the gateway again, unless a
-# person pressed refresh. (The overlap test above left a credits answer
-# stamped in the future, which is never reused.)
-rm -f "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-credits-*.json
-KIMCHI_API_KEY=key-budget collect >/dev/null
-: >"$test_tmp/requests"
-record=$(KIMCHI_API_KEY=key-budget COLLECT_ARGS="--limits-only" collect)
-[[ ! -s $test_tmp/requests ]] || fail "a recent gateway answer is reused" "$(cat "$test_tmp/requests")"
-[[ $(jq -c '{stale: .limitsStale, tierLabel, limits: (.limits | length)}' <<<"$record") == '{"stale":false,"tierLabel":"Teams","limits":2}' ]] ||
-  fail "a reused answer is current, not stale" "$record"
-KIMCHI_API_KEY=key-budget collect >/dev/null
-(( $(wc -l <"$test_tmp/requests") == 2 )) || fail "--force asks the gateway again" "$(cat "$test_tmp/requests")"
-pass "a recent gateway answer is reused, and --force asks again"
-
-# A kept budget whose period ended comes back at zero with no reset time,
-# never dropped, and a budget cached under its old name is still read.
-limits_cache=$(ls -t "$XDG_CACHE_HOME"/omarchy/agent-usage/kimchi-limits-*.json | head -1)
-legacy_cache=${limits_cache/kimchi-limits-/kimchi-budget-}
-jq -c '.limits[0].resetsAt = "2020-01-01T00:00:00Z" | .limits[0].percent = 0.9 | .limits[1].resetsAt = ""' "$limits_cache" >"$legacy_cache"
-rm "$limits_cache"
-record=$(KIMCHI_API_KEY=key-budget GATEWAY_DOWN=budget collect)
-[[ $(jq -c '[.limits[] | {percent: (.percent * 100 | round), resetsAt}]' <<<"$record") == '[{"percent":0,"resetsAt":""},{"percent":25,"resetsAt":""}]' ]] ||
-  fail "an elapsed kept budget is zeroed, and one with no reset time is kept as it is" "$record"
-[[ $(jq -r '.limitsStale' <<<"$record") == true ]] || fail "an elapsed kept budget is still stale" "$record"
-pass "an elapsed kept budget comes back at zero"
+write_pi_session(home() / "elsewhere" / "sessions" / "--elsewhere--" / "s.jsonl", [reply("x-1", "kimi-k2.6", {"input": 7, "output": 3})])
+record = kimchi(key="key-coder", KIMCHI_CODING_AGENT_DIR=str(home() / "elsewhere"))
+expect("KIMCHI_CODING_AGENT_DIR names the harness the sessions are read from",
+       [record["totalSessions"], record["todayTokensByModel"]], [1, {"kimi-k2.6": 10}], record)
 
 # Sessions on disk without a key: Kimchi is in use here and waits for a sign-in.
-rm "$HOME/.config/kimchi/config.json"
-record=$(collect)
-[[ $(jq -c '{ready, usageStatusText, authHelpText, hasLocalStats}' <<<"$record") == '{"ready":true,"usageStatusText":"Waiting for auth","authHelpText":"Start Kimchi and log in, or set KIMCHI_API_KEY.","hasLocalStats":true}' ]] ||
-  fail "local sessions without a key wait for auth" "$record"
-pass "local sessions without a key wait for auth"
-
-# A forked session repeats its parent's replies with the same id and time, and
-# counts them once; a reply without an id always counts. An untrusted token
-# field skips the field, and an untrusted stamp the reply, never the record.
-fork="$HOME/.config/kimchi/harness/sessions/--fork--"
-mkdir -p "$fork"
-{
-  reply a-1 "$now" minimax-m3 '{"input": 100, "output": 20, "cacheRead": 800, "cacheWrite": 5, "totalTokens": 925}'
-  jq -nc --arg at "$now" '{type: "message", timestamp: $at, message: {role: "assistant", model: "glm-5.3", usage: {input: 4}}}'
-  jq -nc --arg at "$now" '{type: "message", timestamp: $at, message: {role: "assistant", model: "glm-5.3", usage: {input: 4}}}'
-  reply z-1 "not a time" glm-5.3 '{"input": 6, "output": true, "cacheRead": "lots", "cacheWrite": 1e300}'
-  jq -nc '{type: "message", id: "z-2", timestamp: -5, message: {role: "assistant", model: "glm-5.3", usage: {input: 2}}}'
-  jq -nc '{type: "message", id: "z-3", timestamp: 99999999999999999, message: {role: "assistant", model: "glm-5.3", usage: {input: 1}}}'
-} >"$fork/fork.jsonl"
-record=$(KIMCHI_API_KEY=key-coder collect)
-[[ $(jq -c '{totalPrompts, totalSessions, today: .todayTokensByModel["glm-5.3"], glm: .modelUsage["glm-5.3"].inputTokens, out: .modelUsage["glm-5.3"].outputTokens}' <<<"$record") == '{"totalPrompts":7,"totalSessions":4,"today":98,"glm":93,"out":5}' ]] ||
-  fail "forks count once, unidentified replies always count, and bad fields are skipped" "$record"
-pass "forks count once and untrusted fields are skipped"
-
-# A $HOME kept as a git checkout that ignores everything still has its sessions
-# found.
-mkdir -p "$HOME/.git"
-printf '*\n' >"$HOME/.gitignore"
-record=$(KIMCHI_API_KEY=key-coder collect)
-[[ $(jq -r '.totalSessions' <<<"$record") == 4 ]] || fail "an ignoring git checkout in HOME doesn't hide sessions" "$record"
-pass "an ignoring git checkout in HOME doesn't hide sessions"
+record = kimchi()
+expect("local sessions without a key wait for auth",
+       {key: record[key] for key in ("ready", "usageStatusText", "authHelpText", "hasLocalStats")},
+       {"ready": True, "usageStatusText": "Waiting for auth", "authHelpText": "Start Kimchi and log in, or set KIMCHI_API_KEY.", "hasLocalStats": True}, record)
+PY
