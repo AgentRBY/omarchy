@@ -67,6 +67,12 @@ check(
   [collectors.local_day(value) for value in (0, -5, 1e300, float("nan"), True, "not a date", "", [1])] == [None] * 8,
 )
 check(
+  "local_day keeps the last half second of a day on that day, in seconds and milliseconds",
+  (lambda midnight: [collectors.local_day(midnight - 0.4), collectors.local_day((midnight - 0.4) * 1000)]
+   == [(datetime.fromtimestamp(midnight) - timedelta(days=1)).strftime("%Y-%m-%d")] * 2)(
+    datetime.combine(datetime.now().date(), datetime.min.time()).timestamp()),
+)
+check(
   "local_day skips a damaged stamp dated before 2000 or after 2100",
   [collectors.local_day(value) for value in (1, 86400, "1999-12-31T12:00:00", "2102-06-01T00:00:00Z")] == [None] * 4,
 )

@@ -166,9 +166,12 @@ def local_day(value: Any) -> str | None:
   if isinstance(value, bool):
     return None
   if isinstance(value, (int, float)):
-    seconds = number(value)
-    if seconds <= 0:
+    # number() turns untrusted values (NaN, negative, huge) into 0; the time
+    # itself is floored, as stamps are, so the last half second of a day
+    # isn't read as the next one.
+    if number(value) <= 0:
       return None
+    seconds = math.floor(value)
     # pi, omp, and opencode write milliseconds.
     if seconds > 10_000_000_000:
       seconds = seconds / 1000
