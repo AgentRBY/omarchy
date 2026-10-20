@@ -71,6 +71,12 @@ DSH_PROVIDERS = ("deepseek-official", "deepseek-account")
 # their Zstandard twins.
 DSH_LOG_NAME = re.compile(r"session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?")
 
+# The most one compressed session log may inflate to. A real log, even a
+# long-running agent session's, is a few MiB of JSON lines, so 64 MiB is far
+# past any of them; a log that inflates further is a corrupt or hostile
+# frame, and the scan stops there rather than filling memory.
+DSH_MAX_LOG_BYTES = 64 * 1024 * 1024
+
 
 class DeepSeekError(Exception):
   def __init__(self, message: str, transport: bool = False, refused: bool = False) -> None:
@@ -135,6 +141,35 @@ def dsh_session_logs(root: Path) -> list[Path]:
   return [path for _, path in sorted(newest.values(), key=lambda item: str(item[1]))]
 
 
+def dsh_decompress(data: bytes) -> bytes | None:
+  """Every complete Zstandard frame of a log, or None past DSH_MAX_LOG_BYTES.
+
+  Decompressed a bounded piece at a time, so a corrupt or hostile frame that
+  inflates without end stops at the cap instead of filling memory.
+  """
+  chunks: list[bytes] = []
+  total = 0
+  while data:
+    decompressor = zstd.ZstdDecompressor()
+    pending = data
+    try:
+      while True:
+        chunk = decompressor.decompress(pending, max_length=DSH_MAX_LOG_BYTES - total + 1)
+        pending = b""
+        total += len(chunk)
+        if total > DSH_MAX_LOG_BYTES:
+          return None
+        chunks.append(chunk)
+        if decompressor.eof or decompressor.needs_input:
+          break
+    except zstd.ZstdError:
+      break
+    if not decompressor.eof:
+      break
+    data = decompressor.unused_data
+  return b"".join(chunks)
+
+
 def dsh_log_lines(path: Path) -> tuple[list[bytes], bool]:
   """The complete records of one log, and whether all of it could be read.
 
@@ -146,17 +181,10 @@ def dsh_log_lines(path: Path) -> tuple[list[bytes], bool]:
     if zstd is None:
       warn("this Python has no Zstandard support; DeepSeek Harness sessions were not scanned")
       return [], False
-    chunks = []
-    while data:
-      decompressor = zstd.ZstdDecompressor()
-      try:
-        chunks.append(decompressor.decompress(data))
-      except zstd.ZstdError:
-        break
-      if not decompressor.eof:
-        break
-      data = decompressor.unused_data
-    data = b"".join(chunks)
+    data = dsh_decompress(data)
+    if data is None:
+      warn(f"a DeepSeek Harness session log inflates past {DSH_MAX_LOG_BYTES >> 20} MiB and was not scanned")
+      return [], False
   lines = data.split(b"\n")
   # Whatever follows the last newline is an unfinished record.
   return lines[:-1], True

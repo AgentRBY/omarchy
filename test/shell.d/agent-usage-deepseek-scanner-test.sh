@@ -170,6 +170,24 @@ expect("DeepSeek skips a dsh line nested too deep to parse, keeping the rest of 
 shutil.rmtree(project / "s5")
 shutil.rmtree(project / "s6")
 
+# A frame that inflates past the cap (64 MiB, far beyond any real log) is
+# never read in full: the log counts nothing, and the scan, incomplete, isn't
+# kept for the next run.
+if compressed:
+  bomb = project / "s7" / "session.v4.jsonl.zstd"
+  bomb.parent.mkdir()
+  opening = "".join(json.dumps(line) + "\n" for line in (header("s7"), route("deepseek-official", "deepseek-bomb"), message(1, 1, usage(60))))
+  bomb.write_bytes(zstd.compress(opening.encode() + b" " * (65 << 20)))
+  for path in scan_cache_files("deepseek"):
+    path.unlink()
+  with contextlib.redirect_stderr(io.StringIO()):
+    record = deepseek()
+  expect("DeepSeek stops a dsh log that inflates past its cap, and doesn't cache the scan",
+         [record["todayTotalTokens"], "deepseek-bomb" in record["modelUsage"], scan_cache_files("deepseek")], [34153, False, []], record)
+  shutil.rmtree(project / "s7")
+else:
+  print("ok - DeepSeek stops a dsh log that inflates past its cap # SKIP no Zstandard support")
+
 # dsh keeps its key in its managed .credentials.yaml, or a .env beside it.
 (home() / "dsh" / ".credentials.yaml").write_text("""# managed by dsh
 version: 1
