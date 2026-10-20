@@ -181,8 +181,9 @@ def activity_day(value: Any) -> str:
 def summarize_activity(items: list[Any], today: datetime) -> dict[str, Any]:
   """Fold /activity rows into the panel's stats dict.
 
-  One row per (date, endpoint): prompt + reasoning tokens count as input
-  (they are generated), completion as output. The billing API reports
+  One row per (date, endpoint): prompt tokens count as input, and completion
+  and reasoning tokens as output (thinking is generated, so it is output, as
+  the collector contract has it). The billing API reports
   tokens, never prompt or session counts, so hasPromptStats stays False
   and the panel keeps those numbers out of today's tooltip.
   """
