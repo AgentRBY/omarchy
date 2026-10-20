@@ -95,10 +95,13 @@ def local_day(value):
   if parsed is None:
     return ""
   try:
-    return parsed.astimezone().date().isoformat()
+    day = parsed.astimezone().date()
   except (ValueError, OverflowError, OSError):
     # Even a parsed date can cross years 1/9999 during local conversion.
     return ""
+  # No agent wrote a row before 2000 or after 2100: a time out there is a
+  # damaged stamp (a stray 1 reads as 1970), not activity to date.
+  return day.isoformat() if 2000 <= day.year <= 2100 else ""
 
 
 # The sign-in agy keeps in the keyring: its access token, when that lapses,

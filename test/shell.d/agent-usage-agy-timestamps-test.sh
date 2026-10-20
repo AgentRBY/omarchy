@@ -2,9 +2,10 @@
 
 # The Antigravity collector reads agy's times with a parser of its own (agy
 # writes Go's zero time for an uninitialized summary), so its boundaries are
-# held here in fixed-offset zones: what is undated, which local day a time
-# lands on, and that undated activity still counts toward the lifetime
-# totals without inventing a date.
+# held here in fixed-offset zones: what is undated (a day outside 2000-2100
+# included, as the shared reader has it), which local day a time lands on,
+# and that undated activity still counts toward the lifetime totals without
+# inventing a date.
 
 set -euo pipefail
 
@@ -89,22 +90,18 @@ for zone, early_day in zip(ZONES, ("2026-10-02", "2026-10-01", "2026-10-02")):
   with local_zone(zone):
     expect(f"valid times keep every format agy writes and land on the local day ({zone})",
            days(("2026-10-02T02:00:00Z", "2026-10-02 02:00:00", "2026-10-02T04:00:00+02:00", 1790906400, 1790906400000, "1790906400000",
-                 "1969-07-20T12:00:00Z", 1, "2026-10-02T20:00:00Z")),
-           [early_day] * 6 + ["1969-07-20", "1969-12-31" if zone == "EST5" else "1970-01-01", "2026-10-03" if zone == "JST-9" else "2026-10-02"])
+                 "2026-10-02T20:00:00Z")),
+           [early_day] * 6 + ["2026-10-03" if zone == "JST-9" else "2026-10-02"])
 
-# Times at the edges of what a date can hold, in each zone in turn.
-BOUNDARIES = (
-  ("0001-01-01T00:00:01Z", ("0001-01-01", "", "0001-01-01")),
-  ("0001-01-01T12:00:00Z", ("0001-01-01", "0001-01-01", "0001-01-01")),
-  ("9999-12-31T23:59:59Z", ("9999-12-31", "9999-12-31", "")),
-  ("9999-12-31T12:00:00Z", ("9999-12-31", "9999-12-31", "9999-12-31")),
-  ("0001-01-01T00:00:01+14:00", ("", "", "")),
-  ("9999-12-31T23:59:59-12:00", ("", "", "")),
-)
-for index, zone in enumerate(ZONES):
+# A day before 2000 or after 2100 is a damaged stamp (a stray 1 reads as
+# 1970), and so is every time at the edges of what a date can hold.
+OUT_OF_RANGE = ("1969-07-20T12:00:00Z", 1, "1999-12-31T12:00:00Z", "2101-01-01T12:00:00Z",
+                "0001-01-01T00:00:01Z", "0001-01-01T12:00:00Z", "9999-12-31T23:59:59Z", "9999-12-31T12:00:00Z",
+                "0001-01-01T00:00:01+14:00", "9999-12-31T23:59:59-12:00")
+for zone in ZONES:
   with local_zone(zone):
-    expect(f"times at a date's edges land on a day only where one exists ({zone})",
-           days(value for value, _ in BOUNDARIES), [expected[index] for _, expected in BOUNDARIES])
+    expect(f"a day outside 2000-2100 is undated ({zone})", days(OUT_OF_RANGE), [""] * len(OUT_OF_RANGE))
+    expect(f"the years 2000 and 2100 still date ({zone})", days(("2000-06-01T12:00:00Z", "2100-06-01T12:00:00Z")), ["2000-06-01", "2100-06-01"])
 
 # Errors that aren't a bad time propagate rather than reading as undated.
 for name, patched in (
@@ -135,10 +132,11 @@ for zone in ZONES:
     with patch.dict(collector.__dict__, datetime=FrozenDatetime), patch.object(sys.modules["collectors"], "datetime", FrozenDatetime):
       stats = collector.local_stats(root)
   today = 15 if zone == "EST5" else 25
-  dates = ["1969-07-20", "2026-10-01", "2026-10-02"] if zone == "EST5" else ["1969-07-20", "2026-10-02"]
+  dates = ["2026-10-01", "2026-10-02"] if zone == "EST5" else ["2026-10-02"]
   recent = {row["date"]: row["messageCount"] for row in stats["recentDays"]}
-  # Summary identities remain countable without a date; bad history isn't.
-  # Undated usage keeps its lifetime totals, as a missing time does.
+  # Summary identities remain countable without a date; bad history isn't,
+  # nor history from 1969. Undated usage keeps its lifetime totals, as a
+  # missing time does.
   expect(f"mixed activity survives without inventing dates ({zone})", {
     "hasLocalStats": stats["hasLocalStats"], "totalPrompts": stats["totalPrompts"], "todayPrompts": stats["todayPrompts"],
     "totalSessions": stats["totalSessions"], "todaySessions": stats["todaySessions"], "activeDates": stats["activeDates"],
@@ -147,8 +145,8 @@ for zone in ZONES:
     "dated": [stats["modelUsage"]["dated"]["inputTokens"], stats["modelUsage"]["dated"]["outputTokens"]],
     "undated": [stats["modelUsage"]["undated"]["inputTokens"], stats["modelUsage"]["undated"]["outputTokens"]],
   }, {
-    "hasLocalStats": True, "totalPrompts": 3, "todayPrompts": 1 if zone == "EST5" else 2,
-    "totalSessions": 4, "todaySessions": 2, "activeDates": dates,
+    "hasLocalStats": True, "totalPrompts": 2, "todayPrompts": 1 if zone == "EST5" else 2,
+    "totalSessions": 3, "todaySessions": 2, "activeDates": dates,
     "activeDays": len(dates), "todayTotalTokens": today, "todayTokensByModel": {"dated": today},
     "today": today, "recent": 25,
     "dated": [17, 8],
@@ -193,5 +191,5 @@ for zone in ZONES:
     expect(f"Antigravity collector runs cleanly as a command ({zone}, {flag})",
            [result.returncode, result.stderr, record.get("ready"), record.get("usageStatusText"), record.get("limits"),
             record.get("totalPrompts"), record.get("totalSessions"), (record.get("modelUsage") or {}).get("dated", {}).get("inputTokens")],
-           [0, "", True, "Waiting for auth", [], 3, 4, 17], record)
+           [0, "", True, "Waiting for auth", [], 2, 3, 17], record)
 PY
