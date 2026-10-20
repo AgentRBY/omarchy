@@ -503,7 +503,8 @@ def main() -> int:
         except OSError:
           pass
         cache.reload()
-    if cache.fresh(args.force):
+    # A plan without windows is an answer too, and stands in like one.
+    if cache.fresh(args.force, allow_empty=True):
       limits, fetched_at = cache.limits, cache.fetched_at
     else:
       limits = to_limits(quota(key))

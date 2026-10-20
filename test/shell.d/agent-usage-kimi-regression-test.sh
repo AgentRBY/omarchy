@@ -360,6 +360,15 @@ def rotated_cache(root):
          [True, True, True, True], first)
 
 
+def empty_answer(root):
+  os.environ["KIMI_API_KEY"] = "AT_env"
+  state["payload"] = {"usages": {}}
+  first = record()
+  second = run_main(scanner, "--limits-only")
+  expect("an answer without windows stands in for the next probe",
+         [first["limits"], second["limits"], second["usageStatusText"], len(reqs)], [[], [], "", 1], second)
+
+
 def switched_cache(root):
   credentials("AT_account_a", time.time() + 3600)
   capture = scanner.api_key
@@ -382,7 +391,7 @@ cases = {"contract": contract, "env_key": env_key, "stores": stores, "home": hom
          "invalid_grant": invalid_grant, "refused_refresh": refused_refresh, "key_help": key_help, "refused": refused,
          "waiting_for_auth": waiting_for_auth, "trust": trust, "destination": destination, "redirects": redirects,
          "quota": modern_quota, "legacy_quota": legacy_quota, "cache_identity": cache_identity,
-         "rotation_cache": rotated_cache, "switched_cache": switched_cache}
+         "rotation_cache": rotated_cache, "switched_cache": switched_cache, "empty_answer": empty_answer}
 selected = os.environ.get("OMARCHY_TEST_KIMI_CASE")
 for name, case in cases.items():
   if selected and name != selected:
