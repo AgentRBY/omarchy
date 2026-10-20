@@ -71,7 +71,7 @@ expect("Muse leaves out view copies without dropping records with a missing or m
 # A scan cached before completions were deduplicated is made again, even for
 # --limits-only.
 def predates_dedup(cached):
-  cached["schemaVersion"] = 1
+  cached["museSchema"] = cached.get("museSchema", 0) - 1
   cached["stats"]["todayTotalTokens"] = 999999
 
 
