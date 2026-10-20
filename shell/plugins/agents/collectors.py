@@ -1240,11 +1240,17 @@ def registered_accounts(agent_id: str) -> list[dict[str, Any]]:
   active_id = registry.get("active") or accounts[0]["id"]
   if not any(a["id"] == active_id for a in accounts):
     active_id = accounts[0]["id"]
+  # The threshold reads as `omarchy agent account` reads it: a percentage
+  # held to 50-100, 95 when it isn't one.
+  try:
+    threshold = max(50, min(100, int(registry.get("threshold"))))
+  except Exception:
+    threshold = 95
   for account in accounts:
     account["active"] = account["id"] == active_id
     account["switch"] = {
       "mode": "auto" if registry.get("switch") == "auto" else "manual",
-      "threshold": registry.get("threshold") or 95,
+      "threshold": threshold,
     }
   return accounts
 
