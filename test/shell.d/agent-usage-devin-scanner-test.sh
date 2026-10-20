@@ -237,6 +237,11 @@ expect("Devin reports an old quota stale, with elapsed windows at zero", {
   "windows": [[entry["label"], entry["percent"], entry["resetsAt"] != ""] for entry in record["limits"]],
 }, {"stale": True, "fetchedAt": (now - 7200) * 1000, "status": "", "windows": [["Daily", 0.0, False], ["Weekly", 0.6, True]]}, record)
 
+# The fetch stamp is floored to the millisecond, never rounded up.
+fraction = now - 7200 + 0.9996
+write_status("a", fraction, plan="Pro", daily=10, weekly=40, weeklyReset=now + 86400)
+expect("Devin floors the fetch stamp", devin()["limitsFetchedAt"], int(fraction * 1000))
+
 # Fetches from before the last sign-in describe another account.
 signed_in_at(now + 600)
 write_status("a", now, plan="Pro", daily=69, weekly=53, dailyReset=now + 3600, weeklyReset=now + 86400)

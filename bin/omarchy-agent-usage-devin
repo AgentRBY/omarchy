@@ -441,7 +441,9 @@ def read_quota():
     # A window whose reset has passed is untouched, not unknown: it comes back
     # at zero with no reset time until the CLI fetches the next one.
     "limits": open_limits(quota["limits"]),
-    "limitsFetchedAt": round(fetched_at * 1000),
+    # Floored, never rounded: a stamp half a millisecond ahead reads as a
+    # clock that went back.
+    "limitsFetchedAt": int(fetched_at * 1000),
     "limitsStale": not 0 <= age < LIMITS_CURRENT_ENOUGH_SECONDS,
   }
 
