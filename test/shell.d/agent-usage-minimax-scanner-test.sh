@@ -18,9 +18,6 @@ agent_sandbox
 python3 - <<'PY'
 from agent_usage_fixtures import *
 
-# MiniMax Code's older name for its data directory; the sandbox's developer
-# prefixes don't cover it.
-os.environ.pop("MAVIS_DATA_DIR", None)
 
 
 def minimax(*args):
