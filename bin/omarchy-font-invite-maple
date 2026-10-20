@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# omarchy:summary=Invite a Chinese reader, once, to install Maple Mono NF CN and use it as the monospace font
+# omarchy:hidden=true
+
+# Maple Mono NF CN draws Han itself, two cells wide, so Chinese lines up with
+# the Latin beside it. One invitation only; Install > Style > Font keeps it.
+family="Maple Mono NF CN"
+
+if [[ $(omarchy-font-current) != "$family" ]] && omarchy-done ensure maple-font-invitation; then
+  omarchy-notification-send -u critical -g  "$(omarchy-i18n font.mapleInvitation)" "$(omarchy-i18n font.mapleInvitationBody)" \
+    --exec omarchy-install-font "Maple Mono CN" maplemono-nf-cn "$family"
+fi

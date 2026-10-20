@@ -302,11 +302,11 @@ cat >"$work/stubs/omarchy-restart-shell" <<'STUB'
 #!/bin/bash
 echo "restart" >>"$SESSION_ENV_LOG"
 STUB
-# Records the monospace font a language seeds, so the test never rewrites
-# the terminal configs of the person running it.
-cat >"$work/stubs/omarchy-font-set" <<'STUB'
+# Records the Maple Mono invitation, which would otherwise mark it sent in the
+# real home of whoever runs the test.
+cat >"$work/stubs/omarchy-font-invite-maple" <<'STUB'
 #!/bin/bash
-echo "$@" >>"$FONT_LOG"
+echo "invited" >>"$FONT_LOG"
 STUB
 # sudo and pkexec record which one elevated and what it ran, then run it
 # as-is. sudo answers the long listing (`sudo -n -l -l`) with the
@@ -451,11 +451,10 @@ cjk_output=$(TEST_SUDO_GRANT=1 omarchy-language ja </dev/null 2>&1) || fail "a C
 assert_bash_equal "$(cat "$OMARCHY_LANGUAGE_FILE")" "ja" "a CJK language switches without a reachable Fcitx"
 [[ $cjk_output == *"Setup > Typing > Input Methods"* ]] && pass "an input method that could not be added is named with where to add it" || fail "an input method that could not be added is named with where to add it" "$cjk_output"
 grep -q 'Noto Sans CJK JP' "$cjk_font" && pass "Japanese seeds Japanese glyph forms" || fail "Japanese seeds Japanese glyph forms"
-assert_bash_equal "$(cat "$FONT_LOG" 2>/dev/null)" "--seed Maple Mono NF CN" "Japanese seeds Maple Mono NF CN as the monospace font"
-: >"$FONT_LOG"
 TEST_SUDO_GRANT=1 omarchy-language ko </dev/null 2>/dev/null
-assert_bash_equal "$(cat "$FONT_LOG")" "" "Korean keeps the monospace font, since Maple Mono has no Hangul"
 grep -q 'Noto Sans CJK JP' "$cjk_font" && pass "a second CJK language keeps the glyph forms already chosen" || fail "a second CJK language keeps the glyph forms already chosen"
+TEST_SUDO_GRANT=1 omarchy-language zh-CN </dev/null 2>/dev/null
+assert_bash_equal "$(cat "$FONT_LOG" 2>/dev/null)" "invited" "Chinese, and neither Japanese nor Korean, invites to Maple Mono"
 rm -f "$work/stubs/busctl" "$work/stubs/fcitx5-remote" "$cjk_font"
 
 # A cancelled polkit prompt must not persist the choice, or the interface

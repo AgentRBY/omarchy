@@ -159,7 +159,6 @@ def seed_language(method):
     print(f"Add {setup.PRESETS[method]['label']} under Setup > Typing > Input Methods: {error}", file=sys.stderr)
   config_home = Path(os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config"))
   setup.font_default(config_home, method)
-  setup.monospace_default(method)
 
 
 def keyboard_values(selected):
