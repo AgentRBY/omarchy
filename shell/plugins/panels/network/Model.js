@@ -258,6 +258,18 @@ function pingPacketLossPercent(samples) {
   return Math.round((lost / values.length) * 100)
 }
 
+// Ping and loss only mean something once the internet is reachable. Behind a
+// portal, on a limited link or offline every probe is lost by design, so the
+// rows read "--" instead of a "Timeout" and "100%" that just restate that.
+function internetPingReadable(samples, connectivity) {
+  var values = Array.isArray(samples) ? samples : []
+  if (connectivity === "portal" || connectivity === "limited" || connectivity === "none") return false
+  for (var i = 0; i < values.length; i++) {
+    if (values[i] !== null) return true
+  }
+  return false
+}
+
 function formatPacketLoss(percent, hasSamples, fmt) {
   var f = formatter(fmt)
   if (hasSamples === false) return "--"
@@ -426,6 +438,7 @@ if (typeof module !== "undefined") {
     throughputState: throughputState,
     pingLatencyState: pingLatencyState,
     pingPacketLossPercent: pingPacketLossPercent,
+    internetPingReadable: internetPingReadable,
     formatPacketLoss: formatPacketLoss,
     formatBytes: formatBytes,
     formatRate: formatRate,
