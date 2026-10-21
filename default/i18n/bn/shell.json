@@ -332,7 +332,6 @@
   "network.automatic": "স্বয়ংক্রিয়",
   "network.bandAuto": "স্বয়ংক্রিয়",
   "network.bandAutoTooltip": "Wi-Fi-কে ব্যান্ড বেছে নিতে দিন",
-  "network.captivePortalHelp": "ইন্টারনেট পেতে সাইন-ইন করুন বা এই নেটওয়ার্কের শর্ত মেনে নিন।",
   "network.connect": "সংযোগ করুন",
   "network.connected": "সংযুক্ত",
   "network.connecting": "সংযোগ হচ্ছে…",

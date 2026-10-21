@@ -344,7 +344,6 @@
   "network.automatic": "AUTOMATIQUE",
   "network.bandAuto": "Auto",
   "network.bandAutoTooltip": "Laisser Wi-Fi choisir la bande",
-  "network.captivePortalHelp": "Connectez-vous ou acceptez les conditions de ce réseau pour accéder à internet.",
   "network.connect": "Se connecter",
   "network.connected": "Connecté",
   "network.connecting": "Connexion…",

@@ -332,7 +332,6 @@
   "network.automatic": "SJÁLFKRAFA",
   "network.bandAuto": "Sjálfkrafa",
   "network.bandAutoTooltip": "Láttu Wi-Fi velja tíðnibandið",
-  "network.captivePortalHelp": "Skráðu þig inn eða samþykktu skilmála þessa nets til að fá internetaðgang.",
   "network.connect": "Tengjast",
   "network.connected": "Tengt",
   "network.connecting": "Tengist…",

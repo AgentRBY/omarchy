@@ -344,7 +344,6 @@
   "network.automatic": "АУТОМАТСКИ",
   "network.bandAuto": "Аутоматски",
   "network.bandAutoTooltip": "Нека Wi-Fi изабере опсег",
-  "network.captivePortalHelp": "Пријавите се или прихватите услове ове мреже за приступ интернету.",
   "network.connect": "Повежи се",
   "network.connected": "Повезано",
   "network.connecting": "Повезивање…",

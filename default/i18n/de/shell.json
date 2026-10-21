@@ -332,7 +332,6 @@
   "network.automatic": "AUTOMATISCH",
   "network.bandAuto": "Automatisch",
   "network.bandAutoTooltip": "Wi-Fi das Band wählen lassen",
-  "network.captivePortalHelp": "Melde dich an oder akzeptiere die Bedingungen dieses Netzwerks, um ins Internet zu gelangen.",
   "network.connect": "Verbinden",
   "network.connected": "Verbunden",
   "network.connecting": "Verbinden…",

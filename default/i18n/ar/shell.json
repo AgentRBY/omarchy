@@ -380,7 +380,6 @@
   "network.automatic": "تلقائي",
   "network.bandAuto": "تلقائي",
   "network.bandAutoTooltip": "دع Wi-Fi يختار النطاق",
-  "network.captivePortalHelp": "سجّل الدخول أو اقبل شروط هذه الشبكة للوصول إلى الإنترنت.",
   "network.connect": "اتصال",
   "network.connected": "متصل",
   "network.connecting": "جارٍ الاتصال…",

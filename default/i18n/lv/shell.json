@@ -344,7 +344,6 @@
   "network.automatic": "AUTOMĀTISKS",
   "network.bandAuto": "Automātiski",
   "network.bandAutoTooltip": "Ļaut Wi-Fi izvēlēties joslu",
-  "network.captivePortalHelp": "Pieraksties vai apstiprini šī tīkla nosacījumus, lai piekļūtu internetam.",
   "network.connect": "Savienot",
   "network.connected": "Savienots",
   "network.connecting": "Savienojas…",

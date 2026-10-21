@@ -332,7 +332,6 @@
   "network.automatic": "АВТОМАТИЧНО",
   "network.bandAuto": "Автоматично",
   "network.bandAutoTooltip": "Нека Wi-Fi избере обхвата",
-  "network.captivePortalHelp": "Влез или приеми условията на мрежата за достъп до интернет.",
   "network.connect": "Свържи се",
   "network.connected": "Свързано",
   "network.connecting": "Свързване…",

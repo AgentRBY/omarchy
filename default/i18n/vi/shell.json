@@ -320,7 +320,6 @@
   "network.automatic": "TỰ ĐỘNG",
   "network.bandAuto": "Tự động",
   "network.bandAutoTooltip": "Để Wi-Fi chọn băng tần",
-  "network.captivePortalHelp": "Đăng nhập hoặc chấp nhận điều khoản của mạng này để truy cập internet.",
   "network.connect": "Kết nối",
   "network.connected": "Đã kết nối",
   "network.connecting": "Đang kết nối…",

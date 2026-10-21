@@ -344,7 +344,6 @@
   "network.automatic": "AUTOMATICKY",
   "network.bandAuto": "Automaticky",
   "network.bandAutoTooltip": "Nechat pásmo vybrat Wi-Fi",
-  "network.captivePortalHelp": "Přihlaste se nebo přijměte podmínky sítě pro přístup k internetu.",
   "network.connect": "Připojit",
   "network.connected": "Připojeno",
   "network.connecting": "Připojování…",

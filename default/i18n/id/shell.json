@@ -320,7 +320,6 @@
   "network.automatic": "OTOMATIS",
   "network.bandAuto": "Otomatis",
   "network.bandAutoTooltip": "Biarkan Wi-Fi memilih band",
-  "network.captivePortalHelp": "Masuk atau terima ketentuan jaringan ini untuk mengakses internet.",
   "network.connect": "Sambungkan",
   "network.connected": "Terhubung",
   "network.connecting": "Menghubungkan…",

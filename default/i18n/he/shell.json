@@ -344,7 +344,6 @@
   "network.automatic": "אוטומטי",
   "network.bandAuto": "אוטומטי",
   "network.bandAutoTooltip": "לתת ל-Wi-Fi לבחור את התחום",
-  "network.captivePortalHelp": "התחברו או אשרו את תנאי הרשת כדי לגשת לאינטרנט.",
   "network.connect": "התחברות",
   "network.connected": "מחובר",
   "network.connecting": "מתחבר…",

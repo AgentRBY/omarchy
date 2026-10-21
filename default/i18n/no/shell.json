@@ -332,7 +332,6 @@
   "network.automatic": "AUTOMATISK",
   "network.bandAuto": "Auto",
   "network.bandAutoTooltip": "La Wi-Fi velge bånd",
-  "network.captivePortalHelp": "Logg inn eller godta vilkårene for dette nettverket for å få internettilgang.",
   "network.connect": "Koble til",
   "network.connected": "Tilkoblet",
   "network.connecting": "Kobler til…",

@@ -332,7 +332,6 @@
   "network.automatic": "AUTOMAATTINEN",
   "network.bandAuto": "Automaattinen",
   "network.bandAutoTooltip": "Anna Wi-Fin valita kaista",
-  "network.captivePortalHelp": "Kirjaudu sisään tai hyväksy tämän verkon ehdot käyttääksesi internetiä.",
   "network.connect": "Yhdistä",
   "network.connected": "Yhdistetty",
   "network.connecting": "Yhdistetään…",

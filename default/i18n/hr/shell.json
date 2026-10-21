@@ -344,7 +344,6 @@
   "network.automatic": "AUTOMATSKI",
   "network.bandAuto": "Automatski",
   "network.bandAutoTooltip": "Neka Wi-Fi odabere pojas",
-  "network.captivePortalHelp": "Prijavite se ili prihvatite uvjete ove mreže za pristup internetu.",
   "network.connect": "Poveži",
   "network.connected": "Povezano",
   "network.connecting": "Povezivanje…",

@@ -332,7 +332,6 @@
   "network.automatic": "ΑΥΤΟΜΑΤΟ",
   "network.bandAuto": "Αυτόματο",
   "network.bandAutoTooltip": "Άσε το Wi-Fi να επιλέξει τη ζώνη",
-  "network.captivePortalHelp": "Συνδέσου ή αποδέξου τους όρους αυτού του δικτύου για πρόσβαση στο διαδίκτυο.",
   "network.connect": "Σύνδεση",
   "network.connected": "Συνδεδεμένο",
   "network.connecting": "Σύνδεση…",

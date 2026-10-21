@@ -356,7 +356,6 @@
   "network.automatic": "AUTOMATYCZNIE",
   "network.bandAuto": "Auto",
   "network.bandAutoTooltip": "Pozwól Wi-Fi wybrać pasmo",
-  "network.captivePortalHelp": "Zaloguj się lub zaakceptuj warunki tej sieci, aby uzyskać dostęp do internetu.",
   "network.connect": "Połącz",
   "network.connected": "Połączono",
   "network.connecting": "Łączenie…",

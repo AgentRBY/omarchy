@@ -320,7 +320,6 @@
   "network.automatic": "自動",
   "network.bandAuto": "自動",
   "network.bandAutoTooltip": "周波数帯はWi-Fiに任せる",
-  "network.captivePortalHelp": "インターネットに接続するには、サインインするか、このネットワークの規約に同意してください。",
   "network.connect": "接続",
   "network.connected": "接続済み",
   "network.connecting": "接続中…",

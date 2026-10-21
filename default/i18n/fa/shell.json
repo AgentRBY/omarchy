@@ -332,7 +332,6 @@
   "network.automatic": "خودکار",
   "network.bandAuto": "خودکار",
   "network.bandAutoTooltip": "به Wi-Fi اجازه دهید باند را انتخاب کند",
-  "network.captivePortalHelp": "برای دسترسی به اینترنت وارد شوید یا شرایط این شبکه را بپذیرید.",
   "network.connect": "اتصال",
   "network.connected": "متصل",
   "network.connecting": "در حال اتصال…",

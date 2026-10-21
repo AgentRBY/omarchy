@@ -344,7 +344,6 @@
   "network.automatic": "AUTOMATINIS",
   "network.bandAuto": "Automatinis",
   "network.bandAutoTooltip": "Leisti Wi-Fi pasirinkti juostą",
-  "network.captivePortalHelp": "Prisijunkite arba priimkite šio tinklo sąlygas, kad pasiektumėte internetą.",
   "network.connect": "Prisijungti",
   "network.connected": "Prisijungta",
   "network.connecting": "Jungiamasi…",

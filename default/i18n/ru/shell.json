@@ -356,7 +356,6 @@
   "network.automatic": "АВТОМАТИЧЕСКИ",
   "network.bandAuto": "Авто",
   "network.bandAutoTooltip": "Позволить Wi-Fi выбрать диапазон",
-  "network.captivePortalHelp": "Войдите или примите условия этой сети для доступа в интернет.",
   "network.connect": "Подключиться",
   "network.connected": "Подключено",
   "network.connecting": "Подключение…",

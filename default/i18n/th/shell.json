@@ -320,7 +320,6 @@
   "network.automatic": "อัตโนมัติ",
   "network.bandAuto": "อัตโนมัติ",
   "network.bandAutoTooltip": "ให้ Wi-Fi เลือกย่านเอง",
-  "network.captivePortalHelp": "เข้าสู่ระบบหรือยอมรับเงื่อนไขของเครือข่ายนี้เพื่อใช้อินเทอร์เน็ต",
   "network.connect": "เชื่อมต่อ",
   "network.connected": "เชื่อมต่อแล้ว",
   "network.connecting": "กำลังเชื่อมต่อ…",

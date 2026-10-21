@@ -332,7 +332,6 @@
   "network.automatic": "AVTOMATIK",
   "network.bandAuto": "Avto",
   "network.bandAutoTooltip": "Wi-Fi diapazonni oʻzi tanlasin",
-  "network.captivePortalHelp": "Internetga kirish uchun kiring yoki ushbu tarmoq shartlarini qabul qiling.",
   "network.connect": "Ulanish",
   "network.connected": "Ulangan",
   "network.connecting": "Ulanmoqda…",

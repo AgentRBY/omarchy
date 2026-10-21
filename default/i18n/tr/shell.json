@@ -332,7 +332,6 @@
   "network.automatic": "OTOMATİK",
   "network.bandAuto": "Otomatik",
   "network.bandAutoTooltip": "Bandı Wi-Fi seçsin",
-  "network.captivePortalHelp": "İnternete erişmek için giriş yapın veya bu ağın şartlarını kabul edin.",
   "network.connect": "Bağlan",
   "network.connected": "Bağlı",
   "network.connecting": "Bağlanıyor…",

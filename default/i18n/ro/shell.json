@@ -344,7 +344,6 @@
   "network.automatic": "AUTOMAT",
   "network.bandAuto": "Automat",
   "network.bandAutoTooltip": "Lasă Wi-Fi să aleagă banda",
-  "network.captivePortalHelp": "Autentifică-te sau acceptă termenii acestei rețele pentru a accesa internetul.",
   "network.connect": "Conectează-te",
   "network.connected": "Conectat",
   "network.connecting": "Se conectează…",

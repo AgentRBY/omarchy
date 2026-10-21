@@ -1356,41 +1356,25 @@ Panel {
 
       }
 
-      Column {
+      Button {
+        id: portalAction
         visible: root.hasCaptivePortal
         width: parent.width
-        spacing: Style.space(6)
-
-        Button {
-          id: portalAction
-          width: parent.width
-          text: Commons.I18n.t("network.openCaptivePortal")
-          iconText: "󰏌"
-          foreground: root.bar.urgent
-          accent: root.bar.urgent
-          fontFamily: root.bar.fontFamily
-          verticalPadding: Style.space(10)
-          bordered: true
-          active: true
-          hasCursor: root.cursorActive && root.focusSection === "portal"
-          onHovered: function(on) {
-            if (!on) return
-            root.cursorActive = true
-            root.focusSection = "portal"
-          }
-          onClicked: root.openCaptivePortal()
+        text: Commons.I18n.t("network.openCaptivePortal")
+        iconText: "󰏌"
+        foreground: root.bar.urgent
+        accent: root.bar.urgent
+        fontFamily: root.bar.fontFamily
+        verticalPadding: Style.space(10)
+        bordered: true
+        active: true
+        hasCursor: root.cursorActive && root.focusSection === "portal"
+        onHovered: function(on) {
+          if (!on) return
+          root.cursorActive = true
+          root.focusSection = "portal"
         }
-
-        Text {
-          width: parent.width
-          text: Commons.I18n.t("network.captivePortalHelp")
-          textFormat: Text.PlainText
-          wrapMode: Text.WordWrap
-          color: root.bar.foreground
-          opacity: 0.7
-          font.family: root.bar.fontFamily
-          font.pixelSize: Style.font.bodySmall
-        }
+        onClicked: root.openCaptivePortal()
       }
 
       // Connection details: transfer metrics first, then IP/Gateway.

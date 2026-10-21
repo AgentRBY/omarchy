@@ -320,7 +320,6 @@
   "network.automatic": "自動",
   "network.bandAuto": "自動",
   "network.bandAutoTooltip": "由 Wi-Fi 自動選擇頻段",
-  "network.captivePortalHelp": "登入或接受此網路條款以連上網際網路。",
   "network.connect": "連線",
   "network.connected": "已連線",
   "network.connecting": "連線中…",

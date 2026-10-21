@@ -356,7 +356,6 @@
   "network.automatic": "АВТОМАТИЧНО",
   "network.bandAuto": "Авто",
   "network.bandAutoTooltip": "Wi-Fi сам обирає діапазон",
-  "network.captivePortalHelp": "Увійдіть або прийміть умови цієї мережі, щоб отримати доступ до Інтернету.",
   "network.connect": "Підключитися",
   "network.connected": "Підключено",
   "network.connecting": "Підключення…",

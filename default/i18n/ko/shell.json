@@ -320,7 +320,6 @@
   "network.automatic": "자동",
   "network.bandAuto": "자동",
   "network.bandAutoTooltip": "Wi-Fi가 대역 자동 선택",
-  "network.captivePortalHelp": "인터넷에 접속하려면 로그인하거나 이 네트워크의 약관에 동의하세요.",
   "network.connect": "연결",
   "network.connected": "연결됨",
   "network.connecting": "연결 중…",

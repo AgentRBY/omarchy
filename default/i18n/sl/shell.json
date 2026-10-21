@@ -356,7 +356,6 @@
   "network.automatic": "SAMODEJNO",
   "network.bandAuto": "Samodejno",
   "network.bandAutoTooltip": "Wi-Fi naj izbere pas",
-  "network.captivePortalHelp": "Prijavite se ali sprejmite pogoje tega omrežja za dostop do interneta.",
   "network.connect": "Poveži",
   "network.connected": "Povezano",
   "network.connecting": "Povezovanje…",
